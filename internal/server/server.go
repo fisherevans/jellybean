@@ -112,6 +112,7 @@ func (s *Server) routes() {
 	kids.HandleFunc("/library", s.handleKidsLibrary).Methods(http.MethodGet)
 	kids.HandleFunc("/items/{id}/image", s.handleKidsImage).Methods(http.MethodGet)
 	kids.HandleFunc("/items/{id}/stream", s.handleKidsStream).Methods(http.MethodGet)
+	kids.HandleFunc("/items/{id}/next-up", s.handleKidsNextUp).Methods(http.MethodGet)
 	kids.HandleFunc("/playback/start", s.handleKidsPlaybackStart).Methods(http.MethodPost)
 	kids.HandleFunc("/playback/progress", s.handleKidsPlaybackProgress).Methods(http.MethodPost)
 	kids.HandleFunc("/playback/stopped", s.handleKidsPlaybackStopped).Methods(http.MethodPost)

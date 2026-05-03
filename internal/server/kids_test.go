@@ -27,9 +27,22 @@ type playbackHit struct {
 }
 
 // kidsLibraryFakeJellyfin returns an httptest.Server that serves the
-// endpoints handleKidsLibrary + handleKidsPlayback* touch. If a playback
-// pointer is supplied, every /Sessions/Playing* call is recorded.
+// endpoints handleKidsLibrary + handleKidsPlayback* + handleKidsNextUp
+// touch. If a playback pointer is supplied, every /Sessions/Playing*
+// call is recorded. nextUp lets a test inject the response from
+// /Shows/NextUp.
 func kidsLibraryFakeJellyfin(t *testing.T, library []jellyfin.Item, resume []jellyfin.Item, playback *[]playbackHit) *httptest.Server {
+	return kidsLibraryFakeJellyfinFull(t, library, resume, playback, nil, nil)
+}
+
+func kidsLibraryFakeJellyfinFull(
+	t *testing.T,
+	library []jellyfin.Item,
+	resume []jellyfin.Item,
+	playback *[]playbackHit,
+	nextUp []jellyfin.Item,
+	episodesBySeries map[string][]jellyfin.Item,
+) *httptest.Server {
 	t.Helper()
 	byID := map[string]jellyfin.Item{}
 	for _, it := range library {
@@ -42,6 +55,15 @@ func kidsLibraryFakeJellyfin(t *testing.T, library []jellyfin.Item, resume []jel
 	})
 	mux.HandleFunc("/Items", func(w http.ResponseWriter, r *http.Request) {
 		ids := r.URL.Query().Get("Ids")
+		// "Items?ParentId=...&IncludeItemTypes=Episode..." is the fallback
+		// path GetNextUp uses when /Shows/NextUp returns empty.
+		if parent := r.URL.Query().Get("ParentId"); parent != "" {
+			eps := episodesBySeries[parent]
+			json.NewEncoder(w).Encode(jellyfin.ItemsResult{
+				Items: eps, TotalRecordCount: len(eps),
+			})
+			return
+		}
 		var items []jellyfin.Item
 		if ids != "" {
 			for _, id := range strings.Split(ids, ",") {
@@ -53,6 +75,11 @@ func kidsLibraryFakeJellyfin(t *testing.T, library []jellyfin.Item, resume []jel
 		json.NewEncoder(w).Encode(jellyfin.ItemsResult{
 			Items:            items,
 			TotalRecordCount: len(items),
+		})
+	})
+	mux.HandleFunc("/Shows/NextUp", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(jellyfin.ItemsResult{
+			Items: nextUp, TotalRecordCount: len(nextUp),
 		})
 	})
 	mux.HandleFunc("/Users/", func(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +118,17 @@ func kidsLibraryFakeJellyfin(t *testing.T, library []jellyfin.Item, resume []jel
 // slice (when supplied) is appended to by the fake Jellyfin on every
 // /Sessions/Playing* POST.
 func kidsTestServer(t *testing.T, library []jellyfin.Item, resume []jellyfin.Item, playback *[]playbackHit) (*Server, string, int64) {
+	return kidsTestServerFull(t, library, resume, playback, nil, nil)
+}
+
+func kidsTestServerFull(
+	t *testing.T,
+	library []jellyfin.Item,
+	resume []jellyfin.Item,
+	playback *[]playbackHit,
+	nextUp []jellyfin.Item,
+	episodesBySeries map[string][]jellyfin.Item,
+) (*Server, string, int64) {
 	t.Helper()
 	conn, err := db.Open(":memory:")
 	if err != nil {
@@ -98,7 +136,7 @@ func kidsTestServer(t *testing.T, library []jellyfin.Item, resume []jellyfin.Ite
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	jfSrv := kidsLibraryFakeJellyfin(t, library, resume, playback)
+	jfSrv := kidsLibraryFakeJellyfinFull(t, library, resume, playback, nextUp, episodesBySeries)
 
 	cfg := &config.Config{
 		JellyfinURL:    jfSrv.URL,
@@ -396,6 +434,97 @@ func makeAdminSession(t *testing.T, srv *Server) (string, error) {
 		return "", err
 	}
 	return tok, nil
+}
+
+func TestKidsStreamReturnsItemTypeAndUserData(t *testing.T) {
+	library := []jellyfin.Item{
+		{
+			ID: "movie-1", Name: "Some Movie", Type: "Movie",
+			UserData: &jellyfin.ItemUserData{PlaybackPositionTicks: 600 * 10_000_000},
+		},
+	}
+	srv, key, _ := kidsTestServer(t, library, nil, nil)
+
+	rec := kidRequest(srv, http.MethodGet, "/api/kids/items/movie-1/stream", key)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		ItemType string                 `json:"itemType"`
+		UserData *jellyfin.ItemUserData `json:"userData"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.ItemType != "Movie" {
+		t.Errorf("itemType = %q, want Movie", resp.ItemType)
+	}
+	if resp.UserData == nil || resp.UserData.PlaybackPositionTicks != 600*10_000_000 {
+		t.Errorf("userData not surfaced: %+v", resp.UserData)
+	}
+}
+
+func TestKidsNextUpReturnsEpisode(t *testing.T) {
+	library := []jellyfin.Item{
+		{ID: "series-1", Name: "Some Show", Type: "Series"},
+	}
+	nextUp := []jellyfin.Item{
+		{
+			ID: "ep-3", Name: "S1E3", Type: "Episode",
+			SeriesID: "series-1", SeriesName: "Some Show",
+			UserData: &jellyfin.ItemUserData{PlaybackPositionTicks: 0},
+		},
+	}
+	srv, key, _ := kidsTestServerFull(t, library, nil, nil, nextUp, nil)
+
+	rec := kidRequest(srv, http.MethodGet, "/api/kids/items/series-1/next-up", key)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		EpisodeID  string `json:"episodeId"`
+		Name       string `json:"name"`
+		SeriesName string `json:"seriesName"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.EpisodeID != "ep-3" || resp.Name != "S1E3" || resp.SeriesName != "Some Show" {
+		t.Errorf("unexpected next-up payload: %+v", resp)
+	}
+}
+
+func TestKidsNextUpFallsBackToFirstEpisode(t *testing.T) {
+	library := []jellyfin.Item{
+		{ID: "series-2", Name: "Pristine Show", Type: "Series"},
+	}
+	episodesBySeries := map[string][]jellyfin.Item{
+		"series-2": {
+			{ID: "ep-1", Name: "Pilot", Type: "Episode", SeriesID: "series-2", SeriesName: "Pristine Show"},
+		},
+	}
+	srv, key, _ := kidsTestServerFull(t, library, nil, nil, nil /* empty nextUp */, episodesBySeries)
+
+	rec := kidRequest(srv, http.MethodGet, "/api/kids/items/series-2/next-up", key)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	var resp struct{ EpisodeID string `json:"episodeId"` }
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.EpisodeID != "ep-1" {
+		t.Errorf("got episode %q, want ep-1 (fallback)", resp.EpisodeID)
+	}
+}
+
+func TestKidsNextUpRejectsAdminPath(t *testing.T) {
+	srv, _, _ := kidsTestServer(t, nil, nil, nil)
+	tok, err := makeAdminSession(t, srv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/kids/items/series-1/next-up", nil)
+	req.AddCookie(&http.Cookie{Name: "jellybean_session", Value: tok})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (admin lacks per-user token)", rec.Code)
+	}
 }
 
 // Static check that our test still compiles when the server adds new

@@ -127,6 +127,61 @@ func (c *Client) GetItem(ctx context.Context, id string) (*Item, error) {
 	return &out.Items[0], nil
 }
 
+// GetNextUp returns the next-up episode for a series for the given user.
+// Jellyfin's behavior: a partially-watched episode counts as "next" until
+// it's marked played; otherwise the first unwatched episode (lowest season
+// then episode index). Falls back to the first episode if nothing has been
+// watched. Returns ErrNotFound if Jellyfin returns an empty list.
+//
+// Per-user token is required so the resume position + watched-set are
+// the kid's, not the service account's.
+func (c *Client) GetNextUp(ctx context.Context, seriesID, userID, userToken string) (*Item, error) {
+	if seriesID == "" {
+		return nil, fmt.Errorf("series id required")
+	}
+	if userID == "" || userToken == "" {
+		return nil, fmt.Errorf("per-user credentials required for next-up")
+	}
+	q := url.Values{}
+	q.Set("SeriesId", seriesID)
+	q.Set("UserId", userID)
+	q.Set("Limit", "1")
+	q.Set("Fields", "Genres,OfficialRating,ProductionYear,RunTimeTicks,UserData")
+	req, err := c.newRequestWithToken(ctx, http.MethodGet, "/Shows/NextUp?"+q.Encode(), nil, userToken)
+	if err != nil {
+		return nil, err
+	}
+	var out ItemsResult
+	if err := c.do(req, &out); err != nil {
+		return nil, fmt.Errorf("get next up: %w", err)
+	}
+	if len(out.Items) > 0 {
+		return &out.Items[0], nil
+	}
+	// Fallback: first episode, season 1, of the series.
+	q2 := url.Values{}
+	q2.Set("ParentId", seriesID)
+	q2.Set("UserId", userID)
+	q2.Set("IncludeItemTypes", "Episode")
+	q2.Set("Recursive", "true")
+	q2.Set("SortBy", "ParentIndexNumber,IndexNumber")
+	q2.Set("SortOrder", "Ascending")
+	q2.Set("Limit", "1")
+	q2.Set("Fields", "Genres,OfficialRating,ProductionYear,RunTimeTicks,UserData")
+	req2, err := c.newRequestWithToken(ctx, http.MethodGet, "/Items?"+q2.Encode(), nil, userToken)
+	if err != nil {
+		return nil, err
+	}
+	var fallback ItemsResult
+	if err := c.do(req2, &fallback); err != nil {
+		return nil, fmt.Errorf("get series first episode: %w", err)
+	}
+	if len(fallback.Items) == 0 {
+		return nil, ErrNotFound
+	}
+	return &fallback.Items[0], nil
+}
+
 // StreamURL returns an HLS manifest URL the client can hand to <video>
 // (Safari) or hls.js (Chrome / Firefox). userToken is used for per-user
 // playback attribution; pass empty to fall back to the configured service-

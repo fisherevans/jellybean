@@ -409,11 +409,9 @@ func (s *Server) handleKidsPlaybackStopped(w http.ResponseWriter, r *http.Reques
 // handleKidsStream returns a direct-play stream URL for the requested item.
 // Auth: either an admin session cookie or a valid X-Jellybean-Key.
 //
-// M1 limitation: the returned URL is signed with the service-account API
-// key rather than a per-user token, so Jellyfin's playback tracking attributes
-// to the service account. This is good enough to verify the streaming chain;
-// per-user attribution lands when we mint real Jellyfin user tokens during
-// kid profile creation.
+// Response includes the item's UserData when a kid token is present so the
+// client can seek to the resume position without a second round trip. On
+// the admin / env-var paths UserData is omitted (no per-user context).
 func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 	kc := s.resolveKidsAuth(r)
 	if kc == nil {
@@ -428,7 +426,23 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx, _ := kidsRequestContext(r)
-	item, err := s.jellyfin.GetItem(ctx, id)
+	var (
+		item *jellyfin.Item
+		err  error
+	)
+	if kc.JellyfinToken != "" {
+		// Per-user fetch so UserData (resume) comes back populated.
+		res, ferr := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{IDs: []string{id}}, kc.JellyfinToken)
+		if ferr == nil && len(res.Items) == 0 {
+			err = jellyfin.ErrNotFound
+		} else if ferr == nil {
+			item = &res.Items[0]
+		} else {
+			err = ferr
+		}
+	} else {
+		item, err = s.jellyfin.GetItem(ctx, id)
+	}
 	if err != nil {
 		if errors.Is(err, jellyfin.ErrNotFound) {
 			http.Error(w, "item not found", http.StatusNotFound)
@@ -439,9 +453,6 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-user attribution: pass the kid's stored Jellyfin token if we have
-	// one. For admin or env-var paths the token is empty and StreamURL
-	// falls back to the configured service-account API key.
 	streamURL := s.jellyfin.StreamURL(id, kc.JellyfinToken)
 
 	s.logger.Info().
@@ -453,9 +464,74 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		Str("item_name", item.Name).
 		Msg("kids stream resolved")
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"streamUrl": streamURL,
-		"itemId":    id,
-		"itemName":  item.Name,
-	})
+	resp := kidsStreamResponse{
+		StreamURL: streamURL,
+		ItemID:    id,
+		ItemName:  item.Name,
+		ItemType:  item.Type,
+	}
+	if item.UserData != nil {
+		resp.UserData = item.UserData
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type kidsStreamResponse struct {
+	StreamURL string                 `json:"streamUrl"`
+	ItemID    string                 `json:"itemId"`
+	ItemName  string                 `json:"itemName"`
+	ItemType  string                 `json:"itemType,omitempty"`
+	UserData  *jellyfin.ItemUserData `json:"userData,omitempty"`
+}
+
+// handleKidsNextUp resolves the next episode to play for a series for the
+// active kid. Returns 400 when the target item isn't a series; 502 when
+// Jellyfin lookup fails. Series resolution requires a per-user token, so
+// admin / env-var paths return 400.
+func (s *Server) handleKidsNextUp(w http.ResponseWriter, r *http.Request) {
+	kc := s.resolveKidsAuth(r)
+	if kc == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		http.Error(w, "item id required", http.StatusBadRequest)
+		return
+	}
+	if kc.JellyfinToken == "" || kc.JellyfinUserID == "" {
+		http.Error(w, "next-up requires kid auth (no admin / env-var fallback)", http.StatusBadRequest)
+		return
+	}
+
+	ctx, _ := kidsRequestContext(r)
+	episode, err := s.jellyfin.GetNextUp(ctx, id, kc.JellyfinUserID, kc.JellyfinToken)
+	if err != nil {
+		if errors.Is(err, jellyfin.ErrNotFound) {
+			http.Error(w, "no episodes for this series", http.StatusNotFound)
+			return
+		}
+		s.logger.Error().Err(err).Str("series_id", id).Msg("kids next-up")
+		http.Error(w, "failed to resolve next-up", http.StatusBadGateway)
+		return
+	}
+
+	resp := kidsNextUpResponse{
+		EpisodeID:  episode.ID,
+		Name:       episode.Name,
+		SeriesID:   episode.SeriesID,
+		SeriesName: episode.SeriesName,
+	}
+	if episode.UserData != nil {
+		resp.UserData = episode.UserData
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type kidsNextUpResponse struct {
+	EpisodeID  string                 `json:"episodeId"`
+	Name       string                 `json:"name"`
+	SeriesID   string                 `json:"seriesId,omitempty"`
+	SeriesName string                 `json:"seriesName,omitempty"`
+	UserData   *jellyfin.ItemUserData `json:"userData,omitempty"`
 }

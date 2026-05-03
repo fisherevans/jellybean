@@ -193,3 +193,53 @@ test.describe("kids library", () => {
         await expect(firstTile.locator(".tile-badge")).toBeVisible();
     });
 });
+
+// Playback (#21). Admin path (no kid token) so the server-side report
+// short-circuits and Jellyfin's session view stays clean. We're verifying
+// the client-side wiring, not real Jellyfin attribution.
+test.describe("kids playback", () => {
+    test("movie: stream endpoint resolves and player mounts with HLS source", async ({ page }) => {
+        // Headless Chromium can't natively play HLS manifests, so the
+        // browser-driven onPlay -> /playback/start chain is verified in Go
+        // unit tests instead. Here we confirm the navigation, the stream
+        // resolve call, and the video element wiring.
+        await clearKidsLocalStorage(page);
+        await page.goto(`/kids/library?profileId=4`);
+        await page.getByRole("tab", { name: "Movies" }).click();
+        const movieTile = page.locator(".tile-grid").first();
+        await expect(movieTile).toBeVisible({ timeout: 10_000 });
+
+        const streamReq = page.waitForRequest((req) =>
+            req.url().includes("/api/kids/items/") && req.url().includes("/stream"),
+        );
+        await movieTile.click();
+        await streamReq;
+        await expect(page).toHaveURL(/\/kids\/play\//);
+        const video = page.locator("video");
+        await expect(video).toBeVisible();
+    });
+
+    test("Esc returns to library", async ({ page }) => {
+        await clearKidsLocalStorage(page);
+        await page.goto(`/kids/library?profileId=4`);
+        await page.getByRole("tab", { name: "Movies" }).click();
+        const movieTile = page.locator(".tile-grid").first();
+        await expect(movieTile).toBeVisible({ timeout: 10_000 });
+        await movieTile.click();
+        await expect(page).toHaveURL(/\/kids\/play\//);
+        await page.keyboard.press("Escape");
+        await expect(page).toHaveURL(/\/kids\/library/);
+    });
+
+    test("back button returns to library", async ({ page }) => {
+        await clearKidsLocalStorage(page);
+        await page.goto(`/kids/library?profileId=4`);
+        await page.getByRole("tab", { name: "Movies" }).click();
+        const movieTile = page.locator(".tile-grid").first();
+        await expect(movieTile).toBeVisible({ timeout: 10_000 });
+        await movieTile.click();
+        await expect(page).toHaveURL(/\/kids\/play\//);
+        await page.getByRole("link", { name: /Back to library/ }).click();
+        await expect(page).toHaveURL(/\/kids\/library/);
+    });
+});

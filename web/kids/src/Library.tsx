@@ -61,6 +61,10 @@ export default function Library() {
     const [profile] = useState<KidProfile | null>(() => getActiveProfile());
     const [admin, setAdmin] = useState<AdminUser | null | undefined>(undefined);
     const adminProfileId = searchParams.get("profileId");
+    // Preserve search params (e.g. admin's profileId) when navigating to
+    // /play so the back link can return to the same filtered library
+    // view. Real kid users have no search params; this is a no-op for them.
+    const playSuffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
 
     const [filter, setFilter] = useState<TypeFilter>(() => {
         const v = localStorage.getItem(FILTER_STORAGE);
@@ -209,7 +213,8 @@ export default function Library() {
                 cwCount: continueItems.length,
                 gridCount: items.length,
                 columns,
-                onActivate: () => activate(f, items, continueItems, filter, setFilter, nav),
+                onActivate: () =>
+                    activate(f, items, continueItems, filter, setFilter, nav, playSuffix),
             }));
         },
         [continueItems, items, columns, filter, nav],
@@ -276,7 +281,7 @@ export default function Library() {
                                         focused={isFocused(focus, "cw", i)}
                                         onClick={() => {
                                             setFocus({ kind: "cw", index: i });
-                                            nav(`/play/${encodeURIComponent(it.Id)}`);
+                                            nav(`/play/${encodeURIComponent(it.Id)}${playSuffix}`);
                                         }}
                                         onFocus={() => setFocus({ kind: "cw", index: i })}
                                         refCallback={(el) => (tileRefs.current[`cw:${i}`] = el)}
@@ -304,7 +309,7 @@ export default function Library() {
                                         focused={isFocused(focus, "grid", i)}
                                         onClick={() => {
                                             setFocus({ kind: "grid", index: i });
-                                            nav(`/play/${encodeURIComponent(it.Id)}`);
+                                            nav(`/play/${encodeURIComponent(it.Id)}${playSuffix}`);
                                         }}
                                         onFocus={() => setFocus({ kind: "grid", index: i })}
                                         refCallback={(el) =>
@@ -395,6 +400,7 @@ function activate(
     filter: TypeFilter,
     setFilter: (t: TypeFilter) => void,
     nav: ReturnType<typeof useNavigate>,
+    playSuffix: string,
 ) {
     if (f.kind === "filter") {
         const next = TYPE_FILTERS[f.index];
@@ -402,7 +408,7 @@ function activate(
         return;
     }
     const target = f.kind === "cw" ? cw[f.index] : items[f.index];
-    if (target) nav(`/play/${encodeURIComponent(target.Id)}`);
+    if (target) nav(`/play/${encodeURIComponent(target.Id)}${playSuffix}`);
     void filter;
 }
 
