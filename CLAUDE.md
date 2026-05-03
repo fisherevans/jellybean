@@ -37,10 +37,10 @@ Milestones and tasks live in GitHub, not in this repo.
 
 - Milestones: `gh api repos/fisherevans/jellybean/milestones | jq '.[] | {number, title, state}'`
 - Issues for the current milestone:
-  `gh issue list --repo fisherevans/jellybean --milestone "M1: End-to-end skeleton" --state open`
+  `gh issue list --repo fisherevans/jellybean --milestone "M2: Curation data model and parent web app" --state open`
 - Single issue: `gh issue view <number> --repo fisherevans/jellybean`
 
-Current milestone: **M1: End-to-end skeleton**.
+Current milestone: **M2: Curation data model and parent web app**.
 
 ### How to pick up an issue
 
@@ -55,12 +55,13 @@ Current milestone: **M1: End-to-end skeleton**.
 
 ## Milestones (high level)
 
-- **M1: End-to-end skeleton** (current) - Go server scaffold, Jellyfin client,
-  parent auth via Jellyfin, parent + kids streaming proof, Docker image,
-  CI publishing, dev runbook. 8 issues.
-- **M2: Curation data model and parent web app** - SQLite curation schema,
-  categorization API, auto-categorization heuristics, real curation UI
-  (initial sweep, triage, recent activity, search), kid profile management.
+- **M1: End-to-end skeleton** (closed) - Go server scaffold, Jellyfin client,
+  parent auth via Jellyfin, parent + kids streaming proof (HLS via hls.js),
+  Docker image, CI publishing, dev runbook. 8 issues, all closed.
+- **M2: Curation data model and parent web app** (current) - SQLite curation
+  schema, categorization API, auto-categorization heuristics, real curation
+  UI (initial sweep, triage, recent activity, search), profile + kid
+  management with per-kid Jellyfin tokens.
 - **M3: Kids client UI** - profile picker, browse grid, D-pad focus
   management, recently watched / continue watching, playback with resume.
 - **M4: Caching layer** - IndexedDB metadata cache, Cache API for artwork,
