@@ -117,7 +117,8 @@ docs/                   # design docs and runbooks
   the container. Don't take dependencies that lock us to one or the other.
 - No state-management library on the web side until proven necessary
   (no Redux, no Zustand for v1).
-- Migration files live in `migrations/` with the format
+- Migration files live in `internal/db/migrations/` (they need to be there
+  so the `internal/db` package can embed them via `go:embed`). Naming:
   `NNNN_short_description.sql`. Numbers are sequential, not timestamped.
 
 ## Hard rules (do not break)
