@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type Item, type User } from "../api";
+import HlsVideo from "../HlsVideo";
 
 type Props = {
     user: User;
@@ -85,17 +86,15 @@ export default function Dashboard({ user, onLogout }: Props) {
                 {playing && (
                     <div className="player">
                         <h2>{playing.Name}</h2>
-                        <video
+                        <HlsVideo
                             key={playing.Id}
-                            controls
                             src={api.streamURL(playing.Id)}
                             style={{ width: "100%", maxWidth: 960 }}
                         />
                         <p className="muted">
-                            Hit play to start (browsers mute autoplayed video; we don't
-                            autoplay so you get audio). Direct-play only - if it hangs,
-                            the file isn't direct-playable. Transcoding negotiation
-                            lands later.
+                            HLS stream. Jellyfin direct-plays when codecs match,
+                            transcodes to H.264/AAC otherwise. Seek anywhere; the
+                            duration is real.
                         </p>
                     </div>
                 )}

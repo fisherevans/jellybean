@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { authHeaders } from "./auth";
+import HlsVideo from "./HlsVideo";
 
 type StreamResponse = {
     streamUrl: string;
@@ -51,10 +52,9 @@ export default function Play() {
     return (
         <div className="screen">
             <h1>{stream.itemName}</h1>
-            <video
+            <HlsVideo
                 key={stream.itemId}
                 src={stream.streamUrl}
-                controls
                 style={{ width: "100%", maxWidth: 1280 }}
             />
         </div>

@@ -79,26 +79,35 @@ func (c *Client) GetItem(ctx context.Context, id string) (*Item, error) {
 	return &out.Items[0], nil
 }
 
-// StreamURL returns a browser-playable URL the client can hand to <video>.
-// userToken is used for per-user playback attribution; pass empty to fall
-// back to the configured service-account key.
+// StreamURL returns an HLS manifest URL the client can hand to <video>
+// (Safari) or hls.js (Chrome / Firefox). userToken is used for per-user
+// playback attribution; pass empty to fall back to the configured service-
+// account key.
 //
-// Codec strategy: request an MP4 container with H.264 + AAC. Jellyfin will
-// direct-play if the source already matches (no CPU cost) and transcode if
-// not. Without this, MKVs with DTS/AC3/EAC3 audio play silent in browsers
-// because no browser decodes those audio codecs natively. The trade-off is
-// some Jellyfin CPU when transcoding kicks in; on personal hardware that's
-// acceptable. Real adaptive bitrate / HLS lands later.
+// Why HLS rather than a single transcoded MP4: an on-the-fly MP4 transcode
+// does not include full-duration metadata at the start, so the browser
+// can't seek beyond what the server has produced. HLS exposes the real
+// duration and indexes the file as segments, so seeking anywhere is just
+// "fetch the segment that covers timestamp T." The frontend uses hls.js
+// when the browser doesn't support HLS natively.
+//
+// Codec hints (h264 / aac / mp3 / 2 channels) keep transcoding cheap and
+// browser-friendly. Jellyfin direct-plays when the source already
+// satisfies them and transcodes otherwise.
 func (c *Client) StreamURL(itemID, userToken string) string {
 	q := url.Values{}
+	// Jellyfin requires MediaSourceId on the HLS endpoint. For single-file
+	// items it matches the item ID; multi-source items would need a
+	// PlaybackInfo round-trip first. M2 will revisit that when curation
+	// surfaces multi-version items.
+	q.Set("MediaSourceId", itemID)
 	q.Set("VideoCodec", "h264")
 	q.Set("AudioCodec", "aac,mp3")
-	q.Set("Container", "mp4")
 	q.Set("MaxAudioChannels", "2")
 	if userToken != "" {
 		q.Set("api_key", userToken)
 	} else if c.apiKey != "" {
 		q.Set("api_key", c.apiKey)
 	}
-	return fmt.Sprintf("%s/Videos/%s/stream.mp4?%s", c.baseURL, url.PathEscape(itemID), q.Encode())
+	return fmt.Sprintf("%s/Videos/%s/master.m3u8?%s", c.baseURL, url.PathEscape(itemID), q.Encode())
 }
