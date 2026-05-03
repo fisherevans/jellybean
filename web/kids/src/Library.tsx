@@ -8,6 +8,11 @@ import {
     type AdminUser,
     type Session,
 } from "./auth";
+import {
+    cacheKey as buildCacheKey,
+    get as cacheGet,
+    set as cacheSet,
+} from "./libraryCache";
 
 // Library is the kid's main browsing screen. Layout top-to-bottom:
 //
@@ -79,6 +84,11 @@ export default function Library() {
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // refreshError: separate from `error` so a background revalidation
+    // failure doesn't replace the cached UI with an error screen. Shown
+    // as a small inline string under the heading; the cached items stay
+    // on screen.
+    const [refreshError, setRefreshError] = useState<string | null>(null);
 
     const [focus, setFocus] = useState<Focus>({ kind: "filter", index: 0 });
     const tileRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -107,22 +117,56 @@ export default function Library() {
         [filter, adminProfileId],
     );
 
+    // fetchSection issues the network request, optionally with an
+    // If-None-Match header for stale-while-revalidate. Returns either:
+    //   - { status: "modified", page, etag }    full body to render + store
+    //   - { status: "not-modified", etag }      caller keeps cached state
+    // HTTP 4xx/5xx still throw so handlers route them through `error`.
     const fetchSection = useCallback(
-        async (section: "all" | "continue-watching", startIndex: number) => {
+        async (
+            section: "all" | "continue-watching",
+            startIndex: number,
+            ifNoneMatch?: string,
+        ): Promise<
+            | { status: "modified"; page: LibraryResponse; etag: string }
+            | { status: "not-modified"; etag: string }
+        > => {
+            const headers: Record<string, string> = { ...authHeaders() };
+            if (ifNoneMatch) headers["If-None-Match"] = ifNoneMatch;
             const res = await fetch(buildURL(section, startIndex), {
                 credentials: "same-origin",
-                headers: authHeaders(),
+                headers,
             });
+            const etag = res.headers.get("ETag") ?? "";
+            if (res.status === 304) {
+                return { status: "not-modified", etag };
+            }
             if (!res.ok) {
                 throw new Error(`${res.status}: ${await res.text()}`);
             }
-            return (await res.json()) as LibraryResponse;
+            const page = (await res.json()) as LibraryResponse;
+            return { status: "modified", page, etag };
         },
         [buildURL],
     );
 
-    // Initial load (and re-load on filter change). Both sections fire in
-    // parallel to keep the page snappy.
+    // useCache: false in admin-preview (no session means no userId to key
+    // by). Admin previewing always does live fetches.
+    const useCache = !!session && !adminProfileId;
+    const userId = session?.userId ?? "";
+    const typeStr = filterToType(filter);
+    const allKey = useCache
+        ? buildCacheKey(userId, "all", typeStr, PAGE_SIZE, 0, "")
+        : null;
+    const cwKey = useCache
+        ? buildCacheKey(userId, "continue-watching", typeStr, PAGE_SIZE, 0, "")
+        : null;
+
+    // Initial load (and re-load on filter change). Reads cached pages
+    // first (if any) and renders them immediately, then revalidates with
+    // If-None-Match. 304 keeps the cache; 200 replaces it; network
+    // failure leaves the cached tiles in place and surfaces a small
+    // refresh-failed indicator.
     useEffect(() => {
         if (admin === undefined) return;
         if (!session && !adminProfileId) {
@@ -130,30 +174,102 @@ export default function Library() {
             return;
         }
         let cancelled = false;
-        setLoading(true);
         setError(null);
-        setItems([]);
+        setRefreshError(null);
+        // We don't clear items eagerly any more; the cache may have data
+        // we want to render before the network resolves. `loading` is
+        // initialised true and only stays true until either cache or
+        // network produces a result.
+        setLoading(true);
         setNextStart(0);
         setHasMore(false);
 
-        Promise.all([fetchSection("all", 0), fetchSection("continue-watching", 0)])
+        // Cache keys are null in admin-preview mode (no userId).
+        const allK = allKey;
+        const cwK = cwKey;
+
+        // Etags we send back as If-None-Match. Populated synchronously
+        // from the cache reads below.
+        let allEtag: string | undefined;
+        let cwEtag: string | undefined;
+
+        const cacheReads = (async () => {
+            if (!allK && !cwK) return;
+            const [allHit, cwHit] = await Promise.all([
+                allK ? cacheGet(allK) : Promise.resolve(null),
+                cwK ? cacheGet(cwK) : Promise.resolve(null),
+            ]);
+            if (cancelled) return;
+            if (allHit) {
+                const cached = allHit.page as LibraryResponse;
+                setItems(cached.Items ?? []);
+                setHasMore(!!cached.HasMore);
+                setNextStart(cached.NextStartIndex ?? (cached.Items?.length ?? 0));
+                allEtag = allHit.etag;
+                // Cached content is rendered: drop the spinner.
+                setLoading(false);
+            } else {
+                // No cache: blank the grid so we don't show stale items
+                // from the previous filter while the network resolves.
+                setItems([]);
+            }
+            if (cwHit) {
+                const cached = cwHit.page as LibraryResponse;
+                setContinueItems(cached.Items ?? []);
+                cwEtag = cwHit.etag;
+                setLoading(false);
+            } else {
+                setContinueItems([]);
+            }
+        })();
+
+        cacheReads
+            .then(() =>
+                Promise.all([
+                    fetchSection("all", 0, allEtag),
+                    fetchSection("continue-watching", 0, cwEtag),
+                ]),
+            )
             .then(([all, cw]) => {
                 if (cancelled) return;
-                setItems(all.Items ?? []);
-                setHasMore(!!all.HasMore);
-                setNextStart(all.NextStartIndex ?? (all.Items?.length ?? 0));
-                setContinueItems(cw.Items ?? []);
+                if (all.status === "modified") {
+                    setItems(all.page.Items ?? []);
+                    setHasMore(!!all.page.HasMore);
+                    setNextStart(
+                        all.page.NextStartIndex ?? (all.page.Items?.length ?? 0),
+                    );
+                    if (allK && all.etag) {
+                        cacheSet(allK, all.page, all.etag).catch(() => {});
+                    }
+                }
+                if (cw.status === "modified") {
+                    setContinueItems(cw.page.Items ?? []);
+                    if (cwK && cw.etag) {
+                        cacheSet(cwK, cw.page, cw.etag).catch(() => {});
+                    }
+                }
                 setLoading(false);
+                setRefreshError(null);
             })
             .catch((err) => {
                 if (cancelled) return;
-                setError(String(err.message ?? err));
+                // Distinguish "we had cache to fall back on" (background
+                // refresh failed, keep tiles, show small indicator) from
+                // "no cache + the network failed" (full error screen).
+                const haveCache = allEtag !== undefined || cwEtag !== undefined;
+                if (haveCache) {
+                    setRefreshError("Couldn't refresh");
+                } else {
+                    setError(String(err.message ?? err));
+                }
                 setLoading(false);
             });
         return () => {
             cancelled = true;
         };
-    }, [admin, session, adminProfileId, fetchSection, nav]);
+        // allKey / cwKey already encode session + filter + adminProfileId;
+        // depending on them keeps this effect stable across renders.
+    }, [admin, session, adminProfileId, fetchSection, nav, allKey, cwKey]);
 
     // Infinite scroll for the main grid.
     useEffect(() => {
@@ -165,7 +281,9 @@ export default function Library() {
                 if (!visible) return;
                 setLoadingMore(true);
                 fetchSection("all", nextStart)
-                    .then((page) => {
+                    .then((res) => {
+                        if (res.status !== "modified") return;
+                        const page = res.page;
                         setItems((cur) => [...cur, ...(page.Items ?? [])]);
                         setNextStart(page.NextStartIndex ?? nextStart);
                         setHasMore(!!page.HasMore);
@@ -285,6 +403,11 @@ export default function Library() {
             </div>
 
             {error && <p className="error">{error}</p>}
+            {refreshError && (
+                <p className="library-refresh-error" role="status">
+                    {refreshError}
+                </p>
+            )}
 
             {loading ? (
                 <p className="library-state">Loading...</p>

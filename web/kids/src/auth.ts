@@ -22,6 +22,8 @@
 // Jellyfin's session view sees the right device identity even on
 // admin-driven calls (e.g. preview at /kids/library?profileId=N).
 
+import { clear as clearLibraryCache } from "./libraryCache";
+
 const TOKEN_KEY = "jellybean.kids.token";
 const USER_ID_KEY = "jellybean.kids.userId";
 const PROFILE_ID_KEY = "jellybean.kids.profileId";
@@ -97,6 +99,10 @@ export function clearSession(): void {
         toRemove.push(k);
     }
     for (const k of toRemove) localStorage.removeItem(k);
+    // Drop any cached library data so the next kid signing in on this
+    // device can't see the previous kid's tiles. Best-effort: any IDB
+    // failure is swallowed so sign-out always succeeds.
+    clearLibraryCache().catch(() => {});
 }
 
 // getDeviceId returns a stable per-install UUID, generating + persisting one

@@ -458,7 +458,7 @@ func (s *Server) handleAdminRecentActivity(w http.ResponseWriter, r *http.Reques
 
 // handleAdminReconcile walks every categorization, asks Jellyfin which
 // item ids still resolve, and tombstones (or untombstones) the rest via
-// curation.Store.Reconcile. Manual trigger only — no scheduler yet. Safe
+// curation.Store.Reconcile. Manual trigger only - no scheduler yet. Safe
 // to invoke at any time; the reconciler is service-account scoped and
 // idempotent for unchanged rows.
 //

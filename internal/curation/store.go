@@ -341,7 +341,7 @@ func (s *Store) RecentHistory(ctx context.Context, profileID int64, limit int) (
 
 // ListAllCategorizationItemIDs returns every distinct jellyfin_item_id in
 // the categorizations table, regardless of profile or orphan state. This
-// is the input set for Reconcile — we ask Jellyfin which of these still
+// is the input set for Reconcile - we ask Jellyfin which of these still
 // exist and tombstone the rest.
 func (s *Store) ListAllCategorizationItemIDs(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -400,7 +400,7 @@ const orphanReconcileBatchSize = 200
 // tombstoned are restored (ClearOrphan).
 //
 // The lookup func is injected so callers (and tests) can decide how to
-// resolve ids — production wires it to jellyfin.GetItems with an Ids
+// resolve ids - production wires it to jellyfin.GetItems with an Ids
 // filter; tests pass a fake. It must return a set of ids actually found
 // in the input batch; ids absent from the returned set are treated as
 // missing.
@@ -436,6 +436,16 @@ func (s *Store) Reconcile(
 		if err != nil {
 			return checked, marked, cleared, fmt.Errorf("lookup batch: %w", err)
 		}
+		// Guard against transient lookup quirks: a Jellyfin parse /
+		// encoding glitch on a full-sized batch is more likely than
+		// every one of 200 ids genuinely vanishing at once. A small
+		// final batch returning zero matches is plausible (e.g. the
+		// last 3 items in a library that really were all deleted), so
+		// only fire on full-size batches. Bail with progress-so-far;
+		// the operator can inspect and re-run.
+		if len(batch) >= orphanReconcileBatchSize && len(found) == 0 {
+			return checked, marked, cleared, fmt.Errorf("lookup returned empty result for full batch of %d ids; refusing to mass-tombstone", len(batch))
+		}
 		for _, id := range batch {
 			checked++
 			_, isOrphan := orphanedNow[id]
@@ -445,16 +455,70 @@ func (s *Store) Reconcile(
 				if err := s.MarkOrphan(ctx, id); err != nil {
 					return checked, marked, cleared, fmt.Errorf("mark orphan %s: %w", id, err)
 				}
+				if err := s.appendOrphanHistoryAcross(ctx, id, true); err != nil {
+					return checked, marked, cleared, fmt.Errorf("history orphan %s: %w", id, err)
+				}
 				marked++
 			case exists && isOrphan:
 				if err := s.ClearOrphan(ctx, id); err != nil {
 					return checked, marked, cleared, fmt.Errorf("clear orphan %s: %w", id, err)
+				}
+				if err := s.appendOrphanHistoryAcross(ctx, id, false); err != nil {
+					return checked, marked, cleared, fmt.Errorf("history clear %s: %w", id, err)
 				}
 				cleared++
 			}
 		}
 	}
 	return checked, marked, cleared, nil
+}
+
+// appendOrphanHistoryAcross writes one categorization_history row per
+// affected (item, profile) so the admin's recent-activity view shows
+// what the reconciler did. orphaned=true marks an "orphaned"
+// transition (current state -> orphaned); orphaned=false marks a
+// "restored" transition (orphaned -> current state).
+func (s *Store) appendOrphanHistoryAcross(ctx context.Context, jellyfinItemID string, orphaned bool) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT profile_id, state FROM categorizations WHERE jellyfin_item_id = ?`,
+		jellyfinItemID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type entry struct {
+		profileID int64
+		state     string
+	}
+	var entries []entry
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.profileID, &e.state); err != nil {
+			return err
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		var fromVal, toVal any
+		if orphaned {
+			fromVal = e.state
+			toVal = "orphaned"
+		} else {
+			fromVal = "orphaned"
+			toVal = e.state
+		}
+		if _, err := s.db.ExecContext(ctx, `
+			INSERT INTO categorization_history
+			    (jellyfin_item_id, profile_id, from_state, to_state, changed_by, changed_at)
+			VALUES (?, ?, ?, ?, 'reconciler', unixepoch())`,
+			jellyfinItemID, e.profileID, fromVal, toVal); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // listOrphanedItemIDs returns the set of distinct item ids that have at

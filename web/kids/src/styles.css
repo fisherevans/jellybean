@@ -239,6 +239,13 @@ a,
     padding: 1rem 0;
 }
 
+.library-refresh-error {
+    color: var(--error);
+    font-size: 0.8rem;
+    margin: 0.25rem 0 0.75rem;
+    opacity: 0.85;
+}
+
 .library-list {
     list-style: none;
     padding: 0;

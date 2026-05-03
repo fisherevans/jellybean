@@ -167,6 +167,149 @@ test.describe("kids library", () => {
     });
 });
 
+// IndexedDB-backed library cache (issue #25). Pairs with the server
+// ETag from #24 to render cached tiles instantly on navigation, then
+// revalidate against the server with If-None-Match.
+//
+// The kids client only consults the cache when a *real* kid session is
+// in localStorage (no userId in admin-preview mode = no key to scope
+// against). To exercise the cache wiring without a real Jellyfin kid
+// mapping for the admin user, this test simulates a session: it drops
+// the admin cookie and pre-populates both localStorage and IDB before
+// the page loads. The subsequent network request fails (no real bearer)
+// but the assertions are about cache-render-before-network and the
+// If-None-Match header, not about a successful refresh.
+test.describe("kids library cache", () => {
+    test("renders cached tiles before network and sends If-None-Match on revalidation", async ({
+        page,
+        context,
+    }) => {
+        // Drop the admin cookie so resolveKidsAuth doesn't fall through
+        // to the admin-cookie path. We want pure bearer (kid) auth so
+        // the cache code branch (useCache = !!session && !adminProfileId)
+        // is exercised.
+        await context.clearCookies();
+
+        const FAKE_USER_ID = "cache-test-user-id";
+        const FAKE_ETAG = 'W/"cache-test-etag"';
+        const CACHE_TILE_NAME = "Cached Test Tile";
+        const CACHE_KEY_ALL = `${FAKE_USER_ID}:all:Movie,Series:24:0:`;
+        const CACHE_KEY_CW = `${FAKE_USER_ID}:continue-watching:Movie,Series:24:0:`;
+
+        // Seed the kids client's localStorage + IDB before the SPA boots.
+        // addInitScript runs in every page context within this test, so
+        // the second navigation (the "reload") sees the same state.
+        await page.addInitScript(
+            ({ userId, etag, tileName, allKey, cwKey }) => {
+                if (location.pathname.startsWith("/kids")) {
+                    localStorage.setItem("jellybean.kids.token", "fake-bearer-token");
+                    localStorage.setItem("jellybean.kids.userId", userId);
+                    localStorage.setItem("jellybean.kids.userName", "cache-test");
+                    localStorage.setItem("jellybean.kids.profileId", "1");
+                    localStorage.setItem("jellybean.kids.kidName", "Cache Test Kid");
+                }
+                // Seed IDB. Keep this in sync with libraryCache.ts:
+                // db = "jellybean-kids", store = "library", v1.
+                const seed = (key: string, page: unknown) =>
+                    new Promise<void>((resolve) => {
+                        const open = indexedDB.open("jellybean-kids", 1);
+                        open.onupgradeneeded = () => {
+                            const db = open.result;
+                            if (!db.objectStoreNames.contains("library")) {
+                                db.createObjectStore("library");
+                            }
+                        };
+                        open.onsuccess = () => {
+                            const db = open.result;
+                            const tx = db.transaction("library", "readwrite");
+                            tx.objectStore("library").put(
+                                { page, etag, savedAt: Date.now() },
+                                key,
+                            );
+                            tx.oncomplete = () => {
+                                db.close();
+                                resolve();
+                            };
+                            tx.onerror = () => {
+                                db.close();
+                                resolve();
+                            };
+                        };
+                        open.onerror = () => resolve();
+                    });
+                const allPage = {
+                    Items: [
+                        {
+                            Id: "cache-test-id-1",
+                            Name: tileName,
+                            Type: "Movie",
+                            ImageTags: {},
+                        },
+                    ],
+                    HasMore: false,
+                    NextStartIndex: 1,
+                    ProfileId: 1,
+                };
+                const cwPage = { Items: [], ProfileId: 1 };
+                // Fire-and-await both seeds; tests block on this script
+                // because it's awaited.
+                (window as unknown as { __cacheSeed: Promise<void> }).__cacheSeed =
+                    Promise.all([seed(allKey, allPage), seed(cwKey, cwPage)]).then(
+                        () => undefined,
+                    );
+            },
+            {
+                userId: FAKE_USER_ID,
+                etag: FAKE_ETAG,
+                tileName: CACHE_TILE_NAME,
+                allKey: CACHE_KEY_ALL,
+                cwKey: CACHE_KEY_CW,
+            },
+        );
+
+        // First load: prime the page (the cache write happened in the
+        // init script; we just need the SPA to mount once so any SPA
+        // state is consistent).
+        await page.goto(KIDS_BASE);
+        // Wait for the cache seed to finish.
+        await page.evaluate(
+            () =>
+                (window as unknown as { __cacheSeed?: Promise<void> }).__cacheSeed ??
+                Promise.resolve(),
+        );
+
+        // Capture the library request that fires after the second nav so
+        // we can inspect its If-None-Match header. Hook before navigating.
+        const libraryReq = page.waitForRequest((req) =>
+            req.url().includes("/api/kids/library") && req.method() === "GET"
+            && new URL(req.url()).searchParams.get("section") === "all",
+        );
+
+        // Navigate to the library. Cache should produce the tile before
+        // the network resolves.
+        const navStart = Date.now();
+        await page.goto(`${KIDS_BASE}library`);
+
+        // Cached tile must render quickly. We give it a generous 1500ms
+        // ceiling (CI machines vary), then assert the elapsed time was
+        // under a tight cache-hit budget. The network request will most
+        // likely 401 (fake bearer + no admin cookie), so this can only
+        // succeed via the IDB cache.
+        const tile = page.locator(".tile-grid").first();
+        await tile.waitFor({ state: "visible", timeout: 1500 });
+        const elapsed = Date.now() - navStart;
+        // Cache renders well before any 1s+ network round-trip would. We
+        // pad heavily for CI but stay below typical fetch cycles.
+        expect(elapsed).toBeLessThan(1500);
+        await expect(tile.locator(".tile-title")).toHaveText(CACHE_TILE_NAME);
+
+        // The revalidation request must carry If-None-Match with the
+        // cached etag.
+        const req = await libraryReq;
+        expect(req.headers()["if-none-match"]).toBe(FAKE_ETAG);
+    });
+});
+
 // Playback. Admin path (no kid token) so the server-side report
 // short-circuits and Jellyfin's session view stays clean. We're verifying
 // the client-side wiring, not real Jellyfin attribution.

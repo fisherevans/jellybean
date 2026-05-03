@@ -404,21 +404,31 @@ type kidsLibraryETagInputs struct {
 }
 
 // computeKidsLibraryETag returns a weak ETag (W/"...") for the given
-// inputs. For section=continue-watching we mix in a per-minute time
-// bucket so the resume row refreshes at most once a minute on inactive
-// devices but invalidates promptly when the kid plays. This is
-// intentional: continue-watching state lives in Jellyfin (resume ticks
-// updated by playback reports) and we have no cheap server-side signal
-// for "did playback happen since last request", so a coarse clock bucket
-// is the cheapest correct invalidator. Don't try to "fix" this by
-// removing the time bucket — stale resume rows are a worse failure mode
-// than an extra round-trip per minute.
+// inputs.
+//
+// JellyfinUserID is mixed in for every section, not just
+// continue-watching: GetItemsAsUser asks Jellyfin for per-user UserData
+// (resume position, watched flag, play count) on the "all" + "recent"
+// sections too. Two kids on the same Jellybean profile have different
+// UserData, so the response body differs even when the curation state
+// is identical. Without userId in the ETag, a shared cache could
+// (today) or will (when the client renders watched markers) hand
+// kid B's body to kid A.
+//
+// For section=continue-watching we additionally mix in a per-minute
+// time bucket so the resume row refreshes at most once a minute on
+// inactive devices but invalidates promptly when the kid plays. This
+// is intentional: resume ticks live in Jellyfin and we have no cheap
+// server-side signal for "did playback happen since last request", so
+// a coarse clock bucket is the cheapest correct invalidator. Don't
+// remove the bucket - stale resume rows are a worse failure mode than
+// an extra round-trip per minute.
 func computeKidsLibraryETag(in kidsLibraryETagInputs) string {
 	types := append([]string(nil), in.Types...)
 	sort.Strings(types)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "profile=%d;sec=%s;type=%s;limit=%d;start=%d;search=%s;mtime=%d",
+	fmt.Fprintf(&b, "profile=%d;sec=%s;type=%s;limit=%d;start=%d;search=%s;mtime=%d;userId=%s",
 		in.ProfileID,
 		in.Section,
 		strings.Join(types, ","),
@@ -426,9 +436,10 @@ func computeKidsLibraryETag(in kidsLibraryETagInputs) string {
 		in.StartIndex,
 		in.Search,
 		in.MaxSetAt,
+		in.JellyfinUserID,
 	)
 	if in.Section == "continue-watching" {
-		fmt.Fprintf(&b, ";userId=%s;tbucket=%d", in.JellyfinUserID, time.Now().Unix()/60)
+		fmt.Fprintf(&b, ";tbucket=%d", time.Now().Unix()/60)
 	}
 
 	sum := sha256.Sum256([]byte(b.String()))

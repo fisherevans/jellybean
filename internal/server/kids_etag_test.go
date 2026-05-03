@@ -163,6 +163,51 @@ func TestKidsLibraryETagChangesWhenItemOrphaned(t *testing.T) {
 	}
 }
 
+// Two kids on the same profile see the same curation but Jellyfin's
+// UserData (resume / watched / played) differs per user. The ETag has
+// to scope by userId for every section, not just continue-watching, so
+// kid B can't accidentally hit a cache entry produced for kid A.
+func TestKidsLibraryETagScopesPerUser(t *testing.T) {
+	library := []jellyfin.Item{
+		{ID: "a", Name: "Movie A", Type: "Movie"},
+	}
+	srv, profileID := kidsTestServer(t, library, nil, nil)
+	store := curation.NewStore(srv.db)
+	visible := curation.StateVisible
+	store.SetState(t.Context(), "a", profileID, &visible, "admin")
+
+	tagsForUser := func(userID string) string {
+		req := httptest.NewRequest(http.MethodGet, "/api/kids/library", nil)
+		req.Header.Set("Authorization", "Bearer some-token")
+		req.Header.Set(kidsUserIDHeader, userID)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		return rec.Header().Get("ETag")
+	}
+
+	// First user is the test-fixture kid (mapped to profile 1). Second
+	// is unmapped, which would 401 - we instead use the admin-preview
+	// path with a stub session by piggybacking the same kid via the
+	// curation store: create a second kid record with a different
+	// jellyfin_user_id but the same profile.
+	if _, err := store.CreateKid(t.Context(), curation.CreateKidParams{
+		Name:           "kid-2",
+		ProfileID:      profileID,
+		JellyfinUserID: "kid-user-2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	etag1 := tagsForUser(testJellyfinUserID)
+	etag2 := tagsForUser("kid-user-2")
+	if etag1 == "" || etag2 == "" {
+		t.Fatalf("missing ETag(s); got %q / %q", etag1, etag2)
+	}
+	if etag1 == etag2 {
+		t.Errorf("expected different ETag per user, got same %q", etag1)
+	}
+}
+
 func TestKidsLibraryStaleIfNoneMatchReturns200(t *testing.T) {
 	library := []jellyfin.Item{
 		{ID: "a", Name: "Movie A", Type: "Movie"},

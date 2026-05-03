@@ -2,6 +2,7 @@ package curation
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"testing"
 )
@@ -232,7 +233,7 @@ func TestSetStateClearsOrphan(t *testing.T) {
 
 func TestListAllCategorizationItemIDsIncludesOrphaned(t *testing.T) {
 	// The reconciler depends on this returning every id, including ones
-	// that were tombstoned in a previous pass — so it can re-check them
+	// that were tombstoned in a previous pass, so it can re-check them
 	// and clear if Jellyfin re-imports.
 	_, store, profileID := openStore(t)
 	ctx := context.Background()
@@ -253,5 +254,89 @@ func TestListAllCategorizationItemIDsIncludesOrphaned(t *testing.T) {
 	sort.Strings(got)
 	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
 		t.Errorf("got = %v, want [a b]", got)
+	}
+}
+
+// If the lookup func returns an empty result for a FULL batch, the
+// reconciler must NOT mass-tombstone every id. A full-batch empty
+// result is more likely a Jellyfin parse glitch than every one of 200
+// ids vanishing at once. Reconcile bails before any orphan markings.
+//
+// Smaller batches (e.g. the last 3 items in a small library that all
+// really were deleted) are legit and tested by other cases above.
+func TestReconcileRefusesToMassTombstoneOnFullEmptyBatch(t *testing.T) {
+	_, store, profileID := openStore(t)
+	ctx := context.Background()
+
+	// Seed enough rows that a single batch fills the 200-id batch size.
+	for i := 0; i < 250; i++ {
+		id := fmt.Sprintf("item-%03d", i)
+		if _, err := store.SetState(ctx, id, profileID, stateOf(StateVisible), "admin"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	emptyLookup := func(_ context.Context, _ []string) (map[string]struct{}, error) {
+		return map[string]struct{}{}, nil
+	}
+
+	_, marked, _, err := store.Reconcile(ctx, emptyLookup)
+	if err == nil {
+		t.Errorf("expected error from mass-tombstone guard on full empty batch, got nil")
+	}
+	if marked != 0 {
+		t.Errorf("marked = %d, want 0 - reconciler should bail before any tombstoning", marked)
+	}
+	if isOrphaned(t, store, "item-000") {
+		t.Errorf("item-000 should NOT be orphaned after a refused-batch reconcile")
+	}
+}
+
+// MarkOrphan + ClearOrphan via Reconcile must produce
+// categorization_history rows so the admin recent-activity view shows
+// what the reconciler did.
+func TestReconcileWritesHistory(t *testing.T) {
+	_, store, profileID := openStore(t)
+	ctx := context.Background()
+
+	if _, err := store.SetState(ctx, "ghost", profileID, stateOf(StateVisible), "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	// First pass: ghost is missing from Jellyfin, should be tombstoned
+	// AND a history row should land.
+	if _, _, _, err := store.Reconcile(ctx, staticLookup("decoy")); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	rows, err := store.RecentHistory(ctx, profileID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var orphanedTransitions int
+	for _, h := range rows {
+		if h.ItemID == "ghost" && h.ToState != nil && string(*h.ToState) == "orphaned" {
+			orphanedTransitions++
+		}
+	}
+	if orphanedTransitions != 1 {
+		t.Errorf("expected 1 orphaned-transition history row for 'ghost', got %d", orphanedTransitions)
+	}
+
+	// Second pass: ghost reappears. Should clear AND record a restore.
+	if _, _, _, err := store.Reconcile(ctx, staticLookup("ghost")); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	rows, err = store.RecentHistory(ctx, profileID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restoreTransitions int
+	for _, h := range rows {
+		if h.ItemID == "ghost" && h.FromState != nil && string(*h.FromState) == "orphaned" {
+			restoreTransitions++
+		}
+	}
+	if restoreTransitions != 1 {
+		t.Errorf("expected 1 restore history row for 'ghost', got %d", restoreTransitions)
 	}
 }
