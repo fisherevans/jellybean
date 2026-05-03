@@ -40,7 +40,7 @@ Milestones and tasks live in GitHub, not in this repo.
   `gh issue list --repo fisherevans/jellybean --milestone "M3: Kids client UI" --state open`
 - Single issue: `gh issue view <number> --repo fisherevans/jellybean`
 
-Current milestone: **M3: Kids client UI**.
+Current milestone: **M5: TV deployment**.
 
 ### How to pick up an issue
 
@@ -64,16 +64,25 @@ Current milestone: **M3: Kids client UI**.
   swipe gestures, activity, search), profile + kid management with per-kid
   Jellyfin tokens, both Movies and TV Series treated as first-class. 8
   issues, plus follow-up polish.
-- **M3: Kids client UI** (current) - Profile picker on launch, browse grid
-  mixing movies + series, "Continue Watching" with resume, D-pad focus
-  management, playback with reporting back to Jellyfin so resume + watched
-  state are populated, per-device DeviceId pass-through. 6 issues.
-- **M3: Kids client UI** - profile picker, browse grid, D-pad focus
-  management, recently watched / continue watching, playback with resume.
-- **M4: Caching layer** - IndexedDB metadata cache, Cache API for artwork,
-  content version etag, render-from-cache-then-refresh.
-- **M5: TV deployment** - first real-TV target (Tizen or Google TV TBD at
-  milestone start), packaging, sideload script, on-device validation.
+- **M3: Kids client UI** (closed) - Browse grid mixing movies + series,
+  "Continue Watching" with resume, D-pad focus management, playback with
+  reporting back to Jellyfin, per-device DeviceId pass-through. 6 issues.
+  Plus a post-M3 auth pivot: API-key TVs replaced with a normal Jellyfin
+  username/password login screen (see docs/auth-pivot-plan.md). The kid
+  client stores a bearer token locally; admin-side kid records are now
+  just (jellyfin_user_id -> profile_id) mappings, no passwords or tokens.
+- **M4: Caching layer** (closed) - Server-side ETag on GET /api/kids/library
+  with 304 round-tripping, IndexedDB-backed client cache with
+  stale-while-revalidate, image proxy returning immutable Cache-Control
+  for content-addressed posters, orphan-categorization reconciliation
+  (manual trigger via POST /api/admin/maintenance/reconcile), and an
+  offline fallback that renders cached library + a "can't play offline"
+  message when the network drops. 5 issues.
+- **M5: TV deployment** (current) - first real-TV target (Tizen or
+  Google TV TBD at milestone start), packaging, sideload script,
+  on-device validation. Verify M4's IDB cache + navigator.onLine
+  behavior on the chosen TV runtime; consider scheduling the
+  reconciler instead of leaving it manual-only.
 
 (M6 "Optional Jellyfin tag mirror" was scrapped - the local SQLite store is
 already the source of truth and there is no benefit to mirroring it back
