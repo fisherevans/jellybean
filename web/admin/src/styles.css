@@ -516,6 +516,99 @@ button:disabled {
     box-shadow: 0 0 0 1px var(--accent);
 }
 
+.item-card.lang-mismatch {
+    border-color: var(--error);
+    box-shadow: 0 0 0 1px var(--error);
+}
+
+.triage-card.lang-mismatch {
+    box-shadow: 0 0 0 3px var(--error), 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.lang-badge {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--muted);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+}
+
+.lang-badge-mismatch {
+    background: var(--error);
+    color: #fff;
+}
+
+.dashboard-counts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+}
+
+.count-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-width: 0;
+}
+
+.count-card.count-ok {
+    border-left-color: var(--success);
+}
+
+.count-card.count-warn {
+    border-left-color: var(--accent-warm);
+}
+
+.count-card.count-bad {
+    border-left-color: var(--error);
+}
+
+.count-label {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+}
+
+.count-value {
+    font-size: 2.4rem;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--fg);
+}
+
+.count-note {
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+
+.count-cta {
+    margin-top: 0.4rem;
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.dashboard-links {
+    display: flex;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    margin-top: 1.5rem;
+    color: var(--muted);
+}
+
 .item-card-body {
     background: transparent;
     border: 0;
@@ -530,12 +623,81 @@ button:disabled {
     align-items: flex-start;
 }
 
+.item-card-poster-wrap {
+    position: relative;
+    flex: 0 0 auto;
+    align-self: flex-start;
+}
+
 .item-card-poster {
     flex: 0 0 auto;
     border-radius: 4px;
     object-fit: cover;
     background: #1a1c20;
     aspect-ratio: 2 / 3;
+}
+
+.item-card-preview {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    color: var(--accent-fg);
+    border-radius: 4px;
+    font-size: 1.6rem;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 120ms ease;
+    user-select: none;
+}
+
+.item-card-poster-wrap:hover .item-card-preview,
+.item-card-preview:focus {
+    opacity: 1;
+    outline: none;
+}
+
+.preview-modal {
+    max-width: 960px;
+    width: 92%;
+    padding: 1rem;
+}
+
+.preview-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.preview-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+}
+
+.preview-header button {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 0.2rem 0.6rem;
+    font-size: 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.preview-video {
+    width: 100%;
+    max-height: 70vh;
+    background: #000;
+    border-radius: 4px;
+}
+
+.preview-note {
+    font-size: 0.8rem;
+    margin: 0.5rem 0 0;
 }
 
 .item-card-poster.placeholder {
@@ -771,6 +933,12 @@ button:disabled {
     align-items: flex-start;
 }
 
+.triage-poster-wrap {
+    position: relative;
+    flex: 0 0 200px;
+    width: 200px;
+}
+
 .triage-poster {
     flex: 0 0 200px;
     width: 200px;
@@ -779,6 +947,27 @@ button:disabled {
     object-fit: cover;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
     background: #1a1c20;
+}
+
+.triage-preview {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.6);
+    color: var(--accent-fg);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: background 100ms ease;
+}
+
+.triage-preview:hover,
+.triage-preview:focus-visible {
+    background: var(--accent);
+    outline: none;
 }
 
 .triage-poster.placeholder {

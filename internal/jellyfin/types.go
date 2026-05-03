@@ -38,6 +38,39 @@ type Item struct {
 	// "what series did this come from" without a second round trip.
 	SeriesID   string `json:"SeriesId,omitempty"`
 	SeriesName string `json:"SeriesName,omitempty"`
+	// MediaStreams is populated when Fields=MediaStreams is requested.
+	// Used to surface the primary audio language for the curation UI.
+	MediaStreams []MediaStream `json:"MediaStreams,omitempty"`
+}
+
+// MediaStream is the audio/video/subtitle stream metadata Jellyfin
+// returns inside an item. We only care about Type=Audio for language
+// detection; other types are ignored.
+type MediaStream struct {
+	Type      string `json:"Type"`
+	Language  string `json:"Language"`
+	Codec     string `json:"Codec"`
+	Index     int    `json:"Index"`
+	IsDefault bool   `json:"IsDefault"`
+}
+
+// PrimaryAudioLanguage returns the best-effort language code for the
+// item's main audio track: the default audio stream if marked, otherwise
+// the first audio stream. Empty when no audio metadata is available.
+func (i Item) PrimaryAudioLanguage() string {
+	var first string
+	for _, s := range i.MediaStreams {
+		if s.Type != "Audio" {
+			continue
+		}
+		if s.IsDefault && s.Language != "" {
+			return s.Language
+		}
+		if first == "" {
+			first = s.Language
+		}
+	}
+	return first
 }
 
 // ItemUserData carries the per-user playback metadata: how far through

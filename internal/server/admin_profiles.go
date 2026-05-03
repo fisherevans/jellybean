@@ -12,20 +12,22 @@ import (
 )
 
 type profileResponse struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	CreatedAt   int64  `json:"createdAt"`
-	KidCount    int    `json:"kidCount"`
+	ID              int64  `json:"id"`
+	Name            string `json:"name"`
+	Description     string `json:"description,omitempty"`
+	DefaultLanguage string `json:"defaultLanguage"`
+	CreatedAt       int64  `json:"createdAt"`
+	KidCount        int    `json:"kidCount"`
 }
 
 func toProfileResponse(p curation.ProfileWithKidCount) profileResponse {
 	return profileResponse{
-		ID:          p.ID,
-		Name:        p.Name,
-		Description: p.Description,
-		CreatedAt:   p.CreatedAt.Unix(),
-		KidCount:    p.KidCount,
+		ID:              p.ID,
+		Name:            p.Name,
+		Description:     p.Description,
+		DefaultLanguage: p.DefaultLanguage,
+		CreatedAt:       p.CreatedAt.Unix(),
+		KidCount:        p.KidCount,
 	}
 }
 
@@ -44,8 +46,9 @@ func (s *Server) handleListProfiles(w http.ResponseWriter, r *http.Request) {
 }
 
 type profileMutation struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	DefaultLanguage string `json:"defaultLanguage"`
 }
 
 func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
@@ -55,8 +58,9 @@ func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := s.curation.CreateProfile(r.Context(), curation.ProfileInput{
-		Name:        req.Name,
-		Description: req.Description,
+		Name:            req.Name,
+		Description:     req.Description,
+		DefaultLanguage: req.DefaultLanguage,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -77,8 +81,9 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := s.curation.UpdateProfile(r.Context(), id, curation.ProfileInput{
-		Name:        req.Name,
-		Description: req.Description,
+		Name:            req.Name,
+		Description:     req.Description,
+		DefaultLanguage: req.DefaultLanguage,
 	})
 	if err != nil {
 		if errors.Is(err, curation.ErrProfileNotFound) {

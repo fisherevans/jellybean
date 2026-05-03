@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, HttpError, typeFilterParam, type Item, type ItemState } from "../api";
 import { useActiveProfile } from "../activeProfile";
 import { useTypeFilter } from "../useTypeFilter";
+import PreviewModal from "../PreviewModal";
 import TypeFilterPicker from "../TypeFilter";
 
 // Triage as a Tinder-style card stack:
@@ -70,6 +71,7 @@ export default function Triage() {
     const [swipe, setSwipe] = useState<SwipeAnim | null>(null);
     const [flash, setFlash] = useState<SwipeDir | null>(null);
     const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
+    const [previewItem, setPreviewItem] = useState<Item | null>(null);
     const dragRef = useRef<{ startX: number; startY: number } | null>(null);
 
     async function fetchBatch(startIndex: number) {
@@ -305,7 +307,12 @@ export default function Triage() {
 
             <div className="triage-stack">
                 {upcoming && (
-                    <Card item={upcoming} className="triage-card behind" interactive={false} />
+                    <Card
+                        item={upcoming}
+                        className="triage-card behind"
+                        interactive={false}
+                        expectedLanguage={profile?.defaultLanguage}
+                    />
                 )}
                 <Card
                     key={current.Id}
@@ -321,6 +328,8 @@ export default function Triage() {
                     onPointerMove={onPointerMove}
                     onPointerUp={onPointerUp}
                     onPointerCancel={onPointerUp}
+                    onPreview={() => setPreviewItem(current)}
+                    expectedLanguage={profile?.defaultLanguage}
                 />
                 {flash && (
                     <div className={`triage-flash ${flashColor(flash)}`}>
@@ -367,6 +376,14 @@ export default function Triage() {
             <p className="muted">
                 Keyboard: ← hide · → show · ↓ skip · ↑ back · or drag the card.
             </p>
+
+            {previewItem && (
+                <PreviewModal
+                    itemId={previewItem.Id}
+                    itemName={previewItem.Name}
+                    onClose={() => setPreviewItem(null)}
+                />
+            )}
         </div>
     );
 }
@@ -380,6 +397,8 @@ type CardProps = {
     onPointerMove?: (e: React.PointerEvent) => void;
     onPointerUp?: (e: React.PointerEvent) => void;
     onPointerCancel?: (e: React.PointerEvent) => void;
+    onPreview?: () => void;
+    expectedLanguage?: string;
 };
 
 function Card({
@@ -391,6 +410,8 @@ function Card({
     onPointerMove,
     onPointerUp,
     onPointerCancel,
+    onPreview,
+    expectedLanguage,
 }: CardProps) {
     const meta: string[] = [];
     if (item.ProductionYear) meta.push(String(item.ProductionYear));
@@ -400,10 +421,14 @@ function Card({
         ? `/api/admin/items/${item.Id}/image?type=Primary&width=400`
         : null;
     const backdropURL = `/api/admin/items/${item.Id}/image?type=Backdrop&width=1280`;
+    const lang = (item.AudioLanguage ?? "").toLowerCase();
+    const expected = (expectedLanguage ?? "").toLowerCase();
+    const langMismatch = !!lang && !!expected && lang !== expected;
+    const cardClass = langMismatch ? `${className} lang-mismatch` : className;
 
     return (
         <div
-            className={className}
+            className={cardClass}
             style={{ ...style, touchAction: interactive ? "none" : undefined }}
             onPointerDown={interactive ? onPointerDown : undefined}
             onPointerMove={interactive ? onPointerMove : undefined}
@@ -418,14 +443,46 @@ function Card({
                 onError={(e) => (e.currentTarget.style.display = "none")}
             />
             <div className="triage-content">
-                {posterURL ? (
-                    <img className="triage-poster" src={posterURL} alt="" draggable={false} />
-                ) : (
-                    <div className="triage-poster placeholder">no poster</div>
-                )}
+                <div className="triage-poster-wrap">
+                    {posterURL ? (
+                        <img className="triage-poster" src={posterURL} alt="" draggable={false} />
+                    ) : (
+                        <div className="triage-poster placeholder">no poster</div>
+                    )}
+                    {onPreview && interactive && (
+                        <button
+                            type="button"
+                            className="triage-preview"
+                            aria-label={`Preview ${item.Name}`}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onPreview();
+                            }}
+                        >
+                            ▶
+                        </button>
+                    )}
+                </div>
                 <div className="triage-info">
                     <h1>{item.Name}</h1>
-                    {meta.length > 0 && <div className="muted">{meta.join(" · ")}</div>}
+                    {(meta.length > 0 || lang) && (
+                        <div className="muted">
+                            {meta.join(" · ")}
+                            {lang && (
+                                <span
+                                    className={`lang-badge ${langMismatch ? "lang-badge-mismatch" : ""}`}
+                                    title={
+                                        langMismatch
+                                            ? `Audio: ${lang}; profile default is ${expected}`
+                                            : `Audio: ${lang}`
+                                    }
+                                >
+                                    {lang}
+                                </span>
+                            )}
+                        </div>
+                    )}
                     {item.Studios && item.Studios.length > 0 && (
                         <div className="muted">
                             {item.Studios.map((s) => s.Name).join(", ")}

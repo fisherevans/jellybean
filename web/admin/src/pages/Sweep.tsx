@@ -4,6 +4,7 @@ import { api, HttpError, formatState, typeFilterParam, type Item, type ItemState
 import { useActiveProfile } from "../activeProfile";
 import { useTypeFilter } from "../useTypeFilter";
 import ItemCard from "../ItemCard";
+import PreviewModal from "../PreviewModal";
 import TypeFilterPicker from "../TypeFilter";
 
 // Sweep loads items that have no state for the active profile and groups
@@ -47,6 +48,7 @@ export default function Sweep() {
     });
     const [leaving, setLeaving] = useState<Set<string>>(new Set());
     const [recentAction, setRecentAction] = useState<RecentAction | null>(null);
+    const [previewItem, setPreviewItem] = useState<Item | null>(null);
     const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     async function loadInitial() {
@@ -348,10 +350,12 @@ export default function Sweep() {
                                         selected={selected.has(it.Id)}
                                         onSelect={(e) => handleSelect(section, i, e)}
                                         onStateChange={(s) => applyToOne(it, s)}
+                                        onPreview={setPreviewItem}
                                         busy={busy}
                                         showSuggestion
                                         leaving={leaving.has(it.Id)}
                                         fixedHeight
+                                        expectedLanguage={profile?.defaultLanguage}
                                     />
                                 </li>
                             ))}
@@ -373,6 +377,13 @@ export default function Sweep() {
                         ✕
                     </button>
                 </div>
+            )}
+            {previewItem && (
+                <PreviewModal
+                    itemId={previewItem.Id}
+                    itemName={previewItem.Name}
+                    onClose={() => setPreviewItem(null)}
+                />
             )}
         </div>
     );

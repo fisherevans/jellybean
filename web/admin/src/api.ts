@@ -26,6 +26,7 @@ export type Item = {
     Genres?: string[];
     Studios?: { Name: string; Id?: string }[];
     ImageTags?: { Primary?: string };
+    AudioLanguage?: string; // ISO 639-3 of primary audio track ("" if unknown)
     State: ItemState; // visibility for the active profile (null = unset)
     Suggestion?: Suggestion;
 };
@@ -50,6 +51,7 @@ export type Profile = {
     id: number;
     name: string;
     description?: string;
+    defaultLanguage: string; // ISO 639-3, e.g. "eng"
     createdAt: number;
     kidCount: number;
 };
@@ -57,6 +59,7 @@ export type Profile = {
 export type ProfileInput = {
     name: string;
     description: string;
+    defaultLanguage?: string;
 };
 
 export type Kid = {

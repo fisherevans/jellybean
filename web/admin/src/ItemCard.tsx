@@ -6,11 +6,15 @@ type Props = {
     selected?: boolean;
     onSelect?: (e: React.MouseEvent) => void;
     onStateChange?: (next: ItemState) => void;
+    onPreview?: (item: Item) => void;
     busy?: boolean;
     showSuggestion?: boolean;
     posterWidth?: number;
     leaving?: boolean;
     fixedHeight?: boolean;
+    /** Active profile's default audio language; when set, items whose
+     *  AudioLanguage differs are flagged. */
+    expectedLanguage?: string;
 };
 
 const DEFAULT_POSTER_WIDTH = 80;
@@ -24,23 +28,29 @@ export default function ItemCard({
     selected,
     onSelect,
     onStateChange,
+    onPreview,
     busy,
     showSuggestion,
     posterWidth = DEFAULT_POSTER_WIDTH,
     leaving,
     fixedHeight,
+    expectedLanguage,
 }: Props) {
     const meta: string[] = [];
     if (item.ProductionYear) meta.push(String(item.ProductionYear));
     if (item.OfficialRating) meta.push(item.OfficialRating);
     const studios = (item.Studios ?? []).map((s) => s.Name).join(", ");
     const hasPoster = !!item.ImageTags?.Primary;
+    const lang = (item.AudioLanguage ?? "").toLowerCase();
+    const expected = (expectedLanguage ?? "").toLowerCase();
+    const langMismatch = !!lang && !!expected && lang !== expected;
 
     const classes = [
         "item-card",
         selected ? "selected" : "",
         leaving ? "leaving" : "",
         fixedHeight ? "fixed-height" : "",
+        langMismatch ? "lang-mismatch" : "",
     ].filter(Boolean).join(" ");
 
     return (
@@ -51,26 +61,63 @@ export default function ItemCard({
                 onClick={onSelect}
                 aria-pressed={!!selected}
             >
-                {hasPoster ? (
-                    <img
-                        className="item-card-poster"
-                        src={posterURL(item.Id, posterWidth * 2)}
-                        alt=""
-                        loading="lazy"
-                        style={{ width: posterWidth }}
-                    />
-                ) : (
-                    <div
-                        className="item-card-poster placeholder"
-                        style={{ width: posterWidth, height: posterWidth * 1.5 }}
-                    >
-                        ?
-                    </div>
-                )}
+                <div className="item-card-poster-wrap" style={{ width: posterWidth }}>
+                    {hasPoster ? (
+                        <img
+                            className="item-card-poster"
+                            src={posterURL(item.Id, posterWidth * 2)}
+                            alt=""
+                            loading="lazy"
+                            style={{ width: posterWidth }}
+                        />
+                    ) : (
+                        <div
+                            className="item-card-poster placeholder"
+                            style={{ width: posterWidth, height: posterWidth * 1.5 }}
+                        >
+                            ?
+                        </div>
+                    )}
+                    {onPreview && (
+                        <span
+                            role="button"
+                            tabIndex={0}
+                            className="item-card-preview"
+                            aria-label={`Preview ${item.Name}`}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onPreview(item);
+                            }}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onPreview(item);
+                                }
+                            }}
+                        >
+                            ▶
+                        </span>
+                    )}
+                </div>
                 <div className="item-card-text">
                     <div className="item-card-name">{item.Name}</div>
                     {meta.length > 0 && (
-                        <div className="item-card-meta">{meta.join(" · ")}</div>
+                        <div className="item-card-meta">
+                            {meta.join(" · ")}
+                            {lang && (
+                                <span
+                                    className={`lang-badge ${langMismatch ? "lang-badge-mismatch" : ""}`}
+                                    title={
+                                        langMismatch
+                                            ? `Audio: ${lang}; profile default is ${expected}`
+                                            : `Audio: ${lang}`
+                                    }
+                                >
+                                    {lang}
+                                </span>
+                            )}
+                        </div>
                     )}
                     {studios && <div className="item-card-studios">{studios}</div>}
                     <div className="item-card-meta">

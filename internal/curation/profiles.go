@@ -14,10 +14,11 @@ import (
 // profile. Profiles in v1 are a label and a description; visibility lives
 // in the categorizations table, not here.
 type Profile struct {
-	ID          int64
-	Name        string
-	Description string
-	CreatedAt   time.Time
+	ID              int64
+	Name            string
+	Description     string
+	DefaultLanguage string // ISO 639-3 (e.g. "eng"); matches Jellyfin MediaStream.Language
+	CreatedAt       time.Time
 }
 
 // ProfileWithKidCount is what the listing endpoint returns; the count is
@@ -41,7 +42,7 @@ var ErrProfileProtected = errors.New("default profile cannot be deleted")
 // ListProfiles returns all profiles with their current kid counts.
 func (s *Store) ListProfiles(ctx context.Context) ([]ProfileWithKidCount, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.id, p.name, COALESCE(p.description, ''), p.created_at,
+		SELECT p.id, p.name, COALESCE(p.description, ''), p.default_language, p.created_at,
 		       (SELECT COUNT(*) FROM kids WHERE profile_id = p.id)
 		FROM profiles p
 		ORDER BY p.id ASC`)
@@ -56,7 +57,7 @@ func (s *Store) ListProfiles(ctx context.Context) ([]ProfileWithKidCount, error)
 			p  ProfileWithKidCount
 			ts int64
 		)
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &ts, &p.KidCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.DefaultLanguage, &ts, &p.KidCount); err != nil {
 			return nil, err
 		}
 		p.CreatedAt = time.Unix(ts, 0)
@@ -68,13 +69,13 @@ func (s *Store) ListProfiles(ctx context.Context) ([]ProfileWithKidCount, error)
 // GetProfile fetches one profile by ID. Returns ErrProfileNotFound if none.
 func (s *Store) GetProfile(ctx context.Context, id int64) (*Profile, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, COALESCE(description, ''), created_at
+		SELECT id, name, COALESCE(description, ''), default_language, created_at
 		FROM profiles WHERE id = ?`, id)
 	var (
 		p  Profile
 		ts int64
 	)
-	if err := row.Scan(&p.ID, &p.Name, &p.Description, &ts); err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.DefaultLanguage, &ts); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrProfileNotFound
 		}
@@ -86,8 +87,9 @@ func (s *Store) GetProfile(ctx context.Context, id int64) (*Profile, error) {
 
 // ProfileInput is the mutation payload for create / update.
 type ProfileInput struct {
-	Name        string
-	Description string
+	Name            string
+	Description     string
+	DefaultLanguage string // ISO 639-3; empty means "leave existing value" on update or default to "eng" on create
 }
 
 // CreateProfile inserts a profile. Name is trimmed and required; uniqueness
@@ -97,10 +99,14 @@ func (s *Store) CreateProfile(ctx context.Context, in ProfileInput) (*Profile, e
 	if name == "" {
 		return nil, fmt.Errorf("profile name required")
 	}
+	lang := normalizeLanguage(in.DefaultLanguage)
+	if lang == "" {
+		lang = "eng"
+	}
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO profiles (name, description, created_at)
-		VALUES (?, ?, unixepoch())`,
-		name, nullableString(in.Description))
+		INSERT INTO profiles (name, description, default_language, created_at)
+		VALUES (?, ?, ?, unixepoch())`,
+		name, nullableString(in.Description), lang)
 	if err != nil {
 		return nil, err
 	}
@@ -115,11 +121,25 @@ func (s *Store) UpdateProfile(ctx context.Context, id int64, in ProfileInput) (*
 	if name == "" {
 		return nil, fmt.Errorf("profile name required")
 	}
-	res, err := s.db.ExecContext(ctx, `
-		UPDATE profiles
-		SET name = ?, description = ?
-		WHERE id = ?`,
-		name, nullableString(in.Description), id)
+	lang := normalizeLanguage(in.DefaultLanguage)
+	var (
+		res sql.Result
+		err error
+	)
+	if lang == "" {
+		// Leave default_language untouched.
+		res, err = s.db.ExecContext(ctx, `
+			UPDATE profiles
+			SET name = ?, description = ?
+			WHERE id = ?`,
+			name, nullableString(in.Description), id)
+	} else {
+		res, err = s.db.ExecContext(ctx, `
+			UPDATE profiles
+			SET name = ?, description = ?, default_language = ?
+			WHERE id = ?`,
+			name, nullableString(in.Description), lang, id)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +148,24 @@ func (s *Store) UpdateProfile(ctx context.Context, id int64, in ProfileInput) (*
 		return nil, ErrProfileNotFound
 	}
 	return s.GetProfile(ctx, id)
+}
+
+// normalizeLanguage trims, lower-cases, and validates that the language
+// looks like a 2- or 3-letter code. Empty / invalid → empty string.
+func normalizeLanguage(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+	if len(s) < 2 || len(s) > 3 {
+		return ""
+	}
+	for _, r := range s {
+		if r < 'a' || r > 'z' {
+			return ""
+		}
+	}
+	return s
 }
 
 // DeleteProfile removes a profile. The Default profile is protected; any

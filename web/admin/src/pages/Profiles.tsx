@@ -4,9 +4,26 @@ import { api, HttpError, type Profile } from "../api";
 type FormState = {
     name: string;
     description: string;
+    defaultLanguage: string;
 };
 
-const blankForm: FormState = { name: "", description: "" };
+const blankForm: FormState = { name: "", description: "", defaultLanguage: "eng" };
+
+// ISO 639-3 codes that cover the user's library; extend the list rather
+// than swapping to a giant locale picker. "eng" stays first because it's
+// the default for fresh profiles.
+const LANGUAGE_OPTIONS = [
+    { code: "eng", label: "English" },
+    { code: "spa", label: "Spanish" },
+    { code: "fre", label: "French" },
+    { code: "ger", label: "German" },
+    { code: "ita", label: "Italian" },
+    { code: "jpn", label: "Japanese" },
+    { code: "kor", label: "Korean" },
+    { code: "chi", label: "Chinese" },
+    { code: "rus", label: "Russian" },
+    { code: "por", label: "Portuguese" },
+];
 
 export default function Profiles() {
     const [profiles, setProfiles] = useState<Profile[] | null>(null);
@@ -50,7 +67,11 @@ export default function Profiles() {
 
     function startEdit(p: Profile) {
         setEditing(p);
-        setForm({ name: p.name, description: p.description ?? "" });
+        setForm({
+            name: p.name,
+            description: p.description ?? "",
+            defaultLanguage: p.defaultLanguage || "eng",
+        });
     }
 
     function cancelEdit() {
@@ -92,6 +113,17 @@ export default function Profiles() {
                     value={form.description}
                     onChange={(e) => setForm({ ...form, description: e.target.value })}
                 />
+                <select
+                    value={form.defaultLanguage}
+                    onChange={(e) => setForm({ ...form, defaultLanguage: e.target.value })}
+                    title="Default audio language. Items in other languages get flagged in the curation UI."
+                >
+                    {LANGUAGE_OPTIONS.map((l) => (
+                        <option key={l.code} value={l.code}>
+                            {l.label}
+                        </option>
+                    ))}
+                </select>
                 <button type="submit" disabled={busy}>
                     {editing ? "Save" : "Create"}
                 </button>
@@ -115,6 +147,8 @@ export default function Profiles() {
                                         {p.description ?? ""}
                                         {p.description ? " · " : ""}
                                         {p.kidCount} kid{p.kidCount === 1 ? "" : "s"}
+                                        {" · default lang "}
+                                        <code>{p.defaultLanguage || "eng"}</code>
                                     </div>
                                 </div>
                                 <div className="profile-actions">

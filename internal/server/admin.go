@@ -223,6 +223,7 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 			"Studios":        it.Studios,
 			"ProductionYear": it.ProductionYear,
 			"ImageTags":      it.ImageTags,
+			"AudioLanguage":  it.PrimaryAudioLanguage(),
 		}
 		if st, ok := states[it.ID]; ok {
 			row["State"] = string(st)

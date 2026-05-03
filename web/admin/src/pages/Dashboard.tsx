@@ -1,119 +1,128 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, HttpError, type Item, type User } from "../api";
+import { api, HttpError, type User } from "../api";
 import { useActiveProfile } from "../activeProfile";
-import HlsVideo from "../HlsVideo";
 
 type Props = {
     user: User;
     onLogout: () => void;
 };
 
-// The dashboard is now mostly a "you're in - go curate" landing page with a
-// small playback preview at the bottom for the M1 streaming smoke test
-// (still useful when validating Jellyfin connectivity after a deploy).
+type Counts = {
+    visible: number;
+    hidden: number;
+    unset: number;
+};
+
+// Dashboard is now a status overview for the active profile: how many
+// items are visible vs hidden vs still uncategorized, with direct links
+// into the workflows that move those numbers.
+
 export default function Dashboard({ user, onLogout }: Props) {
     const { profile } = useActiveProfile();
-    const [items, setItems] = useState<Item[] | null>(null);
+    const [counts, setCounts] = useState<Counts | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [playing, setPlaying] = useState<Item | null>(null);
-    const [streamUrl, setStreamUrl] = useState<string | null>(null);
 
     useEffect(() => {
         if (!profile) return;
+        let cancelled = false;
         setError(null);
-        setItems(null);
-        api.listItems({ profileId: profile.id, type: "Movie", limit: 6 })
-            .then((res) => setItems(res.Items))
+        setCounts(null);
+        // Three small queries to read each bucket's total. limit=1 keeps
+        // payloads tiny; we only consume TotalRecordCount.
+        Promise.all([
+            api.listItems({ profileId: profile.id, state: "visible", limit: 1, type: "Movie,Series" }),
+            api.listItems({ profileId: profile.id, state: "hidden", limit: 1, type: "Movie,Series" }),
+            api.listItems({ profileId: profile.id, state: "unset", limit: 1, type: "Movie,Series" }),
+        ])
+            .then(([v, h, u]) => {
+                if (cancelled) return;
+                setCounts({
+                    visible: v.TotalRecordCount,
+                    hidden: h.TotalRecordCount,
+                    unset: u.TotalRecordCount,
+                });
+            })
             .catch((err) => {
+                if (cancelled) return;
                 if (err instanceof HttpError && err.status === 401) {
                     onLogout();
                     return;
                 }
-                setError(err.message || "Failed to load items.");
-            });
-    }, [onLogout, profile?.id]);
-
-    useEffect(() => {
-        if (!playing) {
-            setStreamUrl(null);
-            return;
-        }
-        let cancelled = false;
-        setStreamUrl(null);
-        api.getStream(playing.Id)
-            .then((info) => {
-                if (!cancelled) setStreamUrl(info.streamUrl);
-            })
-            .catch((err) => {
-                if (!cancelled) setError(err.message || "Failed to resolve stream.");
+                setError(err.message || "Failed to load library counts.");
             });
         return () => {
             cancelled = true;
         };
-    }, [playing]);
+    }, [profile?.id, onLogout]);
 
     return (
         <div className="page">
             <h1>Welcome, {user.name}</h1>
-            <p className="muted">
-                Use the nav above to start curating. The fastest path is{" "}
-                <Link to="/sweep">Sweep</Link> for bulk categorization, then{" "}
-                <Link to="/triage">Triage</Link> for the long tail.
-            </p>
+            {profile ? (
+                <p className="muted">
+                    Showing curation state for profile <strong>{profile.name}</strong>{" "}
+                    (default audio: <code>{profile.defaultLanguage || "eng"}</code>).
+                    Switch profiles via the picker at the top right.
+                </p>
+            ) : (
+                <p className="muted">Loading profile...</p>
+            )}
 
             {error && <div className="error">{error}</div>}
 
-            <h2>Streaming smoke test</h2>
-            <p className="muted">
-                A small picker for verifying Jellyfin connectivity + HLS playback
-                end to end.
-            </p>
+            <div className="dashboard-counts">
+                <CountCard
+                    label="Needs review"
+                    value={counts?.unset}
+                    tone="warn"
+                    cta={{ to: "/sweep", label: "Sweep" }}
+                    note="Items with no decision yet for this profile."
+                />
+                <CountCard
+                    label="Visible"
+                    value={counts?.visible}
+                    tone="ok"
+                    cta={{ to: "/triage", label: "Re-triage" }}
+                    note="Approved for kids in this profile."
+                />
+                <CountCard
+                    label="Hidden"
+                    value={counts?.hidden}
+                    tone="bad"
+                    cta={{ to: "/search", label: "Search" }}
+                    note="Excluded from this profile."
+                />
+            </div>
 
-            {items === null ? (
-                <p className="muted">Loading...</p>
-            ) : (
-                <ul className="item-list">
-                    {items.map((item) => (
-                        <li key={item.Id}>
-                            <button
-                                className={`item${playing?.Id === item.Id ? " active" : ""}`}
-                                onClick={() => setPlaying(item)}
-                            >
-                                <span className="name">{item.Name}</span>
-                                <span className="meta">
-                                    {item.ProductionYear ?? ""}{" "}
-                                    {item.OfficialRating ? `· ${item.OfficialRating}` : ""}
-                                </span>
-                            </button>
-                            <a
-                                className="kids-link"
-                                href={`/kids/play/${item.Id}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                title="Open in kids view (uses your admin session)"
-                            >
-                                open in kids view ↗
-                            </a>
-                        </li>
-                    ))}
-                </ul>
-            )}
+            <div className="dashboard-links">
+                <Link to="/activity">Recent activity</Link>
+                <Link to="/manage-kids">Kids</Link>
+                <Link to="/profiles">Profiles</Link>
+            </div>
+        </div>
+    );
+}
 
-            {playing && (
-                <div className="player">
-                    <h3>{playing.Name}</h3>
-                    {streamUrl ? (
-                        <HlsVideo
-                            key={playing.Id}
-                            src={streamUrl}
-                            style={{ width: "100%", maxWidth: 960 }}
-                        />
-                    ) : (
-                        <div className="muted">Resolving stream...</div>
-                    )}
-                </div>
-            )}
+type CountCardProps = {
+    label: string;
+    value: number | undefined;
+    tone: "ok" | "warn" | "bad";
+    cta: { to: string; label: string };
+    note: string;
+};
+
+function CountCard({ label, value, tone, cta, note }: CountCardProps) {
+    return (
+        <div className={`count-card count-${tone}`}>
+            <div className="count-label">{label}</div>
+            <div className="count-value">
+                {value === undefined ? "…" : value.toLocaleString()}
+            </div>
+            <div className="count-note">{note}</div>
+            <Link to={cta.to} className="count-cta">
+                {cta.label} →
+            </Link>
         </div>
     );
 }

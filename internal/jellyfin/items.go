@@ -50,8 +50,9 @@ func (c *Client) getItemsWith(ctx context.Context, f ItemsFilter, userToken stri
 		q.Set("SearchTerm", f.SearchTerm)
 	}
 	// Always ask for the metadata fields we use; UserData only meaningful
-	// when authenticated as a user.
-	fields := "Genres,Studios,OfficialRating,ProductionYear,RunTimeTicks"
+	// when authenticated as a user. MediaStreams carries audio language
+	// info the admin curation UI uses to flag non-default-language items.
+	fields := "Genres,Studios,OfficialRating,ProductionYear,RunTimeTicks,MediaStreams"
 	if userToken != "" {
 		fields += ",UserData"
 	}
