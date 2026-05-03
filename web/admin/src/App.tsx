@@ -1,8 +1,15 @@
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
-import { api, HttpError, type User } from "./api";
+import { Navigate, Outlet, Route, Routes, useNavigate } from "react-router-dom";
+import { api, type User } from "./api";
+import Layout from "./Layout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
+import Sweep from "./pages/Sweep";
+import Triage from "./pages/Triage";
+import Activity from "./pages/Activity";
+import Search from "./pages/Search";
+import Profiles from "./pages/Profiles";
+import Kids from "./pages/Kids";
 
 type AuthState =
     | { status: "loading" }
@@ -15,13 +22,7 @@ export default function App() {
     useEffect(() => {
         api.me()
             .then((user) => setAuth({ status: "authed", user }))
-            .catch((err) => {
-                if (err instanceof HttpError && err.status === 401) {
-                    setAuth({ status: "unauthed" });
-                } else {
-                    setAuth({ status: "unauthed" });
-                }
-            });
+            .catch(() => setAuth({ status: "unauthed" }));
     }, []);
 
     if (auth.status === "loading") {
@@ -40,19 +41,34 @@ export default function App() {
                     )
                 }
             />
-            <Route
-                path="/"
-                element={
-                    auth.status === "authed" ? (
-                        <Dashboard
+            {auth.status === "authed" ? (
+                <Route
+                    element={
+                        <Layout
                             user={auth.user}
                             onLogout={() => setAuth({ status: "unauthed" })}
                         />
-                    ) : (
-                        <RedirectToLogin />
-                    )
-                }
-            />
+                    }
+                >
+                    <Route
+                        path="/"
+                        element={
+                            <Dashboard
+                                user={auth.user}
+                                onLogout={() => setAuth({ status: "unauthed" })}
+                            />
+                        }
+                    />
+                    <Route path="/sweep" element={<Sweep />} />
+                    <Route path="/triage" element={<Triage />} />
+                    <Route path="/activity" element={<Activity />} />
+                    <Route path="/search" element={<Search />} />
+                    <Route path="/profiles" element={<Profiles />} />
+                    <Route path="/kids" element={<Kids />} />
+                </Route>
+            ) : (
+                <Route path="*" element={<RedirectToLogin />} />
+            )}
         </Routes>
     );
 }
@@ -62,5 +78,6 @@ function RedirectToLogin() {
     useEffect(() => {
         nav("/login", { replace: true });
     }, [nav]);
-    return null;
+    return <Outlet />;
 }
+
