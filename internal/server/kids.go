@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -14,7 +15,19 @@ import (
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
-const kidsKeyHeader = "X-Jellybean-Key"
+const (
+	kidsKeyHeader      = "X-Jellybean-Key"
+	kidsDeviceIDHeader = "X-Jellybean-DeviceId"
+)
+
+// kidsRequestContext stamps the X-Jellybean-DeviceId header (when present)
+// onto the request context so any downstream jellyfin call automatically
+// picks it up via WithDeviceID. Use the returned context for every
+// jellyfin call inside a kids handler.
+func kidsRequestContext(r *http.Request) (context.Context, string) {
+	deviceID := r.Header.Get(kidsDeviceIDHeader)
+	return jellyfin.WithDeviceID(r.Context(), deviceID), deviceID
+}
 
 // kidsContext describes who is hitting a /api/kids/* endpoint and which
 // Jellyfin user their requests should be attributed to.
@@ -173,6 +186,7 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 
 	// Continue-watching: ask Jellyfin for the kid's resume list, then drop
 	// anything not visible for this profile.
+	ctx, _ := kidsRequestContext(r)
 	if section == "continue-watching" {
 		if kc.JellyfinUserID == "" || kc.JellyfinToken == "" {
 			// Admin path or env-var stub - we don't have a per-user token,
@@ -180,13 +194,13 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, kidsLibraryResponse{ProfileID: profileID})
 			return
 		}
-		res, err := s.jellyfin.GetResumeItems(r.Context(), kc.JellyfinUserID, kc.JellyfinToken, limit*2)
+		res, err := s.jellyfin.GetResumeItems(ctx, kc.JellyfinUserID, kc.JellyfinToken, limit*2)
 		if err != nil {
 			s.logger.Error().Err(err).Msg("kids resume")
 			http.Error(w, "failed to load continue watching", http.StatusBadGateway)
 			return
 		}
-		visible, err := s.curation.GetStatesForItems(r.Context(), profileID,
+		visible, err := s.curation.GetStatesForItems(ctx, profileID,
 			itemIDs(res.Items))
 		if err != nil {
 			s.logger.Error().Err(err).Msg("resume visibility lookup")
@@ -215,7 +229,7 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 
 	// All / recent: fetch visible IDs from the DB, ask Jellyfin for them
 	// in pages so we can sort + filter centrally.
-	ids, err := s.curation.ListItemIDsInState(r.Context(), profileID, curation.StateVisible, 5000, 0)
+	ids, err := s.curation.ListItemIDsInState(ctx, profileID, curation.StateVisible, 5000, 0)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("list visible ids")
 		http.Error(w, "failed to load library", http.StatusInternalServerError)
@@ -233,7 +247,7 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		sortOrder = "Descending"
 	}
 
-	res, err := s.jellyfin.GetItemsAsUser(r.Context(), jellyfin.ItemsFilter{
+	res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
 		IDs:        ids,
 		Limit:      limit + startIndex + 50, // overshoot to absorb type/search filtering
 		SortBy:     sortBy,
@@ -327,7 +341,8 @@ func (s *Server) handleKidsPlaybackStart(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = s.jellyfin.ReportPlaybackStart(r.Context(), kc.JellyfinToken, jellyfin.PlaybackStartInfo{
+	ctx, _ := kidsRequestContext(r)
+	err = s.jellyfin.ReportPlaybackStart(ctx, kc.JellyfinToken, jellyfin.PlaybackStartInfo{
 		ItemID:           p.ItemID,
 		MediaSourceID:    p.MediaSourceID,
 		PositionTicks:    p.PositionTicks,
@@ -354,7 +369,8 @@ func (s *Server) handleKidsPlaybackProgress(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = s.jellyfin.ReportPlaybackProgress(r.Context(), kc.JellyfinToken, jellyfin.PlaybackProgressInfo{
+	ctx, _ := kidsRequestContext(r)
+	err = s.jellyfin.ReportPlaybackProgress(ctx, kc.JellyfinToken, jellyfin.PlaybackProgressInfo{
 		ItemID:           p.ItemID,
 		MediaSourceID:    p.MediaSourceID,
 		PositionTicks:    p.PositionTicks,
@@ -378,7 +394,8 @@ func (s *Server) handleKidsPlaybackStopped(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = s.jellyfin.ReportPlaybackStopped(r.Context(), kc.JellyfinToken, jellyfin.PlaybackStopInfo{
+	ctx, _ := kidsRequestContext(r)
+	err = s.jellyfin.ReportPlaybackStopped(ctx, kc.JellyfinToken, jellyfin.PlaybackStopInfo{
 		ItemID:        p.ItemID,
 		MediaSourceID: p.MediaSourceID,
 		PositionTicks: p.PositionTicks,
@@ -410,7 +427,8 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := s.jellyfin.GetItem(r.Context(), id)
+	ctx, _ := kidsRequestContext(r)
+	item, err := s.jellyfin.GetItem(ctx, id)
 	if err != nil {
 		if errors.Is(err, jellyfin.ErrNotFound) {
 			http.Error(w, "item not found", http.StatusNotFound)

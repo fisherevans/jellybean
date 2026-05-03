@@ -110,7 +110,9 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body io.Re
 
 // newRequestWithToken builds a request authenticated by `token` instead of
 // the configured service-account key. Empty token falls back to the service
-// account so existing callers keep working.
+// account so existing callers keep working. Reads an optional per-request
+// deviceId from the context (set by callers that have a kid device id);
+// absence falls back to the default identity.
 func (c *Client) newRequestWithToken(ctx context.Context, method, path string, body io.Reader, token string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
@@ -119,7 +121,8 @@ func (c *Client) newRequestWithToken(ctx context.Context, method, path string, b
 	if token == "" {
 		token = c.apiKey
 	}
-	req.Header.Set("Authorization", authHeader(token))
+	deviceId, _ := ctx.Value(deviceIDKey{}).(string)
+	req.Header.Set("Authorization", authHeader(token, deviceId))
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -127,24 +130,48 @@ func (c *Client) newRequestWithToken(ctx context.Context, method, path string, b
 	return req, nil
 }
 
-// AuthHeaderForServiceAccount is the exported form of authHeader for callers
-// outside this package (e.g. the image proxy in internal/server). Always
-// includes the service-account token.
-func AuthHeaderForServiceAccount(token string) string {
-	return authHeader(token)
+// deviceIDKey is the context key for the per-request DeviceId. Packages
+// outside this one set it via WithDeviceID so the Jellyfin client picks
+// it up automatically without threading deviceId through every method.
+type deviceIDKey struct{}
+
+// WithDeviceID returns a context that carries `id` as the DeviceId for any
+// Jellyfin request made through it. Empty id is a no-op (default identity).
+func WithDeviceID(ctx context.Context, id string) context.Context {
+	if id == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, deviceIDKey{}, id)
 }
 
-// authHeader returns the Jellyfin "MediaBrowser" auth header. Token may be the
-// service-account API key or a per-user access token. Empty token is allowed
-// for endpoints that do not require auth (e.g. AuthenticateByName).
+// AuthHeaderForServiceAccount is the exported form of authHeader for callers
+// outside this package (e.g. the image proxy in internal/server). Always
+// includes the service-account token; uses the default device identity.
+func AuthHeaderForServiceAccount(token string) string {
+	return authHeader(token, "")
+}
+
+// authHeader returns the Jellyfin "MediaBrowser" auth header.
 //
-// Device and DeviceId are required by some Jellyfin configurations even on
-// the unauthenticated AuthenticateByName flow; sending them unconditionally
-// is harmless on configurations that don't require them.
-func authHeader(token string) string {
+// `token` may be the service-account API key or a per-user access token.
+// Empty token is allowed for endpoints that do not require auth (e.g.
+// AuthenticateByName).
+//
+// `deviceId` overrides the default "jellybean-server" Device identity so
+// kid TVs each appear as a distinct device in Jellyfin's session view.
+// Empty falls back to the default. Device and DeviceId are required by
+// some Jellyfin configurations even on the unauthenticated
+// AuthenticateByName flow; sending them unconditionally is harmless.
+func authHeader(token, deviceId string) string {
+	device := "Jellybean Server"
+	if deviceId == "" {
+		deviceId = "jellybean-server"
+	} else {
+		device = "Jellybean Kids"
+	}
 	h := fmt.Sprintf(
 		`MediaBrowser Client="%s", Device="%s", DeviceId="%s", Version="%s"`,
-		clientName, "Jellybean Server", "jellybean-server", clientVersion,
+		clientName, device, deviceId, clientVersion,
 	)
 	if token != "" {
 		h += fmt.Sprintf(`, Token="%s"`, token)

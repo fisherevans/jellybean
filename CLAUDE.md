@@ -208,9 +208,14 @@ re-discovering them.
   `internal/jellyfin/auth.go`.
 - **`Authorization` header must include `Device` and `DeviceId`** even
   on the unauthenticated `AuthenticateByName` flow. Some Jellyfin
-  configurations reject the request silently otherwise. We send
-  `Device="Jellybean Server"` and `DeviceId="jellybean-server"` on
-  every request. See `authHeader` in `internal/jellyfin/client.go`.
+  configurations reject the request silently otherwise. The default
+  identity is `Device="Jellybean Server" DeviceId="jellybean-server"`.
+  Kid-side handlers extract the `X-Jellybean-DeviceId` header and stamp
+  it on the request context via `jellyfin.WithDeviceID`; downstream
+  Jellyfin calls then pick up the per-device id automatically (Device
+  flips to "Jellybean Kids"). Use `kidsRequestContext(r)` in any new
+  kids handler that touches Jellyfin so the convention stays consistent.
+  See `authHeader` + `WithDeviceID` in `internal/jellyfin/client.go`.
 - **Tag writes can corrupt items.** Documented Jellyfin issue. We never
   treat tags as canonical state; SQLite is the source of truth.
 

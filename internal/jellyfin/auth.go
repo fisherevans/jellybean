@@ -29,7 +29,9 @@ func (c *Client) AuthenticateByName(ctx context.Context, username, password stri
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", authHeader("")) // no token; this call IS the auth
+	// No token - this call IS the auth flow.
+	deviceId, _ := ctx.Value(deviceIDKey{}).(string)
+	req.Header.Set("Authorization", authHeader("", deviceId))
 
 	var out AuthResult
 	if err := c.do(req, &out); err != nil {

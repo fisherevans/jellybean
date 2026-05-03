@@ -253,6 +253,46 @@ func TestKidsLibraryRejectsBadSection(t *testing.T) {
 	}
 }
 
+func TestKidsRequestStampsDeviceID(t *testing.T) {
+	var hits []playbackHit
+	srv, key, _ := kidsTestServer(t, nil, nil, &hits)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/kids/playback/start",
+		strings.NewReader(`{"itemId":"abc","positionTicks":0}`))
+	req.Header.Set("X-Jellybean-Key", key)
+	req.Header.Set("X-Jellybean-DeviceId", "device-living-room-tv")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 hit, got %d", len(hits))
+	}
+	if !strings.Contains(hits[0].Auth, `DeviceId="device-living-room-tv"`) {
+		t.Errorf("DeviceId not passed through: %s", hits[0].Auth)
+	}
+	if !strings.Contains(hits[0].Auth, `Device="Jellybean Kids"`) {
+		t.Errorf("Device should switch to 'Jellybean Kids' when a deviceId is set: %s", hits[0].Auth)
+	}
+}
+
+func TestKidsRequestWithoutDeviceIDFallsBack(t *testing.T) {
+	var hits []playbackHit
+	srv, key, _ := kidsTestServer(t, nil, nil, &hits)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/kids/playback/start",
+		strings.NewReader(`{"itemId":"abc"}`))
+	req.Header.Set("X-Jellybean-Key", key)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if !strings.Contains(hits[0].Auth, `DeviceId="jellybean-server"`) {
+		t.Errorf("expected fallback DeviceId, got: %s", hits[0].Auth)
+	}
+}
+
 func TestKidsPlaybackForwardsToJellyfin(t *testing.T) {
 	var hits []playbackHit
 	srv, key, _ := kidsTestServer(t, nil, nil, &hits)
