@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, HttpError, type Item, type ItemState } from "../api";
+import { api, HttpError, typeFilterParam, type Item, type ItemState } from "../api";
 import { useActiveProfile } from "../activeProfile";
+import { useTypeFilter } from "../useTypeFilter";
+import TypeFilterPicker from "../TypeFilter";
 
 // Triage as a Tinder-style card stack:
 //
@@ -55,6 +57,7 @@ function flashSymbol(dir: SwipeDir): string {
 
 export default function Triage() {
     const { profile } = useActiveProfile();
+    const [typeFilter, setTypeFilter] = useTypeFilter();
     const [queue, setQueue] = useState<Item[]>([]);
     const [cursor, setCursor] = useState(0);
     const [serverCursor, setServerCursor] = useState(0);
@@ -78,6 +81,7 @@ export default function Triage() {
                 suggest: true,
                 limit: 50,
                 startIndex,
+                type: typeFilterParam(typeFilter),
             });
             return res;
         } catch (err) {
@@ -105,7 +109,7 @@ export default function Triage() {
             if (!res.HasMore && res.Items.length === 0) setExhausted(true);
         })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [profile?.id]);
+    }, [profile?.id, typeFilter]);
 
     const current = queue[cursor];
     const upcoming = queue[cursor + 1];
@@ -291,9 +295,12 @@ export default function Triage() {
 
     return (
         <div className="page triage">
-            <div className="triage-counter muted">
-                Triaging for <strong>{profile.name}</strong> · {doneCount} done ·{" "}
-                {queue.length - cursor} remaining
+            <div className="triage-controls">
+                <TypeFilterPicker value={typeFilter} onChange={setTypeFilter} busy={busy} />
+                <span className="muted">
+                    Triaging for <strong>{profile.name}</strong> · {doneCount} done ·{" "}
+                    {queue.length - cursor} remaining
+                </span>
             </div>
 
             <div className="triage-stack">

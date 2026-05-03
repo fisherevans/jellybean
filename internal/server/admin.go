@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gorilla/mux"
 
@@ -65,9 +66,30 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
-	itemType := q.Get("type")
-	if itemType == "" {
-		itemType = "Movie"
+	// type accepts a comma-separated list. Defaults to Movie + Series so a
+	// caller without an explicit filter sees the whole curatable library.
+	// Allowed values: Movie, Series. Anything else returns 400.
+	rawType := q.Get("type")
+	if rawType == "" {
+		rawType = "Movie,Series"
+	}
+	itemTypes := []string{}
+	for _, t := range strings.Split(rawType, ",") {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		switch t {
+		case "Movie", "Series":
+			itemTypes = append(itemTypes, t)
+		default:
+			http.Error(w, "type must be Movie, Series, or both", http.StatusBadRequest)
+			return
+		}
+	}
+	if len(itemTypes) == 0 {
+		http.Error(w, "type cannot be empty", http.StatusBadRequest)
+		return
 	}
 	limit := 50
 	if v := q.Get("limit"); v != "" {
@@ -150,7 +172,7 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to load items", http.StatusInternalServerError)
 			return
 		}
-		items, total, nextStart, err = s.pageUnsetForProfile(r.Context(), itemType, search, limit, startIndex, excluded)
+		items, total, nextStart, err = s.pageUnsetForProfile(r.Context(), itemTypes, search, limit, startIndex, excluded)
 		if err != nil {
 			s.logger.Error().Err(err).Msg("page items")
 			http.Error(w, "failed to load items", http.StatusBadGateway)
@@ -160,7 +182,7 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{
-			IncludeItemTypes: []string{itemType},
+			IncludeItemTypes: itemTypes,
 			Recursive:        true,
 			Limit:            limit,
 			StartIndex:       startIndex,
@@ -228,7 +250,8 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 // no state row for the given profile. This is the sweep view's data source.
 func (s *Server) pageUnsetForProfile(
 	ctx context.Context,
-	itemType, search string,
+	itemTypes []string,
+	search string,
 	limit, startIndex int,
 	excluded map[string]struct{},
 ) ([]jellyfin.Item, int, int, error) {
@@ -242,7 +265,7 @@ func (s *Server) pageUnsetForProfile(
 	)
 	for page := 0; page < maxPages; page++ {
 		res, err := s.jellyfin.GetItems(ctx, jellyfin.ItemsFilter{
-			IncludeItemTypes: []string{itemType},
+			IncludeItemTypes: itemTypes,
 			Recursive:        true,
 			Limit:            pageSize,
 			StartIndex:       idx,

@@ -103,6 +103,19 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     return res.json() as Promise<T>;
 }
 
+// TypeFilter is the parent's type-of-content filter on the curation views.
+// "both" sends nothing (server defaults to Movie+Series), the singular
+// values pin the listing to one kind.
+export type TypeFilter = "both" | "movies" | "series";
+
+export function typeFilterParam(t: TypeFilter): string | undefined {
+    switch (t) {
+        case "movies": return "Movie";
+        case "series": return "Series";
+        case "both":   return undefined;
+    }
+}
+
 type ItemsQuery = {
     profileId: number;
     type?: string;

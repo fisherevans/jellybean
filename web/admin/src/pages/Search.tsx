@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, HttpError, type Item, type ItemState } from "../api";
+import { api, HttpError, typeFilterParam, type Item, type ItemState } from "../api";
 import { useActiveProfile } from "../activeProfile";
+import { useTypeFilter } from "../useTypeFilter";
 import ItemCard from "../ItemCard";
+import TypeFilterPicker from "../TypeFilter";
 
 // Search hits Jellyfin's substring filter and shows results with the
 // active profile's visibility state per item.
 
 export default function Search() {
     const { profile } = useActiveProfile();
+    const [typeFilter, setTypeFilter] = useTypeFilter();
     const [params, setParams] = useSearchParams();
     const [query, setQuery] = useState(params.get("q") ?? "");
     const [items, setItems] = useState<Item[] | null>(null);
@@ -32,6 +35,7 @@ export default function Search() {
                     profileId: profile.id,
                     search: trimmed,
                     limit: 100,
+                    type: typeFilterParam(typeFilter),
                 });
                 setItems(res.Items);
                 setTotal(res.TotalRecordCount);
@@ -41,7 +45,7 @@ export default function Search() {
             }
         }, 250);
         return () => clearTimeout(handle);
-    }, [query, profile?.id]);
+    }, [query, profile?.id, typeFilter]);
 
     useEffect(() => {
         if (query) {
@@ -85,13 +89,16 @@ export default function Search() {
                 Substring match on item names. Visibility shown is for{" "}
                 <strong>{profile.name}</strong>; switch profiles in the top nav.
             </p>
-            <input
-                className="search-input"
-                placeholder="Type a title..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                autoFocus
-            />
+            <div className="search-controls">
+                <input
+                    className="search-input"
+                    placeholder="Type a title..."
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    autoFocus
+                />
+                <TypeFilterPicker value={typeFilter} onChange={setTypeFilter} />
+            </div>
             {error && <div className="error">{error}</div>}
             {items === null && query.trim() === "" ? (
                 <p className="muted">Start typing.</p>

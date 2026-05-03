@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, HttpError, formatState, type Item, type ItemState } from "../api";
+import { api, HttpError, formatState, typeFilterParam, type Item, type ItemState } from "../api";
 import { useActiveProfile } from "../activeProfile";
+import { useTypeFilter } from "../useTypeFilter";
 import ItemCard from "../ItemCard";
+import TypeFilterPicker from "../TypeFilter";
 
 // Sweep loads items that have no state for the active profile and groups
 // them by the AI's suggestion: looks visible / needs review / looks hidden.
@@ -35,6 +37,7 @@ type RecentAction = {
 
 export default function Sweep() {
     const { profile } = useActiveProfile();
+    const [typeFilter, setTypeFilter] = useTypeFilter();
     const [loaded, setLoaded] = useState<Loaded | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
@@ -55,6 +58,7 @@ export default function Sweep() {
                 state: "unset",
                 suggest: true,
                 limit: 200,
+                type: typeFilterParam(typeFilter),
             });
             setLoaded({
                 items: res.Items,
@@ -73,7 +77,7 @@ export default function Sweep() {
         setLeaving(new Set());
         setRecentAction(null);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [profile?.id]);
+    }, [profile?.id, typeFilter]);
 
     async function loadMore() {
         if (!loaded || !loaded.hasMore || busy || !profile) return;
@@ -85,6 +89,7 @@ export default function Sweep() {
                 suggest: true,
                 limit: 200,
                 startIndex: loaded.cursor,
+                type: typeFilterParam(typeFilter),
             });
             setLoaded({
                 items: [...loaded.items, ...res.Items],
@@ -270,20 +275,21 @@ export default function Sweep() {
     return (
         <div className="page sweep">
             <h1>Sweep</h1>
-            <p className="muted">
-                Triaging for <strong>{profile.name}</strong>. Items shown have no
-                visibility decision yet for this profile. Switch profiles in the
-                top nav to triage another one. Loaded {loaded.items.length} of{" "}
-                {loaded.total}.
-                {loaded.hasMore && (
-                    <>
-                        {" "}
-                        <button onClick={loadMore} disabled={busy}>
-                            Load 200 more
-                        </button>
-                    </>
-                )}
-            </p>
+            <div className="sweep-controls">
+                <TypeFilterPicker value={typeFilter} onChange={setTypeFilter} busy={busy} />
+                <span className="muted">
+                    Triaging for <strong>{profile.name}</strong>. Loaded{" "}
+                    {loaded.items.length} of {loaded.total} unset items.
+                    {loaded.hasMore && (
+                        <>
+                            {" "}
+                            <button onClick={loadMore} disabled={busy}>
+                                Load 200 more
+                            </button>
+                        </>
+                    )}
+                </span>
+            </div>
 
             {error && <div className="error">{error}</div>}
 
