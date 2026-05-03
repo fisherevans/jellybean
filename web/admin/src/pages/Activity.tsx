@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, HttpError, type ActivityEntry, type Item } from "../api";
-import CategoryControl from "../CategoryControl";
+import { api, HttpError, formatMinAge, type ActivityEntry } from "../api";
+import AgePicker from "../CategoryControl";
 
 export default function Activity() {
     const [entries, setEntries] = useState<ActivityEntry[] | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [busy, setBusy] = useState<string | null>(null); // item id being updated
+    const [busy, setBusy] = useState<string | null>(null);
 
     async function refresh() {
         try {
@@ -20,11 +20,11 @@ export default function Activity() {
         refresh();
     }, []);
 
-    async function setCategory(itemId: string, category: Item["Category"]) {
+    async function setAge(itemId: string, age: number | null) {
         setBusy(itemId);
         setError(null);
         try {
-            await api.setCategory(itemId, category);
+            await api.setAge(itemId, age);
             await refresh();
         } catch (err) {
             setError(err instanceof HttpError ? err.message : String(err));
@@ -37,8 +37,7 @@ export default function Activity() {
         <div className="page">
             <h1>Recent activity</h1>
             <p className="muted">
-                Last 50 categorization changes. Surface to catch fresh mistakes -
-                click a different category to flip it back.
+                Last 50 categorization changes. Click a different age tier to flip.
             </p>
             {error && <div className="error">{error}</div>}
             {entries === null ? (
@@ -53,15 +52,17 @@ export default function Activity() {
                                 <div className="activity-info">
                                     <div className="activity-name">{e.itemName}</div>
                                     <div className="muted">
-                                        {e.fromCategory ? `${e.fromCategory} → ` : ""}
-                                        <strong>{e.toCategory}</strong>
+                                        {e.fromMinAge !== null
+                                            ? `${formatMinAge(e.fromMinAge)} → `
+                                            : ""}
+                                        <strong>{formatMinAge(e.toMinAge)}</strong>
                                         {" · "}
                                         {new Date(e.changedAt * 1000).toLocaleString()}
                                     </div>
                                 </div>
-                                <CategoryControl
-                                    value={e.toCategory as Item["Category"]}
-                                    onChange={(next) => setCategory(e.itemId, next)}
+                                <AgePicker
+                                    value={e.toMinAge}
+                                    onChange={(next) => setAge(e.itemId, next)}
                                     busy={busy === e.itemId}
                                     compact
                                 />

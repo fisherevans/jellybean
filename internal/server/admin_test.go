@@ -20,6 +20,8 @@ import (
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
+func ageOf(n int) *int { return &n }
+
 // makeItems builds a synthetic library of N items with monotonically
 // increasing names so we can reason about Jellyfin pagination order.
 func makeItems(n int) []jellyfin.Item {
@@ -159,7 +161,7 @@ func TestAdminItemsFilterByCategoryUncategorized(t *testing.T) {
 	ctx := t.Context()
 	curStore := curation.NewStore(srv.db)
 	for i := 0; i < 200; i++ {
-		if _, err := curStore.SetCategory(ctx, library[i].ID, curation.CategoryKid, "admin"); err != nil {
+		if _, err := curStore.SetAge(ctx, library[i].ID, ageOf(curation.AgeKid), "admin"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -214,7 +216,7 @@ func TestAdminItemsFilterByKid(t *testing.T) {
 	ctx := t.Context()
 	curStore := curation.NewStore(srv.db)
 	for i := 0; i < 5; i++ {
-		curStore.SetCategory(ctx, library[i].ID, curation.CategoryKid, "admin")
+		curStore.SetAge(ctx, library[i].ID, ageOf(curation.AgeKid), "admin")
 	}
 
 	rec := authedRequest(t, srv, store, http.MethodGet, "/api/admin/items?category=kid&limit=100", nil)
@@ -230,16 +232,16 @@ func TestAdminItemsFilterByKid(t *testing.T) {
 		t.Errorf("returned %d kid items, want 5", resp.ReturnedCount)
 	}
 	for _, it := range resp.Items {
-		if it["Category"] != "kid" {
+		if it["Bucket"] != "kid" {
 			t.Errorf("non-kid item leaked: %v", it)
 		}
 	}
 }
 
-func TestAdminBulkRejectsInvalidCategory(t *testing.T) {
+func TestAdminBulkRejectsInvalidAge(t *testing.T) {
 	srv, store := newTestServer(t, makeItems(10))
-	body := strings.NewReader(`{"itemIds":["item-0001"],"category":"bogus"}`)
-	rec := authedRequest(t, srv, store, http.MethodPost, "/api/admin/items/category/bulk", body)
+	body := strings.NewReader(`{"itemIds":["item-0001"],"minAge":42}`)
+	rec := authedRequest(t, srv, store, http.MethodPost, "/api/admin/items/age/bulk", body)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -251,17 +253,17 @@ func TestAdminBulkRejectsTooMany(t *testing.T) {
 	for i := range ids {
 		ids[i] = fmt.Sprintf("item-%04d", i)
 	}
-	bb, _ := json.Marshal(map[string]any{"itemIds": ids, "category": "kid"})
-	rec := authedRequest(t, srv, store, http.MethodPost, "/api/admin/items/category/bulk", strings.NewReader(string(bb)))
+	bb, _ := json.Marshal(map[string]any{"itemIds": ids, "minAge": curation.AgeKid})
+	rec := authedRequest(t, srv, store, http.MethodPost, "/api/admin/items/age/bulk", strings.NewReader(string(bb)))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }
 
-func TestAdminSetCategoryRecordsHistoryWithSetBy(t *testing.T) {
+func TestAdminSetAgeRecordsHistoryWithSetBy(t *testing.T) {
 	srv, store := newTestServer(t, makeItems(5))
-	body := strings.NewReader(`{"category":"kid"}`)
-	rec := authedRequest(t, srv, store, http.MethodPost, "/api/admin/items/item-0000/category", body)
+	body := strings.NewReader(`{"minAge":7}`)
+	rec := authedRequest(t, srv, store, http.MethodPost, "/api/admin/items/item-0000/age", body)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}

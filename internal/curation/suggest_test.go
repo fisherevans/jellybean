@@ -8,86 +8,85 @@ import (
 
 func TestSuggest(t *testing.T) {
 	tests := []struct {
-		name       string
-		item       jellyfin.Item
-		wantCat    Category
-		wantConfMin float64
+		name               string
+		item               jellyfin.Item
+		wantBucket         string
+		wantMinAge         *int  // nil = unsure
+		wantConfMin        float64
 		wantReasonContains string
 	}{
 		{
-			name:    "rated G is kid",
-			item:    jellyfin.Item{OfficialRating: "G"},
-			wantCat: CategoryKid,
-			wantConfMin: 0.9,
-			wantReasonContains: "G",
-		},
-		{
-			name:    "rated TV-Y is kid",
-			item:    jellyfin.Item{OfficialRating: "TV-Y"},
-			wantCat: CategoryKid,
+			name:        "rated G is toddler-tier kid",
+			item:        jellyfin.Item{OfficialRating: "G"},
+			wantBucket:  "kid",
+			wantMinAge:  ageOf(AgeToddler),
 			wantConfMin: 0.9,
 		},
 		{
-			name:    "rated TV-Y7 is kid",
-			item:    jellyfin.Item{OfficialRating: "TV-Y7"},
-			wantCat: CategoryKid,
+			name:        "rated TV-Y is toddler kid",
+			item:        jellyfin.Item{OfficialRating: "TV-Y"},
+			wantBucket:  "kid",
+			wantMinAge:  ageOf(AgeToddler),
 			wantConfMin: 0.9,
 		},
 		{
-			name:    "rated R is adult",
-			item:    jellyfin.Item{OfficialRating: "R"},
-			wantCat: CategoryAdult,
+			name:        "rated TV-Y7 is preschool",
+			item:        jellyfin.Item{OfficialRating: "TV-Y7"},
+			wantBucket:  "kid",
+			wantMinAge:  ageOf(AgePreschool),
 			wantConfMin: 0.9,
 		},
 		{
-			name:    "rated TV-MA is adult",
-			item:    jellyfin.Item{OfficialRating: "TV-MA"},
-			wantCat: CategoryAdult,
+			name:        "rated R is adult",
+			item:        jellyfin.Item{OfficialRating: "R"},
+			wantBucket:  "adult",
+			wantMinAge:  ageOf(AgeAdult),
 			wantConfMin: 0.9,
 		},
 		{
-			name: "Pixar studio is kid even with no rating",
+			name:        "rated TV-MA is adult",
+			item:        jellyfin.Item{OfficialRating: "TV-MA"},
+			wantBucket:  "adult",
+			wantMinAge:  ageOf(AgeAdult),
+			wantConfMin: 0.9,
+		},
+		{
+			name: "Pixar studio with no rating leans preschool kid",
 			item: jellyfin.Item{
 				Studios: []jellyfin.Studio{{Name: "Pixar Animation Studios"}},
 			},
-			wantCat: CategoryKid,
+			wantBucket: "kid",
+			wantMinAge: ageOf(AgePreschool),
 			wantConfMin: 0.8,
-			wantReasonContains: "Pixar",
 		},
 		{
-			name: "PG + animation is kid",
+			name: "PG + animation is younger kid",
 			item: jellyfin.Item{
 				OfficialRating: "PG",
 				Genres:         []string{"Animation", "Comedy"},
 			},
-			wantCat: CategoryKid,
-			wantConfMin: 0.65,
+			wantBucket:  "kid",
+			wantMinAge:  ageOf(AgeKid),
+			wantConfMin: 0.6,
 		},
 		{
-			name: "PG-13 + animation is unsure (could be anime / adult animation)",
+			name: "PG-13 + animation is unsure",
 			item: jellyfin.Item{
 				OfficialRating: "PG-13",
 				Genres:         []string{"Animation"},
 			},
-			wantCat: CategoryUnsure,
-			wantConfMin: 0.4,
+			wantBucket: "unsure",
+			wantMinAge: nil,
 		},
 		{
-			name: "PG-13 alone leans adult",
+			name: "PG-13 alone is teen",
 			item: jellyfin.Item{
 				OfficialRating: "PG-13",
 				Genres:         []string{"Drama"},
 			},
-			wantCat: CategoryAdult,
-			wantConfMin: 0.65,
-		},
-		{
-			name: "TV-14 alone leans adult",
-			item: jellyfin.Item{
-				OfficialRating: "TV-14",
-			},
-			wantCat: CategoryAdult,
-			wantConfMin: 0.65,
+			wantBucket: "adult",
+			wantMinAge: ageOf(AgeTeen),
+			wantConfMin: 0.6,
 		},
 		{
 			name: "PG with no other signal is unsure",
@@ -95,24 +94,23 @@ func TestSuggest(t *testing.T) {
 				OfficialRating: "PG",
 				Genres:         []string{"Drama"},
 			},
-			wantCat: CategoryUnsure,
-			wantConfMin: 0.4,
+			wantBucket: "unsure",
+			wantMinAge: nil,
 		},
 		{
-			name:    "no signals at all is unsure low confidence",
-			item:    jellyfin.Item{},
-			wantCat: CategoryUnsure,
-			wantConfMin: 0.0, // any low number is fine
+			name:       "no signals is unsure low confidence",
+			item:       jellyfin.Item{},
+			wantBucket: "unsure",
+			wantMinAge: nil,
 		},
 		{
-			name: "kid rating wins over kid studio (just confirms first-match-wins)",
+			name: "kid rating wins over kid studio (toddler tier)",
 			item: jellyfin.Item{
 				OfficialRating: "G",
 				Studios:        []jellyfin.Studio{{Name: "Pixar"}},
 			},
-			wantCat: CategoryKid,
-			wantConfMin: 0.9,
-			wantReasonContains: "G",
+			wantBucket: "kid",
+			wantMinAge: ageOf(AgeToddler),
 		},
 		{
 			name: "adult rating wins over animation",
@@ -120,55 +118,56 @@ func TestSuggest(t *testing.T) {
 				OfficialRating: "R",
 				Genres:         []string{"Animation"},
 			},
-			wantCat: CategoryAdult,
-			wantConfMin: 0.9,
+			wantBucket: "adult",
+			wantMinAge: ageOf(AgeAdult),
 		},
 		{
 			name: "lowercase rating still matches",
 			item: jellyfin.Item{OfficialRating: "g"},
-			wantCat: CategoryKid,
-			wantConfMin: 0.9,
+			wantBucket: "kid",
+			wantMinAge: ageOf(AgeToddler),
 		},
 		{
-			name: "studio name is case-insensitive",
+			name: "kid studio + PG nudges down to preschool",
 			item: jellyfin.Item{
-				Studios: []jellyfin.Studio{{Name: "pixar"}},
+				OfficialRating: "PG",
+				Studios:        []jellyfin.Studio{{Name: "Pixar"}},
 			},
-			wantCat: CategoryKid,
-			wantConfMin: 0.8,
+			wantBucket: "kid",
+			wantMinAge: ageOf(AgePreschool),
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := Suggest(tt.item)
-			if got.Category != tt.wantCat {
-				t.Errorf("Category = %q, want %q", got.Category, tt.wantCat)
+			if got.Bucket != tt.wantBucket {
+				t.Errorf("Bucket = %q, want %q", got.Bucket, tt.wantBucket)
+			}
+			if !intPtrEqual(got.MinAge, tt.wantMinAge) {
+				gotS, wantS := "nil", "nil"
+				if got.MinAge != nil {
+					gotS = itoa(*got.MinAge)
+				}
+				if tt.wantMinAge != nil {
+					wantS = itoa(*tt.wantMinAge)
+				}
+				t.Errorf("MinAge = %s, want %s", gotS, wantS)
 			}
 			if got.Confidence < tt.wantConfMin {
 				t.Errorf("Confidence = %v, want >= %v", got.Confidence, tt.wantConfMin)
-			}
-			if tt.wantReasonContains != "" {
-				found := false
-				for _, r := range got.Reasoning {
-					if contains(r, tt.wantReasonContains) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					t.Errorf("reasoning %v does not contain %q", got.Reasoning, tt.wantReasonContains)
-				}
 			}
 		})
 	}
 }
 
-// local contains rather than importing strings just for tests
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
 	}
-	return false
+	digits := []byte{}
+	for n > 0 {
+		digits = append([]byte{byte('0' + n%10)}, digits...)
+		n /= 10
+	}
+	return string(digits)
 }

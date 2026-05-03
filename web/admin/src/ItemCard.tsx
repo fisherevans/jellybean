@@ -1,11 +1,11 @@
-import { type Item } from "./api";
-import CategoryControl from "./CategoryControl";
+import { type Item, formatMinAge } from "./api";
+import AgePicker from "./CategoryControl";
 
 type Props = {
     item: Item;
     selected?: boolean;
     onSelect?: (e: React.MouseEvent) => void;
-    onCategoryChange?: (next: Item["Category"]) => void;
+    onAgeChange?: (next: number | null) => void;
     busy?: boolean;
     showSuggestion?: boolean;
     posterWidth?: number;
@@ -13,20 +13,15 @@ type Props = {
 
 const DEFAULT_POSTER_WIDTH = 80;
 
-// posterURL: the admin image proxy returns the Jellyfin Primary image
-// without exposing the API key. Width hint controls server-side resize.
 function posterURL(itemId: string, width: number): string {
     return `/api/admin/items/${itemId}/image?type=Primary&width=${width}`;
 }
 
-// ItemCard is the shared visual for a single library item across the
-// curation views. The sweep view wires up onSelect for shift-click range
-// selection; the search/activity views wire up onCategoryChange directly.
 export default function ItemCard({
     item,
     selected,
     onSelect,
-    onCategoryChange,
+    onAgeChange,
     busy,
     showSuggestion,
     posterWidth = DEFAULT_POSTER_WIDTH,
@@ -67,9 +62,12 @@ export default function ItemCard({
                         <div className="item-card-meta">{meta.join(" · ")}</div>
                     )}
                     {studios && <div className="item-card-studios">{studios}</div>}
+                    <div className="item-card-meta">
+                        Current: {formatMinAge(item.MinAge)}
+                    </div>
                     {showSuggestion && item.Suggestion && (
-                        <div className={`item-card-suggestion sugg-${item.Suggestion.category}`}>
-                            guess: <strong>{item.Suggestion.category}</strong>{" "}
+                        <div className={`item-card-suggestion sugg-${item.Suggestion.bucket}`}>
+                            guess: <strong>{formatMinAge(item.Suggestion.minAge)}</strong>{" "}
                             ({Math.round(item.Suggestion.confidence * 100)}%)
                             {item.Suggestion.reasoning?.length ? (
                                 <span className="sugg-why">
@@ -81,10 +79,10 @@ export default function ItemCard({
                     )}
                 </div>
             </button>
-            {onCategoryChange && (
-                <CategoryControl
-                    value={item.Category}
-                    onChange={onCategoryChange}
+            {onAgeChange && (
+                <AgePicker
+                    value={item.MinAge}
+                    onChange={onAgeChange}
                     busy={busy}
                     compact
                 />

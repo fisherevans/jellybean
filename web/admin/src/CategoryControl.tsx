@@ -1,39 +1,51 @@
-import { type Item } from "./api";
+import { AGE_TIERS, AGE_LABELS, type AgeTier } from "./api";
 
 type Props = {
-    value: Item["Category"];
-    onChange: (next: Item["Category"]) => void;
+    value: number | null;
+    onChange: (next: number | null) => void;
     busy?: boolean;
     compact?: boolean;
 };
 
-const labels: Record<Item["Category"], string> = {
-    kid: "Kid",
-    adult: "Adult",
-    uncategorized: "Skip",
-};
-
-const order: Item["Category"][] = ["kid", "adult", "uncategorized"];
-
-// CategoryControl is a three-button row that flips an item between kid /
-// adult / uncategorized. Used by the sweep, triage, and search views.
-export default function CategoryControl({ value, onChange, busy, compact }: Props) {
+// AgePicker is the per-item control that flips an item between age tiers
+// (or back to uncategorized via "Skip"). Shared by the sweep, triage,
+// search, and activity views.
+export default function AgePicker({ value, onChange, busy, compact }: Props) {
     return (
         <div className={`cat-control${compact ? " compact" : ""}`}>
-            {order.map((c) => (
-                <button
-                    key={c}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => {
-                        if (c !== value) onChange(c);
-                    }}
-                    className={`cat-button cat-${c}${value === c ? " active" : ""}`}
-                    aria-pressed={value === c}
-                >
-                    {labels[c]}
-                </button>
-            ))}
+            {AGE_TIERS.map((age) => {
+                const active = value === age;
+                return (
+                    <button
+                        key={age}
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                            if (!active) onChange(age);
+                        }}
+                        className={`cat-button cat-${ageBucketClass(age)}${active ? " active" : ""}`}
+                        aria-pressed={active}
+                        title={AGE_LABELS[age as AgeTier]}
+                    >
+                        {age === 18 ? "18+" : `${age}+`}
+                    </button>
+                );
+            })}
+            <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                    if (value !== null) onChange(null);
+                }}
+                className={`cat-button cat-uncategorized${value === null ? " active" : ""}`}
+                title="Mark uncategorized"
+            >
+                Skip
+            </button>
         </div>
     );
+}
+
+function ageBucketClass(age: AgeTier): "kid" | "adult" {
+    return age < 13 ? "kid" : "adult";
 }

@@ -1,29 +1,30 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, HttpError, type Item } from "../api";
+import { AGE_TIERS, AGE_LABELS, type AgeTier, api, HttpError, formatMinAge, type Item } from "../api";
 
 // Tinder-style triage. One uncategorized item at a time, keyboard nav for
-// fast burndown. Undo stack is in-memory (last 10) and re-applies the
-// previous category via the same set-category endpoint.
+// fast burndown. Number keys map to age tiers; ↓ skips; Z undoes.
 
 type UndoEntry = {
     item: Item;
-    appliedCategory: Item["Category"];
+    appliedAge: number | null;
+};
+
+// Number-key shortcuts: 1=2, 2=5, 3=7, 4=13, 5=18 (in tier order).
+const KEY_TO_AGE: Record<string, AgeTier> = {
+    "1": 2, "2": 5, "3": 7, "4": 13, "5": 18,
 };
 
 export default function Triage() {
     const [queue, setQueue] = useState<Item[]>([]);
     const [cursor, setCursor] = useState(0);
-    const [serverCursor, setServerCursor] = useState(0); // Jellyfin index for the next batch
+    const [serverCursor, setServerCursor] = useState(0);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
     const [doneCount, setDoneCount] = useState(0);
     const [exhausted, setExhausted] = useState(false);
 
-    // Pre-fetch 50 items at a time. When the on-screen queue is running low
-    // we fetch the next batch using the server-issued NextStartIndex so we
-    // don't keep re-scanning the same beginning of the catalog.
     async function fetchBatch(startIndex: number) {
         try {
             const res = await api.listItems({
@@ -66,15 +67,15 @@ export default function Triage() {
     }, [cursor, queue, busy, exhausted, serverCursor]);
 
     const apply = useCallback(
-        async (category: Item["Category"]) => {
+        async (age: number | null) => {
             if (!current || busy) return;
             setBusy(true);
             setError(null);
             try {
-                await api.setCategory(current.Id, category);
+                await api.setAge(current.Id, age);
                 setUndoStack((u) => [
                     ...u.slice(-9),
-                    { item: current, appliedCategory: category },
+                    { item: current, appliedAge: age },
                 ]);
                 setDoneCount((n) => n + 1);
                 await advance();
@@ -93,10 +94,9 @@ export default function Triage() {
         setBusy(true);
         setError(null);
         try {
-            await api.setCategory(last.item.Id, "uncategorized");
+            await api.setAge(last.item.Id, null);
             setUndoStack((u) => u.slice(0, -1));
             setDoneCount((n) => Math.max(0, n - 1));
-            // Push the item back onto the queue at the current cursor.
             setQueue((q) => {
                 const copy = q.slice();
                 copy.splice(cursor, 0, last.item);
@@ -112,10 +112,14 @@ export default function Triage() {
     useEffect(() => {
         function onKey(e: KeyboardEvent) {
             if (e.target instanceof HTMLInputElement) return;
-            if (e.key === "ArrowLeft") apply("adult");
-            else if (e.key === "ArrowRight") apply("kid");
-            else if (e.key === "ArrowDown" || e.key === " ") apply("uncategorized");
-            else if (e.key === "z" || e.key === "Z" || e.key === "u" || e.key === "U") undo();
+            const age = KEY_TO_AGE[e.key];
+            if (age !== undefined) {
+                apply(age);
+            } else if (e.key === "ArrowDown" || e.key === " ") {
+                apply(null);
+            } else if (e.key === "z" || e.key === "Z" || e.key === "u" || e.key === "U") {
+                undo();
+            }
         }
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
@@ -140,11 +144,7 @@ export default function Triage() {
     const posterURL = current.ImageTags?.Primary
         ? `/api/admin/items/${current.Id}/image?type=Primary&width=400`
         : null;
-    const backdropURL = (() => {
-        // Item type doesn't carry Backdrop tag info today; the proxy 404s
-        // when there isn't one, and <img onerror> hides it gracefully.
-        return `/api/admin/items/${current.Id}/image?type=Backdrop&width=1280`;
-    })();
+    const backdropURL = `/api/admin/items/${current.Id}/image?type=Backdrop&width=1280`;
 
     return (
         <div className="page triage">
@@ -174,8 +174,8 @@ export default function Triage() {
                             </div>
                         )}
                         {current.Suggestion && (
-                            <div className={`triage-suggestion sugg-${current.Suggestion.category}`}>
-                                guess: <strong>{current.Suggestion.category}</strong> (
+                            <div className={`triage-suggestion sugg-${current.Suggestion.bucket}`}>
+                                guess: <strong>{formatMinAge(current.Suggestion.minAge)}</strong> (
                                 {Math.round(current.Suggestion.confidence * 100)}%)
                                 {current.Suggestion.reasoning?.length ? (
                                     <span> — {current.Suggestion.reasoning.join("; ")}</span>
@@ -187,18 +187,23 @@ export default function Triage() {
             </div>
 
             <div className="triage-actions">
-                <button onClick={() => apply("adult")} disabled={busy} className="cat-button cat-adult">
-                    ← Adult
-                </button>
+                {AGE_TIERS.map((age, i) => (
+                    <button
+                        key={age}
+                        onClick={() => apply(age)}
+                        disabled={busy}
+                        className={`cat-button cat-${age < 13 ? "kid" : "adult"}`}
+                        title={`${i + 1} key`}
+                    >
+                        {i + 1}: {AGE_LABELS[age as AgeTier]}
+                    </button>
+                ))}
                 <button
-                    onClick={() => apply("uncategorized")}
+                    onClick={() => apply(null)}
                     disabled={busy}
                     className="cat-button cat-uncategorized"
                 >
                     ↓ Skip
-                </button>
-                <button onClick={() => apply("kid")} disabled={busy} className="cat-button cat-kid">
-                    Kid →
                 </button>
                 <button onClick={undo} disabled={undoStack.length === 0 || busy}>
                     Z Undo ({undoStack.length})
@@ -206,7 +211,7 @@ export default function Triage() {
             </div>
 
             <p className="muted">
-                Keyboard: ← adult, → kid, ↓ skip, Z undo
+                Keyboard: 1 toddler · 2 preschool · 3 younger kid · 4 teen · 5 adult · ↓ skip · Z undo
             </p>
         </div>
     );

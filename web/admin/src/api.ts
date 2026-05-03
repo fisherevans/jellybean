@@ -7,8 +7,26 @@ export type User = {
     admin: boolean;
 };
 
+// Standard age tiers stored on items. The schema accepts other integers, so
+// future granularity (e.g. 16 for older teens) is additive.
+export const AGE_TIERS = [2, 5, 7, 13, 18] as const;
+export type AgeTier = (typeof AGE_TIERS)[number];
+
+export const AGE_LABELS: Record<AgeTier, string> = {
+    2: "Toddler (2+)",
+    5: "Preschool (5+)",
+    7: "Younger kid (7+)",
+    13: "Teen (13+)",
+    18: "Adult (18+)",
+};
+
+// Coarse bucket derived server-side from MinAge. Used when the UI just
+// needs to know "is this kid-allowed" without picking a specific tier.
+export type Bucket = "kid" | "adult" | "uncategorized";
+
 export type Suggestion = {
-    category: "kid" | "adult" | "unsure";
+    bucket: "kid" | "adult" | "unsure";
+    minAge: number | null;
     confidence: number;
     reasoning: string[];
 };
@@ -22,7 +40,8 @@ export type Item = {
     Genres?: string[];
     Studios?: { Name: string; Id?: string }[];
     ImageTags?: { Primary?: string };
-    Category: "kid" | "adult" | "uncategorized";
+    MinAge: number | null;
+    Bucket: Bucket;
     Suggestion?: Suggestion;
 };
 
@@ -63,8 +82,8 @@ export type ActivityEntry = {
     id: number;
     itemId: string;
     itemName: string;
-    fromCategory?: string;
-    toCategory: string;
+    fromMinAge: number | null;
+    toMinAge: number | null;
     changedBy?: string;
     changedAt: number;
 };
@@ -96,7 +115,7 @@ type ItemsQuery = {
     type?: string;
     limit?: number;
     startIndex?: number;
-    category?: "kid" | "adult" | "uncategorized";
+    category?: Bucket;
     search?: string;
     suggest?: boolean;
 };
@@ -113,6 +132,16 @@ function itemsURL(q: ItemsQuery): string {
     return `/api/admin/items${qs ? "?" + qs : ""}`;
 }
 
+// formatMinAge renders a stored min_age as a human label.
+// null → "Uncategorized"; known tiers use their AGE_LABELS.
+export function formatMinAge(age: number | null): string {
+    if (age === null) return "Uncategorized";
+    if ((AGE_TIERS as readonly number[]).includes(age)) {
+        return AGE_LABELS[age as AgeTier];
+    }
+    return `${age}+`;
+}
+
 export const api = {
     login: (username: string, password: string) =>
         request<User>("POST", "/api/auth/login", { username, password }),
@@ -121,10 +150,10 @@ export const api = {
 
     listItems: (q: ItemsQuery = {}) => request<ItemsResult>("GET", itemsURL(q)),
 
-    setCategory: (itemId: string, category: Item["Category"]) =>
-        request<void>("POST", `/api/admin/items/${itemId}/category`, { category }),
-    bulkSetCategory: (itemIds: string[], category: Item["Category"]) =>
-        request<{ updated: number }>("POST", `/api/admin/items/category/bulk`, { itemIds, category }),
+    setAge: (itemId: string, minAge: number | null) =>
+        request<void>("POST", `/api/admin/items/${itemId}/age`, { minAge }),
+    bulkSetAge: (itemIds: string[], minAge: number | null) =>
+        request<{ updated: number }>("POST", `/api/admin/items/age/bulk`, { itemIds, minAge }),
     recentActivity: (limit = 50) =>
         request<{ entries: ActivityEntry[] }>("GET", `/api/admin/categorizations/recent?limit=${limit}`),
 

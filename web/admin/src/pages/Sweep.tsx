@@ -1,19 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, HttpError, type Item } from "../api";
+import { AGE_TIERS, AGE_LABELS, type AgeTier, api, HttpError, type Item } from "../api";
 import ItemCard from "../ItemCard";
 
-// The sweep view loads all uncategorized items (paged through internally on
-// the server) and groups them by the auto-suggestion verdict so the parent
-// can scan for outliers rather than alphabetize through everything.
-//
-// Bulk-select with shift-click range select per section; bulk action bar
-// applies kid / adult / skip to the entire selection in one round trip.
+// Sweep loads uncategorized items in 200-item pages and groups them by the
+// auto-suggestion's coarse bucket so the parent can scan for outliers.
+// Bulk action bar applies a specific age tier (or "skip") to the selection.
 
 type Section = "kid" | "adult" | "unsure";
 
 const sectionTitles: Record<Section, string> = {
     kid: "Likely kid-safe",
-    adult: "Likely adult",
+    adult: "Likely adult / teen",
     unsure: "Needs review",
 };
 
@@ -83,8 +80,8 @@ export default function Sweep() {
         const out: Record<Section, Item[]> = { kid: [], adult: [], unsure: [] };
         if (!loaded) return out;
         for (const it of loaded.items) {
-            const cat = (it.Suggestion?.category ?? "unsure") as Section;
-            out[cat].push(it);
+            const bucket = (it.Suggestion?.bucket ?? "unsure") as Section;
+            out[bucket].push(it);
         }
         return out;
     }, [loaded]);
@@ -118,15 +115,16 @@ export default function Sweep() {
         setSelected(new Set());
     }
 
-    async function applyBulk(category: Item["Category"]) {
+    async function applyBulk(minAge: number | null) {
         if (selected.size === 0 || !loaded) return;
         setBusy(true);
         setError(null);
         try {
             const ids = Array.from(selected);
-            await api.bulkSetCategory(ids, category);
-            // Drop the affected items from local state (they're no longer
-            // uncategorized).
+            await api.bulkSetAge(ids, minAge);
+            // Drop the affected items from local state. If the new age is
+            // null they'd still be uncategorized but we've already shown
+            // them; treat the user's confirmation as "I'm done with these."
             setLoaded({
                 ...loaded,
                 items: loaded.items.filter((it) => !selected.has(it.Id)),
@@ -166,12 +164,25 @@ export default function Sweep() {
             {error && <div className="error">{error}</div>}
 
             <div className="bulk-bar">
-                <span>{selected.size} selected</span>
-                <button disabled={selected.size === 0 || busy} onClick={() => applyBulk("kid")}>
-                    Mark kid-safe
-                </button>
-                <button disabled={selected.size === 0 || busy} onClick={() => applyBulk("adult")}>
-                    Mark adult
+                <span>{selected.size} selected · mark as:</span>
+                {AGE_TIERS.map((age: AgeTier) => (
+                    <button
+                        key={age}
+                        disabled={selected.size === 0 || busy}
+                        onClick={() => applyBulk(age)}
+                        title={AGE_LABELS[age]}
+                        className={`cat-button cat-${age < 13 ? "kid" : "adult"}`}
+                    >
+                        {age === 18 ? "18+" : `${age}+`}
+                    </button>
+                ))}
+                <button
+                    disabled={selected.size === 0 || busy}
+                    onClick={() => applyBulk(null)}
+                    className="cat-button cat-uncategorized"
+                    title="Leave uncategorized but remove from sweep view"
+                >
+                    Skip
                 </button>
                 <button disabled={selected.size === 0 || busy} onClick={clearSelection}>
                     Clear

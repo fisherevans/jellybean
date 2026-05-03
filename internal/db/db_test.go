@@ -49,28 +49,28 @@ func TestCategorizationsTableSchema(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Reject invalid category values via the CHECK constraint.
+	// Reject invalid source values via the CHECK constraint.
 	_, err = conn.Exec(`INSERT INTO categorizations
-		(jellyfin_item_id, category, source, set_at, set_by)
-		VALUES ('abc', 'bogus', 'manual', 0, 'admin')`)
-	if err == nil {
-		t.Error("expected CHECK constraint to reject invalid category")
-	}
-
-	// Reject invalid source values.
-	_, err = conn.Exec(`INSERT INTO categorizations
-		(jellyfin_item_id, category, source, set_at, set_by)
-		VALUES ('abc', 'kid', 'bogus', 0, 'admin')`)
+		(jellyfin_item_id, min_age, source, set_at, set_by)
+		VALUES ('abc', 7, 'bogus', 0, 'admin')`)
 	if err == nil {
 		t.Error("expected CHECK constraint to reject invalid source")
 	}
 
-	// Valid insert succeeds.
+	// Valid insert with a numeric min_age succeeds.
 	_, err = conn.Exec(`INSERT INTO categorizations
-		(jellyfin_item_id, category, source, set_at, set_by)
-		VALUES ('abc', 'kid', 'manual', unixepoch(), 'admin')`)
+		(jellyfin_item_id, min_age, source, set_at, set_by)
+		VALUES ('abc', 7, 'manual', unixepoch(), 'admin')`)
 	if err != nil {
-		t.Errorf("valid insert failed: %v", err)
+		t.Errorf("valid numeric insert failed: %v", err)
+	}
+
+	// NULL min_age (uncategorized) is allowed.
+	_, err = conn.Exec(`INSERT INTO categorizations
+		(jellyfin_item_id, min_age, source, set_at, set_by)
+		VALUES ('def', NULL, 'manual', unixepoch(), 'admin')`)
+	if err != nil {
+		t.Errorf("null min_age insert failed: %v", err)
 	}
 }
 

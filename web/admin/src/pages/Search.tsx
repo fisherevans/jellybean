@@ -12,7 +12,6 @@ export default function Search() {
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
 
-    // Debounced search: only fire 250ms after the last keystroke.
     useEffect(() => {
         const trimmed = query.trim();
         if (!trimmed) {
@@ -34,7 +33,6 @@ export default function Search() {
         return () => clearTimeout(handle);
     }, [query]);
 
-    // Keep the URL in sync so reloads preserve the query.
     useEffect(() => {
         if (query) {
             params.set("q", query);
@@ -42,18 +40,31 @@ export default function Search() {
             params.delete("q");
         }
         setParams(params, { replace: true });
-        // intentionally not depending on params; avoids feedback loop
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [query]);
 
-    async function setCategory(itemId: string, category: Item["Category"]) {
+    async function setAge(itemId: string, age: number | null) {
         setBusy(itemId);
         setError(null);
         try {
-            await api.setCategory(itemId, category);
-            // Optimistically update the local list.
+            await api.setAge(itemId, age);
             setItems((cur) =>
-                cur ? cur.map((it) => (it.Id === itemId ? { ...it, Category: category } : it)) : cur,
+                cur
+                    ? cur.map((it) =>
+                          it.Id === itemId
+                              ? {
+                                    ...it,
+                                    MinAge: age,
+                                    Bucket:
+                                        age === null
+                                            ? "uncategorized"
+                                            : age < 13
+                                            ? "kid"
+                                            : "adult",
+                                }
+                              : it,
+                      )
+                    : cur,
             );
         } catch (err) {
             setError(err instanceof HttpError ? err.message : String(err));
@@ -94,7 +105,7 @@ export default function Search() {
                             <li key={it.Id}>
                                 <ItemCard
                                     item={it}
-                                    onCategoryChange={(c) => setCategory(it.Id, c)}
+                                    onAgeChange={(c) => setAge(it.Id, c)}
                                     busy={busy === it.Id}
                                 />
                             </li>
