@@ -92,6 +92,14 @@ func (s *Server) routes() {
 	admin.HandleFunc("/items/{id}/category", s.handleAdminSetCategory).Methods(http.MethodPost)
 	admin.HandleFunc("/items/category/bulk", s.handleAdminBulkCategory).Methods(http.MethodPost)
 	admin.HandleFunc("/categorizations/recent", s.handleAdminRecentActivity).Methods(http.MethodGet)
+	admin.HandleFunc("/profiles", s.handleListProfiles).Methods(http.MethodGet)
+	admin.HandleFunc("/profiles", s.handleCreateProfile).Methods(http.MethodPost)
+	admin.HandleFunc("/profiles/{id}", s.handleUpdateProfile).Methods(http.MethodPatch)
+	admin.HandleFunc("/profiles/{id}", s.handleDeleteProfile).Methods(http.MethodDelete)
+	admin.HandleFunc("/kids", s.handleListKids).Methods(http.MethodGet)
+	admin.HandleFunc("/kids", s.handleCreateKid).Methods(http.MethodPost)
+	admin.HandleFunc("/kids/{id}/regenerate", s.handleRegenerateKidKey).Methods(http.MethodPost)
+	admin.HandleFunc("/kids/{id}", s.handleDeleteKid).Methods(http.MethodDelete)
 
 	// Kids API: dual auth. An admin session gets in (so testing the kids
 	// UI from the same browser as the admin works without provisioning a
