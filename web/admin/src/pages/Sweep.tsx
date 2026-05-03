@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, HttpError, type Item, type ItemState } from "../api";
+import { api, HttpError, formatState, type Item, type ItemState } from "../api";
 import { useActiveProfile } from "../activeProfile";
 import ItemCard from "../ItemCard";
 
@@ -17,11 +17,20 @@ const sectionTitles: Record<Section, string> = {
     hidden: "Looks hidden / not for kids",
 };
 
+const LEAVE_ANIM_MS = 240;
+const UNDO_TOAST_MS = 6000;
+
 type Loaded = {
     items: Item[];
     cursor: number;
     hasMore: boolean;
     total: number;
+};
+
+type RecentAction = {
+    items: Item[]; // captured Item objects so we can restore them on undo
+    state: ItemState;
+    timestamp: number;
 };
 
 export default function Sweep() {
@@ -33,6 +42,9 @@ export default function Sweep() {
     const [lastClicked, setLastClicked] = useState<Record<Section, number | null>>({
         visible: null, unsure: null, hidden: null,
     });
+    const [leaving, setLeaving] = useState<Set<string>>(new Set());
+    const [recentAction, setRecentAction] = useState<RecentAction | null>(null);
+    const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     async function loadInitial() {
         if (!profile) return;
@@ -58,6 +70,8 @@ export default function Sweep() {
     useEffect(() => {
         loadInitial();
         setSelected(new Set());
+        setLeaving(new Set());
+        setRecentAction(null);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [profile?.id]);
 
@@ -130,24 +144,55 @@ export default function Sweep() {
         setSelected(new Set());
     }
 
-    // Single-item state apply. Drops the item from the local sweep view
-    // afterwards so the column shrinks as the user works through it.
-    async function applyToOne(itemId: string, state: ItemState) {
+    // After an action: schedule the leaving animation and the undo toast.
+    const scheduleRemoval = useCallback(
+        (items: Item[], state: ItemState) => {
+            const ids = new Set(items.map((it) => it.Id));
+            setLeaving((prev) => {
+                const next = new Set(prev);
+                for (const id of ids) next.add(id);
+                return next;
+            });
+            // After the CSS transition, drop the items from the loaded list.
+            setTimeout(() => {
+                setLoaded((cur) =>
+                    cur
+                        ? { ...cur, items: cur.items.filter((it) => !ids.has(it.Id)) }
+                        : cur,
+                );
+                setLeaving((prev) => {
+                    const next = new Set(prev);
+                    for (const id of ids) next.delete(id);
+                    return next;
+                });
+            }, LEAVE_ANIM_MS);
+
+            // Drop them from the active selection.
+            setSelected((prev) => {
+                const next = new Set(prev);
+                for (const id of ids) next.delete(id);
+                return next;
+            });
+
+            // Show / replace the undo toast.
+            const stamp = Date.now();
+            setRecentAction({ items, state, timestamp: stamp });
+            if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+            toastTimerRef.current = setTimeout(() => {
+                setRecentAction((cur) => (cur && cur.timestamp === stamp ? null : cur));
+                toastTimerRef.current = null;
+            }, UNDO_TOAST_MS);
+        },
+        [],
+    );
+
+    async function applyToOne(item: Item, state: ItemState) {
         if (!loaded || !profile) return;
         setBusy(true);
         setError(null);
         try {
-            await api.setState(itemId, profile.id, state);
-            setLoaded({
-                ...loaded,
-                items: loaded.items.filter((it) => it.Id !== itemId),
-            });
-            // Drop from selection if it was selected.
-            if (selected.has(itemId)) {
-                const next = new Set(selected);
-                next.delete(itemId);
-                setSelected(next);
-            }
+            await api.setState(item.Id, profile.id, state);
+            scheduleRemoval([item], state);
         } catch (err) {
             setError(err instanceof HttpError ? err.message : String(err));
         } finally {
@@ -157,20 +202,51 @@ export default function Sweep() {
 
     async function applyBulk(state: ItemState) {
         if (selected.size === 0 || !loaded || !profile) return;
+        const affected = loaded.items.filter((it) => selected.has(it.Id));
+        if (affected.length === 0) return;
         setBusy(true);
         setError(null);
         try {
-            const ids = Array.from(selected);
-            await api.bulkSetState(ids, profile.id, state);
-            setLoaded({
-                ...loaded,
-                items: loaded.items.filter((it) => !selected.has(it.Id)),
-            });
-            setSelected(new Set());
+            await api.bulkSetState(affected.map((it) => it.Id), profile.id, state);
+            scheduleRemoval(affected, state);
         } catch (err) {
             setError(err instanceof HttpError ? err.message : String(err));
         } finally {
             setBusy(false);
+        }
+    }
+
+    async function undoRecent() {
+        if (!recentAction || !profile) return;
+        const { items } = recentAction;
+        setBusy(true);
+        setError(null);
+        try {
+            await api.bulkSetState(items.map((it) => it.Id), profile.id, null);
+            // Restore the items into the local list (avoid a refetch).
+            setLoaded((cur) => {
+                if (!cur) return cur;
+                const present = new Set(cur.items.map((it) => it.Id));
+                const fresh = items.filter((it) => !present.has(it.Id));
+                return { ...cur, items: [...fresh, ...cur.items] };
+            });
+            setRecentAction(null);
+            if (toastTimerRef.current) {
+                clearTimeout(toastTimerRef.current);
+                toastTimerRef.current = null;
+            }
+        } catch (err) {
+            setError(err instanceof HttpError ? err.message : String(err));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    function dismissToast() {
+        setRecentAction(null);
+        if (toastTimerRef.current) {
+            clearTimeout(toastTimerRef.current);
+            toastTimerRef.current = null;
         }
     }
 
@@ -265,9 +341,11 @@ export default function Sweep() {
                                         item={it}
                                         selected={selected.has(it.Id)}
                                         onSelect={(e) => handleSelect(section, i, e)}
-                                        onStateChange={(s) => applyToOne(it.Id, s)}
+                                        onStateChange={(s) => applyToOne(it, s)}
                                         busy={busy}
                                         showSuggestion
+                                        leaving={leaving.has(it.Id)}
+                                        fixedHeight
                                     />
                                 </li>
                             ))}
@@ -275,6 +353,21 @@ export default function Sweep() {
                     </div>
                 ))}
             </div>
+
+            {recentAction && (
+                <div className="undo-toast" role="status">
+                    <span className="undo-toast-message">
+                        Marked <strong>{recentAction.items.length}</strong> as{" "}
+                        <strong>{formatState(recentAction.state)}</strong>
+                    </span>
+                    <button onClick={undoRecent} disabled={busy}>
+                        Undo
+                    </button>
+                    <button className="undo-dismiss" onClick={dismissToast}>
+                        ✕
+                    </button>
+                </div>
+            )}
         </div>
     );
 }

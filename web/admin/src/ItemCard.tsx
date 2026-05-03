@@ -9,6 +9,8 @@ type Props = {
     busy?: boolean;
     showSuggestion?: boolean;
     posterWidth?: number;
+    leaving?: boolean;
+    fixedHeight?: boolean;
 };
 
 const DEFAULT_POSTER_WIDTH = 80;
@@ -25,6 +27,8 @@ export default function ItemCard({
     busy,
     showSuggestion,
     posterWidth = DEFAULT_POSTER_WIDTH,
+    leaving,
+    fixedHeight,
 }: Props) {
     const meta: string[] = [];
     if (item.ProductionYear) meta.push(String(item.ProductionYear));
@@ -32,8 +36,15 @@ export default function ItemCard({
     const studios = (item.Studios ?? []).map((s) => s.Name).join(", ");
     const hasPoster = !!item.ImageTags?.Primary;
 
+    const classes = [
+        "item-card",
+        selected ? "selected" : "",
+        leaving ? "leaving" : "",
+        fixedHeight ? "fixed-height" : "",
+    ].filter(Boolean).join(" ");
+
     return (
-        <div className={`item-card${selected ? " selected" : ""}`}>
+        <div className={classes}>
             <button
                 type="button"
                 className="item-card-body"

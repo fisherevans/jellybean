@@ -334,6 +334,59 @@ button:disabled {
     color: #f08e9a;
 }
 
+/* undo toast */
+.undo-toast {
+    position: fixed;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.6rem 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+    z-index: 50;
+    font-size: 0.9rem;
+    animation: undo-toast-in 200ms ease-out;
+}
+
+@keyframes undo-toast-in {
+    from { transform: translate(-50%, 20px); opacity: 0; }
+    to   { transform: translate(-50%, 0); opacity: 1; }
+}
+
+.undo-toast-message {
+    color: var(--fg);
+}
+
+.undo-toast-message strong {
+    color: var(--accent);
+}
+
+.undo-toast button {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    padding: 0.3rem 0.7rem;
+    font-size: 0.85rem;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.undo-toast button:hover {
+    background: rgba(245, 197, 24, 0.15);
+}
+
+.undo-toast .undo-dismiss {
+    color: var(--muted);
+    border-color: var(--border);
+    padding: 0.2rem 0.5rem;
+    font-size: 0.78rem;
+}
+
 .cat-control.compact .cat-button {
     padding: 0.2rem 0.5rem;
     font-size: 0.78rem;
@@ -348,6 +401,28 @@ button:disabled {
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
+    transition: transform 220ms ease-out, opacity 220ms ease-out, height 220ms ease-out, margin 220ms ease-out, padding 220ms ease-out, border-width 220ms ease-out;
+    transform-origin: center;
+}
+
+.item-card.fixed-height {
+    height: 170px;
+    overflow: hidden;
+}
+
+.item-card.fixed-height .item-card-text {
+    overflow: hidden;
+}
+
+.item-card.leaving {
+    transform: scale(0.7);
+    opacity: 0;
+    height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-top: -0.5rem; /* neutralize gap so the column shrinks cleanly */
+    border-width: 0;
+    pointer-events: none;
 }
 
 .item-card.selected {
@@ -494,14 +569,88 @@ button:disabled {
 }
 
 /* triage */
+.triage-stack {
+    position: relative;
+    margin: 1rem 0;
+    min-height: 380px;
+}
+
 .triage-card {
     position: relative;
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 8px;
     overflow: hidden;
-    margin: 1rem 0;
     min-height: 360px;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.triage-card.front {
+    position: relative;
+    z-index: 2;
+    cursor: grab;
+}
+
+.triage-card.front:active {
+    cursor: grabbing;
+}
+
+.triage-card.behind {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    transform: scale(0.96) translateY(-12px);
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.triage-card.swipe-up-incoming {
+    animation: triage-incoming 280ms ease-out;
+}
+
+@keyframes triage-incoming {
+    from { transform: translate(0, -130%); opacity: 0; }
+    to { transform: translate(0, 0); opacity: 1; }
+}
+
+.triage-flash {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    pointer-events: none;
+    animation: triage-flash 280ms ease-out;
+    opacity: 0;
+}
+
+@keyframes triage-flash {
+    0%   { opacity: 0; }
+    20%  { opacity: 0.85; }
+    80%  { opacity: 0.85; }
+    100% { opacity: 0; }
+}
+
+.triage-flash.flash-green   { background: rgba(31, 111, 58, 0.85); }
+.triage-flash.flash-red     { background: rgba(111, 31, 42, 0.85); }
+.triage-flash.flash-yellow  { background: rgba(180, 140, 30, 0.85); }
+.triage-flash.flash-neutral { background: rgba(80, 80, 80, 0.7); }
+
+.triage-flash-symbol {
+    color: #fff;
+    font-size: 8rem;
+    font-weight: 700;
+    line-height: 1;
+    text-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    animation: triage-flash-symbol 280ms ease-out;
+}
+
+@keyframes triage-flash-symbol {
+    from { transform: scale(0.4); opacity: 0; }
+    50%  { transform: scale(1.2); opacity: 1; }
+    to   { transform: scale(1); opacity: 0; }
 }
 
 .triage-backdrop {
