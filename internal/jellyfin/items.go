@@ -16,6 +16,9 @@ func (c *Client) GetItems(ctx context.Context, f ItemsFilter) (*ItemsResult, err
 	if len(f.IncludeItemTypes) > 0 {
 		q.Set("IncludeItemTypes", strings.Join(f.IncludeItemTypes, ","))
 	}
+	if len(f.IDs) > 0 {
+		q.Set("Ids", strings.Join(f.IDs, ","))
+	}
 	if f.Recursive {
 		q.Set("Recursive", "true")
 	}

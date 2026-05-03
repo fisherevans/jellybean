@@ -54,6 +54,7 @@ type ItemsResult struct {
 // ItemsFilter narrows /Items queries. Empty fields are not sent.
 type ItemsFilter struct {
 	IncludeItemTypes []string
+	IDs              []string // explicit Ids filter; bypasses Recursive scan
 	Recursive        bool
 	Limit            int
 	StartIndex       int

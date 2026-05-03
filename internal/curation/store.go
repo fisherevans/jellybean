@@ -145,6 +145,60 @@ func (s *Store) GetCategory(ctx context.Context, itemID string) (Category, error
 	return Category(c), nil
 }
 
+// ListItemIDsInCategory returns the item IDs whose stored category equals
+// `cat`, sorted by most-recently-set first. Used by the items handler to
+// page through "show me all kid items" without fetching the entire library
+// from Jellyfin first.
+func (s *Store) ListItemIDsInCategory(ctx context.Context, cat Category, limit, offset int) ([]string, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT jellyfin_item_id FROM categorizations
+		WHERE category = ?
+		ORDER BY set_at DESC
+		LIMIT ? OFFSET ?`, string(cat), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// AllNonUncategorizedIDs returns every item ID that has been explicitly
+// categorized (kid OR adult; not the absence of a row). The handler uses
+// this to filter the "uncategorized" view by paging through Jellyfin's
+// catalog and skipping anything in the returned set.
+func (s *Store) AllNonUncategorizedIDs(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT jellyfin_item_id FROM categorizations
+		WHERE category IN ('kid', 'adult')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
 // GetCategoriesForItems returns a map of itemID -> category for the given IDs.
 // Items not found in the table are absent from the result; callers should
 // treat absence as CategoryUncategorized.
@@ -231,6 +285,10 @@ func getCategoryTx(ctx context.Context, tx *sql.Tx, itemID string) (Category, er
 }
 
 func upsertCategoryTx(ctx context.Context, tx *sql.Tx, itemID string, cat Category, src Source, setBy string) error {
+	var setByVal any
+	if setBy != "" {
+		setByVal = setBy
+	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO categorizations (jellyfin_item_id, category, source, set_at, set_by)
 		VALUES (?, ?, ?, unixepoch(), ?)
@@ -239,18 +297,21 @@ func upsertCategoryTx(ctx context.Context, tx *sql.Tx, itemID string, cat Catego
 			source = excluded.source,
 			set_at = excluded.set_at,
 			set_by = excluded.set_by`,
-		itemID, string(cat), string(src), setBy)
+		itemID, string(cat), string(src), setByVal)
 	return err
 }
 
 func appendHistoryTx(ctx context.Context, tx *sql.Tx, itemID string, from, to Category, by string) error {
-	var fromVal any
+	var fromVal, byVal any
 	if from != "" {
 		fromVal = string(from)
+	}
+	if by != "" {
+		byVal = by
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO categorization_history (jellyfin_item_id, from_category, to_category, changed_by, changed_at)
 		VALUES (?, ?, ?, ?, unixepoch())`,
-		itemID, fromVal, string(to), by)
+		itemID, fromVal, string(to), byVal)
 	return err
 }
