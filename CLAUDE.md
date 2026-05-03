@@ -37,10 +37,10 @@ Milestones and tasks live in GitHub, not in this repo.
 
 - Milestones: `gh api repos/fisherevans/jellybean/milestones | jq '.[] | {number, title, state}'`
 - Issues for the current milestone:
-  `gh issue list --repo fisherevans/jellybean --milestone "M2: Curation data model and parent web app" --state open`
+  `gh issue list --repo fisherevans/jellybean --milestone "M3: Kids client UI" --state open`
 - Single issue: `gh issue view <number> --repo fisherevans/jellybean`
 
-Current milestone: **M2: Curation data model and parent web app**.
+Current milestone: **M3: Kids client UI**.
 
 ### How to pick up an issue
 
@@ -58,10 +58,16 @@ Current milestone: **M2: Curation data model and parent web app**.
 - **M1: End-to-end skeleton** (closed) - Go server scaffold, Jellyfin client,
   parent auth via Jellyfin, parent + kids streaming proof (HLS via hls.js),
   Docker image, CI publishing, dev runbook. 8 issues, all closed.
-- **M2: Curation data model and parent web app** (current) - SQLite curation
-  schema, categorization API, auto-categorization heuristics, real curation
-  UI (initial sweep, triage, recent activity, search), profile + kid
-  management with per-kid Jellyfin tokens.
+- **M2: Curation data model and parent web app** (closed) - SQLite curation
+  schema, per-profile visibility (visible / hidden / unset), auto-
+  categorization heuristics, parent web UI (sweep + triage with card-stack
+  swipe gestures, activity, search), profile + kid management with per-kid
+  Jellyfin tokens, both Movies and TV Series treated as first-class. 8
+  issues, plus follow-up polish.
+- **M3: Kids client UI** (current) - Profile picker on launch, browse grid
+  mixing movies + series, "Continue Watching" with resume, D-pad focus
+  management, playback with reporting back to Jellyfin so resume + watched
+  state are populated, per-device DeviceId pass-through. 6 issues.
 - **M3: Kids client UI** - profile picker, browse grid, D-pad focus
   management, recently watched / continue watching, playback with resume.
 - **M4: Caching layer** - IndexedDB metadata cache, Cache API for artwork,
