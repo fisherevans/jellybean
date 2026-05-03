@@ -87,6 +87,11 @@ func (s *Server) routes() {
 	admin.HandleFunc("/items", s.handleAdminItems).Methods(http.MethodGet)
 	admin.HandleFunc("/items/{id}/stream", s.handleAdminStream).Methods(http.MethodGet)
 
+	// Kids API: not gated by parent session; auth is the X-Jellybean-Key
+	// header carrying a per-profile API key.
+	kids := api.PathPrefix("/kids").Subrouter()
+	kids.HandleFunc("/items/{id}/stream", s.handleKidsStream).Methods(http.MethodGet)
+
 	// Static SPAs. Order matters: /kids prefix wins over /, so the more
 	// specific one is registered first.
 	if s.kidsAssets != nil {
