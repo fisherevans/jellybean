@@ -49,28 +49,34 @@ func TestCategorizationsTableSchema(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Reject invalid source values via the CHECK constraint.
+	// Default profile id, used as the foreign key for inserts.
+	var defaultID int64
+	if err := conn.QueryRow(`SELECT id FROM profiles WHERE name = 'Default'`).Scan(&defaultID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Invalid state rejected by the CHECK constraint.
 	_, err = conn.Exec(`INSERT INTO categorizations
-		(jellyfin_item_id, min_age, source, set_at, set_by)
-		VALUES ('abc', 7, 'bogus', 0, 'admin')`)
+		(jellyfin_item_id, profile_id, state, source, set_at, set_by)
+		VALUES ('abc', ?, 'bogus', 'manual', unixepoch(), 'admin')`, defaultID)
+	if err == nil {
+		t.Error("expected CHECK constraint to reject invalid state")
+	}
+
+	// Invalid source rejected.
+	_, err = conn.Exec(`INSERT INTO categorizations
+		(jellyfin_item_id, profile_id, state, source, set_at, set_by)
+		VALUES ('abc', ?, 'visible', 'bogus', unixepoch(), 'admin')`, defaultID)
 	if err == nil {
 		t.Error("expected CHECK constraint to reject invalid source")
 	}
 
-	// Valid insert with a numeric min_age succeeds.
+	// Valid insert succeeds.
 	_, err = conn.Exec(`INSERT INTO categorizations
-		(jellyfin_item_id, min_age, source, set_at, set_by)
-		VALUES ('abc', 7, 'manual', unixepoch(), 'admin')`)
+		(jellyfin_item_id, profile_id, state, source, set_at, set_by)
+		VALUES ('abc', ?, 'visible', 'manual', unixepoch(), 'admin')`, defaultID)
 	if err != nil {
-		t.Errorf("valid numeric insert failed: %v", err)
-	}
-
-	// NULL min_age (uncategorized) is allowed.
-	_, err = conn.Exec(`INSERT INTO categorizations
-		(jellyfin_item_id, min_age, source, set_at, set_by)
-		VALUES ('def', NULL, 'manual', unixepoch(), 'admin')`)
-	if err != nil {
-		t.Errorf("null min_age insert failed: %v", err)
+		t.Errorf("valid insert failed: %v", err)
 	}
 }
 

@@ -153,27 +153,39 @@ func TestAdminEndpointsRequireAuth(t *testing.T) {
 	}
 }
 
-func TestAdminItemsFilterByCategoryUncategorized(t *testing.T) {
+// defaultProfileID returns the seeded "Default" profile id from the
+// in-memory DB the test server opens.
+func defaultProfileID(t *testing.T, srv *Server) int64 {
+	t.Helper()
+	var id int64
+	if err := srv.db.QueryRow(`SELECT id FROM profiles WHERE name = 'Default'`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestAdminItemsFilterByUnsetForProfile(t *testing.T) {
 	library := makeItems(2500)
 	srv, store := newTestServer(t, library)
+	profileID := defaultProfileID(t, srv)
 
-	// Categorize the first 200 items as kid; all others stay uncategorized.
+	// Mark the first 200 items visible for the default profile; the rest
+	// remain unset.
 	ctx := t.Context()
 	curStore := curation.NewStore(srv.db)
+	visible := curation.StateVisible
 	for i := 0; i < 200; i++ {
-		if _, err := curStore.SetAge(ctx, library[i].ID, ageOf(curation.AgeKid), "admin"); err != nil {
+		if _, err := curStore.SetState(ctx, library[i].ID, profileID, &visible, "admin"); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	// Page through uncategorized using NextStartIndex; assert no duplicates
-	// and that we eventually see items past Jellyfin index 1000 (the
-	// truncation bug from the review).
 	seen := map[string]struct{}{}
 	startIdx := 0
 	for {
 		v := url.Values{}
-		v.Set("category", "uncategorized")
+		v.Set("profileId", strconv.FormatInt(profileID, 10))
+		v.Set("state", "unset")
 		v.Set("limit", "100")
 		v.Set("startIndex", strconv.Itoa(startIdx))
 		rec := authedRequest(t, srv, store, http.MethodGet, "/api/admin/items?"+v.Encode(), nil)
@@ -205,21 +217,24 @@ func TestAdminItemsFilterByCategoryUncategorized(t *testing.T) {
 	}
 	want := len(library) - 200
 	if len(seen) != want {
-		t.Errorf("uncategorized count = %d, want %d (regression of the truncation bug)", len(seen), want)
+		t.Errorf("unset count = %d, want %d (regression of the truncation bug)", len(seen), want)
 	}
 }
 
-func TestAdminItemsFilterByKid(t *testing.T) {
+func TestAdminItemsFilterByVisibleState(t *testing.T) {
 	library := makeItems(50)
 	srv, store := newTestServer(t, library)
+	profileID := defaultProfileID(t, srv)
 
 	ctx := t.Context()
 	curStore := curation.NewStore(srv.db)
+	visible := curation.StateVisible
 	for i := 0; i < 5; i++ {
-		curStore.SetAge(ctx, library[i].ID, ageOf(curation.AgeKid), "admin")
+		curStore.SetState(ctx, library[i].ID, profileID, &visible, "admin")
 	}
 
-	rec := authedRequest(t, srv, store, http.MethodGet, "/api/admin/items?category=kid&limit=100", nil)
+	rec := authedRequest(t, srv, store, http.MethodGet,
+		"/api/admin/items?profileId="+strconv.FormatInt(profileID, 10)+"&state=visible&limit=100", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -229,19 +244,28 @@ func TestAdminItemsFilterByKid(t *testing.T) {
 	}
 	json.Unmarshal(rec.Body.Bytes(), &resp)
 	if resp.ReturnedCount != 5 {
-		t.Errorf("returned %d kid items, want 5", resp.ReturnedCount)
+		t.Errorf("returned %d visible items, want 5", resp.ReturnedCount)
 	}
 	for _, it := range resp.Items {
-		if it["Bucket"] != "kid" {
-			t.Errorf("non-kid item leaked: %v", it)
+		if it["State"] != "visible" {
+			t.Errorf("non-visible item leaked: %v", it)
 		}
 	}
 }
 
-func TestAdminBulkRejectsInvalidAge(t *testing.T) {
+func TestAdminItemsRequiresProfileID(t *testing.T) {
+	srv, store := newTestServer(t, makeItems(5))
+	rec := authedRequest(t, srv, store, http.MethodGet, "/api/admin/items", nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestAdminBulkRejectsInvalidState(t *testing.T) {
 	srv, store := newTestServer(t, makeItems(10))
-	body := strings.NewReader(`{"itemIds":["item-0001"],"minAge":42}`)
-	rec := authedRequest(t, srv, store, http.MethodPost, "/api/admin/items/age/bulk", body)
+	profileID := defaultProfileID(t, srv)
+	body := strings.NewReader(fmt.Sprintf(`{"profileId":%d,"itemIds":["item-0001"],"state":"bogus"}`, profileID))
+	rec := authedRequest(t, srv, store, http.MethodPost, "/api/admin/items/state/bulk", body)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -249,21 +273,27 @@ func TestAdminBulkRejectsInvalidAge(t *testing.T) {
 
 func TestAdminBulkRejectsTooMany(t *testing.T) {
 	srv, store := newTestServer(t, makeItems(10))
+	profileID := defaultProfileID(t, srv)
 	ids := make([]string, 1001)
 	for i := range ids {
 		ids[i] = fmt.Sprintf("item-%04d", i)
 	}
-	bb, _ := json.Marshal(map[string]any{"itemIds": ids, "minAge": curation.AgeKid})
-	rec := authedRequest(t, srv, store, http.MethodPost, "/api/admin/items/age/bulk", strings.NewReader(string(bb)))
+	bb, _ := json.Marshal(map[string]any{
+		"profileId": profileID,
+		"itemIds":   ids,
+		"state":     "visible",
+	})
+	rec := authedRequest(t, srv, store, http.MethodPost, "/api/admin/items/state/bulk", strings.NewReader(string(bb)))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }
 
-func TestAdminSetAgeRecordsHistoryWithSetBy(t *testing.T) {
+func TestAdminSetStateRecordsHistoryWithSetBy(t *testing.T) {
 	srv, store := newTestServer(t, makeItems(5))
-	body := strings.NewReader(`{"minAge":7}`)
-	rec := authedRequest(t, srv, store, http.MethodPost, "/api/admin/items/item-0000/age", body)
+	profileID := defaultProfileID(t, srv)
+	body := strings.NewReader(fmt.Sprintf(`{"profileId":%d,"state":"visible"}`, profileID))
+	rec := authedRequest(t, srv, store, http.MethodPost, "/api/admin/items/item-0000/state", body)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}

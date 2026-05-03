@@ -9,14 +9,14 @@ import (
 	"time"
 )
 
-// Profile is a content-rule abstraction kids belong to. v1 carries an age
-// range; future milestones may add genre / studio filters.
+// Profile is the unit of per-profile visibility. Each kid is assigned to a
+// profile; the kid-stream filter shows only items marked visible for that
+// profile. Profiles in v1 are a label and a description; visibility lives
+// in the categorizations table, not here.
 type Profile struct {
 	ID          int64
 	Name        string
 	Description string
-	MinAge      int
-	MaxAge      int
 	CreatedAt   time.Time
 }
 
@@ -41,7 +41,7 @@ var ErrProfileProtected = errors.New("default profile cannot be deleted")
 // ListProfiles returns all profiles with their current kid counts.
 func (s *Store) ListProfiles(ctx context.Context) ([]ProfileWithKidCount, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.id, p.name, COALESCE(p.description, ''), p.min_age, p.max_age, p.created_at,
+		SELECT p.id, p.name, COALESCE(p.description, ''), p.created_at,
 		       (SELECT COUNT(*) FROM kids WHERE profile_id = p.id)
 		FROM profiles p
 		ORDER BY p.id ASC`)
@@ -56,7 +56,7 @@ func (s *Store) ListProfiles(ctx context.Context) ([]ProfileWithKidCount, error)
 			p  ProfileWithKidCount
 			ts int64
 		)
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.MinAge, &p.MaxAge, &ts, &p.KidCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &ts, &p.KidCount); err != nil {
 			return nil, err
 		}
 		p.CreatedAt = time.Unix(ts, 0)
@@ -68,13 +68,13 @@ func (s *Store) ListProfiles(ctx context.Context) ([]ProfileWithKidCount, error)
 // GetProfile fetches one profile by ID. Returns ErrProfileNotFound if none.
 func (s *Store) GetProfile(ctx context.Context, id int64) (*Profile, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, COALESCE(description, ''), min_age, max_age, created_at
+		SELECT id, name, COALESCE(description, ''), created_at
 		FROM profiles WHERE id = ?`, id)
 	var (
 		p  Profile
 		ts int64
 	)
-	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.MinAge, &p.MaxAge, &ts); err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &p.Description, &ts); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrProfileNotFound
 		}
@@ -88,41 +88,19 @@ func (s *Store) GetProfile(ctx context.Context, id int64) (*Profile, error) {
 type ProfileInput struct {
 	Name        string
 	Description string
-	MinAge      int
-	MaxAge      int
-}
-
-// validateAgeRange enforces a sensible profile range. Anything outside
-// [0..99] is rejected; max must be >= min.
-func validateAgeRange(minAge, maxAge int) error {
-	if minAge < 0 || minAge > 99 || maxAge < 0 || maxAge > 99 {
-		return fmt.Errorf("age range must be within 0..99")
-	}
-	if maxAge < minAge {
-		return fmt.Errorf("max age (%d) must be >= min age (%d)", maxAge, minAge)
-	}
-	return nil
 }
 
 // CreateProfile inserts a profile. Name is trimmed and required; uniqueness
-// is enforced by the schema's UNIQUE constraint. The age range defaults to
-// 0..18 if the caller didn't set explicit values (caller passes their
-// preferred values via ProfileInput).
+// is enforced by the schema's UNIQUE constraint.
 func (s *Store) CreateProfile(ctx context.Context, in ProfileInput) (*Profile, error) {
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
 		return nil, fmt.Errorf("profile name required")
 	}
-	if in.MaxAge == 0 && in.MinAge == 0 {
-		in.MaxAge = 18
-	}
-	if err := validateAgeRange(in.MinAge, in.MaxAge); err != nil {
-		return nil, err
-	}
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO profiles (name, description, min_age, max_age, created_at)
-		VALUES (?, ?, ?, ?, unixepoch())`,
-		name, nullableString(in.Description), in.MinAge, in.MaxAge)
+		INSERT INTO profiles (name, description, created_at)
+		VALUES (?, ?, unixepoch())`,
+		name, nullableString(in.Description))
 	if err != nil {
 		return nil, err
 	}
@@ -137,14 +115,11 @@ func (s *Store) UpdateProfile(ctx context.Context, id int64, in ProfileInput) (*
 	if name == "" {
 		return nil, fmt.Errorf("profile name required")
 	}
-	if err := validateAgeRange(in.MinAge, in.MaxAge); err != nil {
-		return nil, err
-	}
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE profiles
-		SET name = ?, description = ?, min_age = ?, max_age = ?
+		SET name = ?, description = ?
 		WHERE id = ?`,
-		name, nullableString(in.Description), in.MinAge, in.MaxAge, id)
+		name, nullableString(in.Description), id)
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,6 @@
 // Active profile state lives in localStorage so it persists across reloads
 // and across tabs. The Layout's profile picker writes here; consumers
-// (Sweep, Triage) read via useActiveProfile.
+// read via useActiveProfile.
 
 import { useEffect, useState } from "react";
 import { api, type Profile } from "./api";
@@ -14,10 +14,7 @@ type State = {
     error: string | null;
 };
 
-// useActiveProfile returns the currently-selected profile and the full
-// profile list, plus a setter. The hook subscribes to a window-level event
-// so multiple components stay in sync when the user picks a new profile.
-export function useActiveProfile(): State & { setActive: (id: number) => void } {
+export function useActiveProfile(): State & { setActive: (id: number) => void; refresh: () => void } {
     const [state, setState] = useState<State>({
         profile: null,
         profiles: [],
@@ -66,30 +63,5 @@ export function useActiveProfile(): State & { setActive: (id: number) => void } 
         window.dispatchEvent(new Event("jellybean:active-profile-changed"));
     }
 
-    return { ...state, setActive };
-}
-
-// bucketForProfile classifies an item's recommended age against the active
-// profile's age range. This is what Sweep groups by:
-//
-//   "fit"     -> within profile range (kid-safe for this profile)
-//   "adult"   -> above profile.maxAge (too mature)
-//   "review"  -> below profile.minAge (too young) OR no signal
-//
-// Pass either an explicit MinAge (already-categorized item) or a
-// Suggestion.minAge (uncategorized item with an AI guess).
-export type ProfileBucket = "fit" | "adult" | "review";
-
-export function bucketForProfile(
-    age: number | null | undefined,
-    profile: Profile | null,
-): ProfileBucket {
-    if (age === null || age === undefined) return "review";
-    if (!profile) {
-        // No profile context: fall back to the simple kid-safe split.
-        return age >= 13 ? "adult" : "fit";
-    }
-    if (age > profile.maxAge) return "adult";
-    if (age < profile.minAge) return "review"; // too young for this profile
-    return "fit";
+    return { ...state, setActive, refresh: load };
 }

@@ -303,22 +303,35 @@ button:disabled {
 }
 
 .cat-button.cat-kid.active,
-.cat-button.cat-kid:focus-visible {
+.cat-button.cat-kid:focus-visible,
+.cat-button.cat-visible.active,
+.cat-button.cat-visible:focus-visible {
     background: #1f6f3a;
     border-color: #2e8a4f;
     color: #fff;
 }
 
 .cat-button.cat-adult.active,
-.cat-button.cat-adult:focus-visible {
+.cat-button.cat-adult:focus-visible,
+.cat-button.cat-hidden.active,
+.cat-button.cat-hidden:focus-visible {
     background: #6f1f2a;
     border-color: #8a2e3e;
     color: #fff;
 }
 
-.cat-button.cat-uncategorized.active {
+.cat-button.cat-uncategorized.active,
+.cat-button.cat-unset.active {
     background: #3a3a3a;
     border-color: #555;
+}
+
+.sugg-visible strong {
+    color: #6cd28a;
+}
+
+.sugg-hidden strong {
+    color: #f08e9a;
 }
 
 .cat-control.compact .cat-button {

@@ -1,11 +1,11 @@
-import { type Item, formatMinAge } from "./api";
-import AgePicker from "./CategoryControl";
+import { type Item, type ItemState, formatState } from "./api";
+import StateControl from "./CategoryControl";
 
 type Props = {
     item: Item;
     selected?: boolean;
     onSelect?: (e: React.MouseEvent) => void;
-    onAgeChange?: (next: number | null) => void;
+    onStateChange?: (next: ItemState) => void;
     busy?: boolean;
     showSuggestion?: boolean;
     posterWidth?: number;
@@ -21,7 +21,7 @@ export default function ItemCard({
     item,
     selected,
     onSelect,
-    onAgeChange,
+    onStateChange,
     busy,
     showSuggestion,
     posterWidth = DEFAULT_POSTER_WIDTH,
@@ -63,11 +63,11 @@ export default function ItemCard({
                     )}
                     {studios && <div className="item-card-studios">{studios}</div>}
                     <div className="item-card-meta">
-                        Current: {formatMinAge(item.MinAge)}
+                        Current: {formatState(item.State)}
                     </div>
                     {showSuggestion && item.Suggestion && (
                         <div className={`item-card-suggestion sugg-${item.Suggestion.bucket}`}>
-                            guess: <strong>{formatMinAge(item.Suggestion.minAge)}</strong>{" "}
+                            guess: <strong>{item.Suggestion.bucket}</strong>{" "}
                             ({Math.round(item.Suggestion.confidence * 100)}%)
                             {item.Suggestion.reasoning?.length ? (
                                 <span className="sugg-why">
@@ -79,10 +79,10 @@ export default function ItemCard({
                     )}
                 </div>
             </button>
-            {onAgeChange && (
-                <AgePicker
-                    value={item.MinAge}
-                    onChange={onAgeChange}
+            {onStateChange && (
+                <StateControl
+                    value={item.State}
+                    onChange={onStateChange}
                     busy={busy}
                     compact
                 />

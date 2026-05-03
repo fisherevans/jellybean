@@ -128,17 +128,12 @@ func TestProfileCRUD(t *testing.T) {
 	created, err := store.CreateProfile(ctx, ProfileInput{
 		Name:        "Young kids",
 		Description: "G and TV-Y only",
-		MinAge:      2,
-		MaxAge:      7,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created.Name != "Young kids" {
 		t.Errorf("name = %q", created.Name)
-	}
-	if created.MinAge != 2 || created.MaxAge != 7 {
-		t.Errorf("range = %d..%d, want 2..7", created.MinAge, created.MaxAge)
 	}
 
 	all, err := store.ListProfiles(ctx)
@@ -152,8 +147,6 @@ func TestProfileCRUD(t *testing.T) {
 	updated, err := store.UpdateProfile(ctx, created.ID, ProfileInput{
 		Name:        "Young kids ",
 		Description: "edited description",
-		MinAge:      3,
-		MaxAge:      8,
 	})
 	if err != nil {
 		t.Fatal(err)

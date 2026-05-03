@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, HttpError, type Item, type User } from "../api";
+import { useActiveProfile } from "../activeProfile";
 import HlsVideo from "../HlsVideo";
 
 type Props = {
@@ -12,13 +13,15 @@ type Props = {
 // small playback preview at the bottom for the M1 streaming smoke test
 // (still useful when validating Jellyfin connectivity after a deploy).
 export default function Dashboard({ user, onLogout }: Props) {
+    const { profile } = useActiveProfile();
     const [items, setItems] = useState<Item[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [playing, setPlaying] = useState<Item | null>(null);
     const [streamUrl, setStreamUrl] = useState<string | null>(null);
 
     useEffect(() => {
-        api.listItems({ type: "Movie", limit: 6 })
+        if (!profile) return;
+        api.listItems({ profileId: profile.id, type: "Movie", limit: 6 })
             .then((res) => setItems(res.Items))
             .catch((err) => {
                 if (err instanceof HttpError && err.status === 401) {
@@ -27,7 +30,7 @@ export default function Dashboard({ user, onLogout }: Props) {
                 }
                 setError(err.message || "Failed to load items.");
             });
-    }, [onLogout]);
+    }, [onLogout, profile?.id]);
 
     useEffect(() => {
         if (!playing) {

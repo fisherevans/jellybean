@@ -1,35 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-    AGE_TIERS,
-    AGE_LABELS,
-    type AgeTier,
-    api,
-    HttpError,
-    formatMinAge,
-    type Item,
-} from "../api";
+import { api, HttpError, type Item, type ItemState } from "../api";
+import { useActiveProfile } from "../activeProfile";
 
-// Triage primary actions are kid-safe / adult / skip - same shape as M2.
-// The granular age tier ("baby content", "preschool", etc.) is a secondary
-// row for when the parent wants to be specific. Default kid-safe action
-// stamps a generic "kid" age (7) so profile filtering can still operate;
-// the user can pick a tier first to override that default.
+// Tinder-style triage. One unset item at a time for the active profile,
+// keyboard-first: ← hide, → visible, ↓ skip (leave unset), Z undo.
 
 type UndoEntry = {
     item: Item;
-    appliedAge: number | null;
+    appliedState: ItemState;
 };
-
-// Mapping for shortcut keys: arrows are the primary "kid-safe / adult /
-// skip" actions; number keys 1-5 set a specific age tier directly.
-const KEY_TO_AGE: Record<string, AgeTier> = {
-    "1": 2, "2": 5, "3": 7, "4": 13, "5": 18,
-};
-
-const DEFAULT_KID_AGE = 7;
 
 export default function Triage() {
+    const { profile } = useActiveProfile();
     const [queue, setQueue] = useState<Item[]>([]);
     const [cursor, setCursor] = useState(0);
     const [serverCursor, setServerCursor] = useState(0);
@@ -40,9 +23,11 @@ export default function Triage() {
     const [exhausted, setExhausted] = useState(false);
 
     async function fetchBatch(startIndex: number) {
+        if (!profile) return null;
         try {
             const res = await api.listItems({
-                category: "uncategorized",
+                profileId: profile.id,
+                state: "unset",
                 suggest: true,
                 limit: 50,
                 startIndex,
@@ -55,6 +40,13 @@ export default function Triage() {
     }
 
     useEffect(() => {
+        setQueue([]);
+        setCursor(0);
+        setServerCursor(0);
+        setUndoStack([]);
+        setDoneCount(0);
+        setExhausted(false);
+        if (!profile) return;
         (async () => {
             const res = await fetchBatch(0);
             if (!res) return;
@@ -62,7 +54,8 @@ export default function Triage() {
             setServerCursor(res.NextStartIndex);
             if (!res.HasMore && res.Items.length === 0) setExhausted(true);
         })();
-    }, []);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [profile?.id]);
 
     const current = queue[cursor];
 
@@ -81,13 +74,13 @@ export default function Triage() {
     }, [cursor, queue, busy, exhausted, serverCursor]);
 
     const apply = useCallback(
-        async (age: number | null) => {
-            if (!current || busy) return;
+        async (state: ItemState) => {
+            if (!current || busy || !profile) return;
             setBusy(true);
             setError(null);
             try {
-                await api.setAge(current.Id, age);
-                setUndoStack((u) => [...u.slice(-9), { item: current, appliedAge: age }]);
+                await api.setState(current.Id, profile.id, state);
+                setUndoStack((u) => [...u.slice(-9), { item: current, appliedState: state }]);
                 setDoneCount((n) => n + 1);
                 await advance();
             } catch (err) {
@@ -96,16 +89,16 @@ export default function Triage() {
                 setBusy(false);
             }
         },
-        [current, busy, advance],
+        [current, busy, advance, profile],
     );
 
     const undo = useCallback(async () => {
         const last = undoStack[undoStack.length - 1];
-        if (!last || busy) return;
+        if (!last || busy || !profile) return;
         setBusy(true);
         setError(null);
         try {
-            await api.setAge(last.item.Id, null);
+            await api.setState(last.item.Id, profile.id, null);
             setUndoStack((u) => u.slice(0, -1));
             setDoneCount((n) => Math.max(0, n - 1));
             setQueue((q) => {
@@ -118,36 +111,36 @@ export default function Triage() {
         } finally {
             setBusy(false);
         }
-    }, [undoStack, busy, cursor]);
+    }, [undoStack, busy, cursor, profile]);
 
     useEffect(() => {
         function onKey(e: KeyboardEvent) {
             if (e.target instanceof HTMLInputElement) return;
-            // Primary actions on arrow keys.
-            if (e.key === "ArrowLeft") {
-                apply(18); // adult
-            } else if (e.key === "ArrowRight") {
-                apply(DEFAULT_KID_AGE);
-            } else if (e.key === "ArrowDown" || e.key === " ") {
-                apply(null);
-            } else if (e.key === "z" || e.key === "Z" || e.key === "u" || e.key === "U") {
-                undo();
-            } else if (KEY_TO_AGE[e.key] !== undefined) {
-                // Secondary: number keys jump straight to a specific age tier.
-                apply(KEY_TO_AGE[e.key]);
-            }
+            if (e.key === "ArrowLeft") apply("hidden");
+            else if (e.key === "ArrowRight") apply("visible");
+            else if (e.key === "ArrowDown" || e.key === " ") apply(null);
+            else if (e.key === "z" || e.key === "Z" || e.key === "u" || e.key === "U") undo();
         }
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
     }, [apply, undo]);
 
+    if (!profile) {
+        return (
+            <div className="page">
+                <h1>Triage</h1>
+                <p>No profile selected. <Link to="/profiles">Pick or create one</Link>.</p>
+            </div>
+        );
+    }
     if (error) return <div className="page"><div className="error">{error}</div></div>;
 
     if (!current) {
         return (
             <div className="page">
                 <h1>Triage</h1>
-                <p>All caught up. <Link to="/sweep">Back to sweep</Link>.</p>
+                <p>All caught up for <strong>{profile.name}</strong>.{" "}
+                <Link to="/sweep">Back to sweep</Link>.</p>
                 <p className="muted">{doneCount} item(s) categorized this session.</p>
             </div>
         );
@@ -165,7 +158,8 @@ export default function Triage() {
     return (
         <div className="page triage">
             <div className="triage-counter muted">
-                {doneCount} done · {queue.length - cursor} remaining in queue
+                Triaging for <strong>{profile.name}</strong> · {doneCount} done ·{" "}
+                {queue.length - cursor} remaining in queue
             </div>
 
             <div className="triage-card">
@@ -191,8 +185,8 @@ export default function Triage() {
                         )}
                         {current.Suggestion && (
                             <div className={`triage-suggestion sugg-${current.Suggestion.bucket}`}>
-                                guess: <strong>{formatMinAge(current.Suggestion.minAge)}</strong>{" "}
-                                ({Math.round(current.Suggestion.confidence * 100)}%)
+                                guess: <strong>{current.Suggestion.bucket}</strong> (
+                                {Math.round(current.Suggestion.confidence * 100)}%)
                                 {current.Suggestion.reasoning?.length ? (
                                     <span> — {current.Suggestion.reasoning.join("; ")}</span>
                                 ) : null}
@@ -204,51 +198,36 @@ export default function Triage() {
 
             <div className="triage-actions">
                 <button
-                    onClick={() => apply(18)}
+                    onClick={() => apply("hidden")}
                     disabled={busy}
-                    className="cat-button cat-adult primary-action"
+                    className="cat-button cat-hidden primary-action"
                     title="Left arrow"
                 >
-                    ← Adult / not for kids
+                    ← Hide
                 </button>
                 <button
                     onClick={() => apply(null)}
                     disabled={busy}
-                    className="cat-button cat-uncategorized primary-action"
+                    className="cat-button cat-unset primary-action"
                     title="Down arrow"
                 >
                     ↓ Skip
                 </button>
                 <button
-                    onClick={() => apply(DEFAULT_KID_AGE)}
+                    onClick={() => apply("visible")}
                     disabled={busy}
-                    className="cat-button cat-kid primary-action"
+                    className="cat-button cat-visible primary-action"
                     title="Right arrow"
                 >
-                    Kid-safe →
+                    Show →
                 </button>
                 <button onClick={undo} disabled={undoStack.length === 0 || busy}>
                     Z Undo ({undoStack.length})
                 </button>
             </div>
 
-            <div className="triage-tier-row">
-                <span className="muted">Be specific (overrides Kid-safe default of {DEFAULT_KID_AGE}+):</span>
-                {AGE_TIERS.map((age, i) => (
-                    <button
-                        key={age}
-                        onClick={() => apply(age)}
-                        disabled={busy}
-                        className={`cat-button cat-${age < 13 ? "kid" : "adult"} secondary-action`}
-                        title={`${i + 1} key · ${AGE_LABELS[age as AgeTier]}`}
-                    >
-                        {age === 18 ? "18+" : `${age}+`}
-                    </button>
-                ))}
-            </div>
-
             <p className="muted">
-                Keyboard: ← adult · → kid-safe (default {DEFAULT_KID_AGE}+) · ↓ skip · Z undo · 1-5 specific tier
+                Keyboard: ← hide · → show · ↓ skip · Z undo
             </p>
         </div>
     );

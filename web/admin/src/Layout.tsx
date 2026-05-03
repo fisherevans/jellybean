@@ -57,7 +57,7 @@ export default function Layout({ user, onLogout }: Props) {
                             >
                                 {profiles.map((p) => (
                                     <option key={p.id} value={p.id}>
-                                        {p.name} ({p.minAge}..{p.maxAge})
+                                        {p.name}
                                     </option>
                                 ))}
                             </select>

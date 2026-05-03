@@ -1,23 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import { AGE_TIERS, AGE_LABELS, type AgeTier, api, HttpError, type Item } from "../api";
-import { bucketForProfile, useActiveProfile, type ProfileBucket } from "../activeProfile";
+import { Link } from "react-router-dom";
+import { api, HttpError, type Item, type ItemState } from "../api";
+import { useActiveProfile } from "../activeProfile";
 import ItemCard from "../ItemCard";
 
-// Sweep loads uncategorized items in 200-item pages and groups them by how
-// well they match the active profile's age range:
-//
-//   "fit"    - suggested age is within profile.[minAge..maxAge]
-//   "review" - suggested age is below profile.minAge, or no signal at all
-//   "adult"  - suggested age is above profile.maxAge
-//
-// The user picks a specific age tier from the bulk bar; default kid-safe
-// stamps profile.minAge so the item ends up at the bottom of the profile's
-// range.
+// Sweep loads items that have no state for the active profile and groups
+// them by the AI's suggestion: looks visible / needs review / looks hidden.
+// The user picks visible / hidden / skip per item or in bulk; each profile
+// is triaged independently.
 
-const sectionTitles: Record<ProfileBucket, string> = {
-    fit: "Looks good for this profile",
-    review: "Needs review (off-range or unclear)",
-    adult: "Likely too mature / adult",
+type Section = "visible" | "unsure" | "hidden";
+
+const sectionTitles: Record<Section, string> = {
+    visible: "Looks visible",
+    unsure: "Needs review",
+    hidden: "Looks hidden / not for kids",
 };
 
 type Loaded = {
@@ -33,15 +30,17 @@ export default function Sweep() {
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [selected, setSelected] = useState<Set<string>>(new Set());
-    const [lastClickedByGroup, setLastClickedByGroup] = useState<Record<ProfileBucket, number | null>>({
-        fit: null, review: null, adult: null,
+    const [lastClicked, setLastClicked] = useState<Record<Section, number | null>>({
+        visible: null, unsure: null, hidden: null,
     });
 
     async function loadInitial() {
+        if (!profile) return;
         setError(null);
         try {
             const res = await api.listItems({
-                category: "uncategorized",
+                profileId: profile.id,
+                state: "unset",
                 suggest: true,
                 limit: 200,
             });
@@ -58,14 +57,17 @@ export default function Sweep() {
 
     useEffect(() => {
         loadInitial();
-    }, []);
+        setSelected(new Set());
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [profile?.id]);
 
     async function loadMore() {
-        if (!loaded || !loaded.hasMore || busy) return;
+        if (!loaded || !loaded.hasMore || busy || !profile) return;
         setBusy(true);
         try {
             const res = await api.listItems({
-                category: "uncategorized",
+                profileId: profile.id,
+                state: "unset",
                 suggest: true,
                 limit: 200,
                 startIndex: loaded.cursor,
@@ -83,22 +85,22 @@ export default function Sweep() {
         }
     }
 
-    const sections = useMemo<Record<ProfileBucket, Item[]>>(() => {
-        const out: Record<ProfileBucket, Item[]> = { fit: [], review: [], adult: [] };
+    const sections = useMemo<Record<Section, Item[]>>(() => {
+        const out: Record<Section, Item[]> = { visible: [], unsure: [], hidden: [] };
         if (!loaded) return out;
         for (const it of loaded.items) {
-            const bucket = bucketForProfile(it.Suggestion?.minAge ?? null, profile);
+            const bucket = (it.Suggestion?.bucket ?? "unsure") as Section;
             out[bucket].push(it);
         }
         return out;
-    }, [loaded, profile]);
+    }, [loaded]);
 
-    function handleSelect(section: ProfileBucket, index: number, e: React.MouseEvent) {
+    function handleSelect(section: Section, index: number, e: React.MouseEvent) {
         if (!loaded) return;
         const list = sections[section];
         const item = list[index];
         const next = new Set(selected);
-        const last = lastClickedByGroup[section];
+        const last = lastClicked[section];
 
         if (e.shiftKey && last !== null) {
             const [from, to] = last < index ? [last, index] : [index, last];
@@ -109,10 +111,10 @@ export default function Sweep() {
             next.add(item.Id);
         }
         setSelected(next);
-        setLastClickedByGroup({ ...lastClickedByGroup, [section]: index });
+        setLastClicked({ ...lastClicked, [section]: index });
     }
 
-    function selectAllInSection(section: ProfileBucket) {
+    function selectAllInSection(section: Section) {
         const next = new Set(selected);
         for (const it of sections[section]) next.add(it.Id);
         setSelected(next);
@@ -122,13 +124,13 @@ export default function Sweep() {
         setSelected(new Set());
     }
 
-    async function applyBulk(minAge: number | null) {
-        if (selected.size === 0 || !loaded) return;
+    async function applyBulk(state: ItemState) {
+        if (selected.size === 0 || !loaded || !profile) return;
         setBusy(true);
         setError(null);
         try {
             const ids = Array.from(selected);
-            await api.bulkSetAge(ids, minAge);
+            await api.bulkSetState(ids, profile.id, state);
             setLoaded({
                 ...loaded,
                 items: loaded.items.filter((it) => !selected.has(it.Id)),
@@ -141,6 +143,14 @@ export default function Sweep() {
         }
     }
 
+    if (!profile) {
+        return (
+            <div className="page">
+                <h1>Sweep</h1>
+                <p>No profile selected. <Link to="/profiles">Create or pick one</Link>.</p>
+            </div>
+        );
+    }
     if (!loaded) {
         return (
             <div className="page">
@@ -150,17 +160,14 @@ export default function Sweep() {
         );
     }
 
-    const profileLabel = profile
-        ? `${profile.name} (ages ${profile.minAge}..${profile.maxAge})`
-        : "(no profile)";
-
     return (
         <div className="page sweep">
             <h1>Sweep</h1>
             <p className="muted">
-                Loaded {loaded.items.length} of {loaded.total} uncategorized items.
-                Grouping is relative to the active profile: <strong>{profileLabel}</strong>.
-                Switch profiles in the top nav to see the same items grouped a different way.
+                Triaging for <strong>{profile.name}</strong>. Items shown have no
+                visibility decision yet for this profile. Switch profiles in the
+                top nav to triage another one. Loaded {loaded.items.length} of{" "}
+                {loaded.total}.
                 {loaded.hasMore && (
                     <>
                         {" "}
@@ -174,33 +181,31 @@ export default function Sweep() {
             {error && <div className="error">{error}</div>}
 
             <div className="bulk-bar">
-                <span>{selected.size} selected · mark as:</span>
-                {AGE_TIERS.map((age: AgeTier) => (
-                    <button
-                        key={age}
-                        disabled={selected.size === 0 || busy}
-                        onClick={() => applyBulk(age)}
-                        title={AGE_LABELS[age]}
-                        className={`cat-button cat-${age < 13 ? "kid" : "adult"}`}
-                    >
-                        {age === 18 ? "18+" : `${age}+`}
-                    </button>
-                ))}
+                <span>{selected.size} selected for {profile.name}:</span>
                 <button
                     disabled={selected.size === 0 || busy}
-                    onClick={() => applyBulk(null)}
-                    className="cat-button cat-uncategorized"
-                    title="Leave uncategorized but remove from sweep view"
+                    onClick={() => applyBulk("visible")}
+                    className="cat-button cat-visible"
                 >
-                    Skip
+                    Mark visible
                 </button>
-                <button disabled={selected.size === 0 || busy} onClick={clearSelection}>
-                    Clear
+                <button
+                    disabled={selected.size === 0 || busy}
+                    onClick={() => applyBulk("hidden")}
+                    className="cat-button cat-hidden"
+                >
+                    Mark hidden
+                </button>
+                <button
+                    disabled={selected.size === 0 || busy}
+                    onClick={clearSelection}
+                >
+                    Clear selection
                 </button>
             </div>
 
             <div className="sweep-columns">
-                {(["fit", "review", "adult"] as ProfileBucket[]).map((section) => (
+                {(["visible", "unsure", "hidden"] as Section[]).map((section) => (
                     <div className="sweep-column" key={section}>
                         <div className="sweep-column-header">
                             <h2>{sectionTitles[section]}</h2>

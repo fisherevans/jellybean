@@ -7,26 +7,12 @@ export type User = {
     admin: boolean;
 };
 
-// Standard age tiers stored on items. The schema accepts other integers, so
-// future granularity (e.g. 16 for older teens) is additive.
-export const AGE_TIERS = [2, 5, 7, 13, 18] as const;
-export type AgeTier = (typeof AGE_TIERS)[number];
-
-export const AGE_LABELS: Record<AgeTier, string> = {
-    2: "Toddler (2+)",
-    5: "Preschool (5+)",
-    7: "Younger kid (7+)",
-    13: "Teen (13+)",
-    18: "Adult (18+)",
-};
-
-// Coarse bucket derived server-side from MinAge. Used when the UI just
-// needs to know "is this kid-allowed" without picking a specific tier.
-export type Bucket = "kid" | "adult" | "uncategorized";
+// Per-profile visibility state for an item. null = unset (user hasn't
+// decided yet for this profile).
+export type ItemState = "visible" | "hidden" | null;
 
 export type Suggestion = {
-    bucket: "kid" | "adult" | "unsure";
-    minAge: number | null;
+    bucket: "visible" | "hidden" | "unsure";
     confidence: number;
     reasoning: string[];
 };
@@ -40,8 +26,7 @@ export type Item = {
     Genres?: string[];
     Studios?: { Name: string; Id?: string }[];
     ImageTags?: { Primary?: string };
-    MinAge: number | null;
-    Bucket: Bucket;
+    State: ItemState; // visibility for the active profile (null = unset)
     Suggestion?: Suggestion;
 };
 
@@ -52,6 +37,7 @@ export type ItemsResult = {
     StartIndex: number;
     NextStartIndex: number;
     HasMore: boolean;
+    ProfileId: number;
 };
 
 export type StreamInfo = {
@@ -64,8 +50,6 @@ export type Profile = {
     id: number;
     name: string;
     description?: string;
-    minAge: number;
-    maxAge: number;
     createdAt: number;
     kidCount: number;
 };
@@ -73,8 +57,6 @@ export type Profile = {
 export type ProfileInput = {
     name: string;
     description: string;
-    minAge: number;
-    maxAge: number;
 };
 
 export type Kid = {
@@ -91,8 +73,9 @@ export type ActivityEntry = {
     id: number;
     itemId: string;
     itemName: string;
-    fromMinAge: number | null;
-    toMinAge: number | null;
+    profileId: number;
+    fromState: ItemState;
+    toState: ItemState;
     changedBy?: string;
     changedAt: number;
 };
@@ -121,34 +104,31 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 type ItemsQuery = {
+    profileId: number;
     type?: string;
     limit?: number;
     startIndex?: number;
-    category?: Bucket;
+    state?: "visible" | "hidden" | "unset";
     search?: string;
     suggest?: boolean;
 };
 
 function itemsURL(q: ItemsQuery): string {
     const u = new URLSearchParams();
+    u.set("profileId", String(q.profileId));
     if (q.type) u.set("type", q.type);
     if (q.limit) u.set("limit", String(q.limit));
     if (q.startIndex) u.set("startIndex", String(q.startIndex));
-    if (q.category) u.set("category", q.category);
+    if (q.state) u.set("state", q.state);
     if (q.search) u.set("search", q.search);
     if (q.suggest) u.set("suggest", "true");
-    const qs = u.toString();
-    return `/api/admin/items${qs ? "?" + qs : ""}`;
+    return `/api/admin/items?${u.toString()}`;
 }
 
-// formatMinAge renders a stored min_age as a human label.
-// null → "Uncategorized"; known tiers use their AGE_LABELS.
-export function formatMinAge(age: number | null): string {
-    if (age === null) return "Uncategorized";
-    if ((AGE_TIERS as readonly number[]).includes(age)) {
-        return AGE_LABELS[age as AgeTier];
-    }
-    return `${age}+`;
+export function formatState(state: ItemState): string {
+    if (state === null) return "Unset";
+    if (state === "visible") return "Visible";
+    return "Hidden";
 }
 
 export const api = {
@@ -157,14 +137,20 @@ export const api = {
     logout: () => request<void>("POST", "/api/auth/logout"),
     me: () => request<User>("GET", "/api/auth/me"),
 
-    listItems: (q: ItemsQuery = {}) => request<ItemsResult>("GET", itemsURL(q)),
+    listItems: (q: ItemsQuery) => request<ItemsResult>("GET", itemsURL(q)),
 
-    setAge: (itemId: string, minAge: number | null) =>
-        request<void>("POST", `/api/admin/items/${itemId}/age`, { minAge }),
-    bulkSetAge: (itemIds: string[], minAge: number | null) =>
-        request<{ updated: number }>("POST", `/api/admin/items/age/bulk`, { itemIds, minAge }),
-    recentActivity: (limit = 50) =>
-        request<{ entries: ActivityEntry[] }>("GET", `/api/admin/categorizations/recent?limit=${limit}`),
+    setState: (itemId: string, profileId: number, state: ItemState) =>
+        request<void>("POST", `/api/admin/items/${itemId}/state`, { profileId, state }),
+    bulkSetState: (itemIds: string[], profileId: number, state: ItemState) =>
+        request<{ updated: number }>("POST", `/api/admin/items/state/bulk`, {
+            profileId, itemIds, state,
+        }),
+    recentActivity: (limit = 50, profileId?: number) => {
+        const u = new URLSearchParams();
+        u.set("limit", String(limit));
+        if (profileId) u.set("profileId", String(profileId));
+        return request<{ entries: ActivityEntry[] }>("GET", `/api/admin/categorizations/recent?${u.toString()}`);
+    },
 
     getStream: (itemId: string) =>
         request<StreamInfo>("GET", `/api/admin/items/${itemId}/stream`),
@@ -174,8 +160,7 @@ export const api = {
         request<Profile>("POST", `/api/admin/profiles`, input),
     updateProfile: (id: number, input: ProfileInput) =>
         request<Profile>("PATCH", `/api/admin/profiles/${id}`, input),
-    deleteProfile: (id: number) =>
-        request<void>("DELETE", `/api/admin/profiles/${id}`),
+    deleteProfile: (id: number) => request<void>("DELETE", `/api/admin/profiles/${id}`),
 
     listKids: () => request<{ kids: Kid[] }>("GET", `/api/admin/kids`),
     createKid: (name: string, profileId: number, jellyfinUsername: string, jellyfinPassword: string) =>

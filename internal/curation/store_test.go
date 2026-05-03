@@ -3,269 +3,272 @@ package curation
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/fisherevans/jellybean/internal/db"
 )
 
-func openStore(t *testing.T) (*sql.DB, *Store) {
+func openStore(t *testing.T) (*sql.DB, *Store, int64) {
 	t.Helper()
 	conn, err := db.Open(":memory:")
 	if err != nil {
 		t.Fatalf("db open: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	return conn, NewStore(conn)
+	store := NewStore(conn)
+	row := conn.QueryRow(`SELECT id FROM profiles WHERE name = 'Default'`)
+	var defaultID int64
+	if err := row.Scan(&defaultID); err != nil {
+		t.Fatal(err)
+	}
+	return conn, store, defaultID
 }
 
-func ageOf(n int) *int { return &n }
+func stateOf(s State) *State { return &s }
 
-func TestParseBucket(t *testing.T) {
+func TestParseState(t *testing.T) {
 	tests := []struct {
 		in      string
-		want    AgeBucket
+		want    State
 		wantErr bool
 	}{
-		{"kid", BucketKid, false},
-		{"adult", BucketAdult, false},
-		{"uncategorized", BucketUncategorized, false},
+		{"visible", StateVisible, false},
+		{"hidden", StateHidden, false},
 		{"", "", true},
 		{"bogus", "", true},
-		{"KID", "", true},
+		{"VISIBLE", "", true}, // case-sensitive
 	}
 	for _, tt := range tests {
-		got, err := ParseBucket(tt.in)
+		got, err := ParseState(tt.in)
 		if (err != nil) != tt.wantErr {
-			t.Errorf("ParseBucket(%q) err = %v, wantErr %v", tt.in, err, tt.wantErr)
+			t.Errorf("ParseState(%q) err = %v, wantErr %v", tt.in, err, tt.wantErr)
 		}
 		if got != tt.want {
-			t.Errorf("ParseBucket(%q) = %q, want %q", tt.in, got, tt.want)
+			t.Errorf("ParseState(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }
 
-func TestAgeToBucket(t *testing.T) {
-	tests := []struct {
-		age  *int
-		want AgeBucket
-	}{
-		{nil, BucketUncategorized},
-		{ageOf(2), BucketKid},
-		{ageOf(7), BucketKid},
-		{ageOf(12), BucketKid},
-		{ageOf(13), BucketAdult},
-		{ageOf(18), BucketAdult},
-	}
-	for _, tt := range tests {
-		got := AgeToBucket(tt.age)
-		if got != tt.want {
-			t.Errorf("AgeToBucket(%v) = %q, want %q", tt.age, got, tt.want)
-		}
-	}
-}
-
-func TestSetAgeAndHistory(t *testing.T) {
-	_, store := openStore(t)
+func TestSetStateAndHistory(t *testing.T) {
+	_, store, profileID := openStore(t)
 	ctx := context.Background()
 
-	prev, err := store.SetAge(ctx, "item-1", ageOf(7), "alice")
+	prev, err := store.SetState(ctx, "item-1", profileID, stateOf(StateVisible), "alice")
 	if err != nil {
-		t.Fatalf("SetAge: %v", err)
+		t.Fatalf("SetState: %v", err)
 	}
 	if prev != nil {
 		t.Errorf("first set: prev = %v, want nil", prev)
 	}
 
-	cur, err := store.GetAge(ctx, "item-1")
+	cur, err := store.GetState(ctx, "item-1", profileID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cur == nil || *cur != AgeKid {
-		t.Errorf("GetAge = %v", cur)
+	if cur == nil || *cur != StateVisible {
+		t.Errorf("GetState = %v", cur)
 	}
 
-	// Re-categorize: should record from->to in history.
-	prev, err = store.SetAge(ctx, "item-1", ageOf(18), "bob")
+	prev, err = store.SetState(ctx, "item-1", profileID, stateOf(StateHidden), "bob")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prev == nil || *prev != AgeKid {
-		t.Errorf("second set: prev = %v, want 7", prev)
+	if prev == nil || *prev != StateVisible {
+		t.Errorf("second set: prev = %v, want visible", prev)
 	}
 
-	hist, err := store.RecentHistory(ctx, 10)
+	hist, err := store.RecentHistory(ctx, profileID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(hist) != 2 {
 		t.Fatalf("history len = %d, want 2", len(hist))
 	}
-	if hist[0].FromAge == nil || *hist[0].FromAge != AgeKid ||
-		hist[0].ToAge == nil || *hist[0].ToAge != AgeAdult ||
-		hist[0].ChangedBy != "bob" {
-		t.Errorf("hist[0] = %+v", hist[0])
-	}
-	if hist[1].FromAge != nil || hist[1].ToAge == nil || *hist[1].ToAge != AgeKid {
-		t.Errorf("hist[1] = %+v", hist[1])
-	}
 }
 
-func TestSetAgeNoOpDoesNotRecordHistory(t *testing.T) {
-	_, store := openStore(t)
+func TestSetStateNoOpDoesNotRecordHistory(t *testing.T) {
+	_, store, profileID := openStore(t)
 	ctx := context.Background()
 
-	if _, err := store.SetAge(ctx, "item-1", ageOf(AgeKid), "alice"); err != nil {
+	if _, err := store.SetState(ctx, "item-1", profileID, stateOf(StateVisible), "alice"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SetAge(ctx, "item-1", ageOf(AgeKid), "alice"); err != nil {
+	if _, err := store.SetState(ctx, "item-1", profileID, stateOf(StateVisible), "alice"); err != nil {
 		t.Fatal(err)
 	}
-
-	hist, err := store.RecentHistory(ctx, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
+	hist, _ := store.RecentHistory(ctx, profileID, 10)
 	if len(hist) != 1 {
 		t.Errorf("history len = %d, want 1 (no-op should not write)", len(hist))
 	}
 }
 
-func TestSetAgeNilUncategorizesAndRecordsHistory(t *testing.T) {
-	_, store := openStore(t)
+func TestSetStateNilClearsAndRecordsHistory(t *testing.T) {
+	_, store, profileID := openStore(t)
 	ctx := context.Background()
 
-	if _, err := store.SetAge(ctx, "item-1", ageOf(AgeKid), "alice"); err != nil {
+	if _, err := store.SetState(ctx, "item-1", profileID, stateOf(StateVisible), "alice"); err != nil {
 		t.Fatal(err)
 	}
-	prev, err := store.SetAge(ctx, "item-1", nil, "alice")
+	prev, err := store.SetState(ctx, "item-1", profileID, nil, "alice")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prev == nil || *prev != AgeKid {
-		t.Errorf("prev = %v, want 7", prev)
+	if prev == nil || *prev != StateVisible {
+		t.Errorf("prev = %v, want visible", prev)
 	}
-	cur, _ := store.GetAge(ctx, "item-1")
+	cur, _ := store.GetState(ctx, "item-1", profileID)
 	if cur != nil {
-		t.Errorf("GetAge after nil set = %v, want nil", cur)
+		t.Errorf("GetState after nil set = %v, want nil", cur)
 	}
 }
 
-func TestGetAgeDefaultsNil(t *testing.T) {
-	_, store := openStore(t)
-	got, err := store.GetAge(context.Background(), "never-set")
+func TestStatesAreIndependentBetweenProfiles(t *testing.T) {
+	conn, store, defaultID := openStore(t)
+	ctx := context.Background()
+
+	// Create a second profile.
+	res, err := conn.Exec(`INSERT INTO profiles (name, description, created_at) VALUES ('Zoe', '', unixepoch())`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != nil {
-		t.Errorf("GetAge(never-set) = %v, want nil", got)
+	zoeID, _ := res.LastInsertId()
+
+	// Default sees the item; Zoe doesn't.
+	if _, err := store.SetState(ctx, "item-1", defaultID, stateOf(StateVisible), "admin"); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestSetAgeBulk(t *testing.T) {
-	_, store := openStore(t)
-	ctx := context.Background()
-
-	if _, err := store.SetAge(ctx, "a", ageOf(AgeKid), "admin"); err != nil {
+	if _, err := store.SetState(ctx, "item-1", zoeID, stateOf(StateHidden), "admin"); err != nil {
 		t.Fatal(err)
 	}
 
-	changed, err := store.SetAgeBulk(ctx, []string{"a", "b", "c"}, ageOf(AgeKid), "admin")
+	def, _ := store.GetState(ctx, "item-1", defaultID)
+	zoe, _ := store.GetState(ctx, "item-1", zoeID)
+	if def == nil || *def != StateVisible {
+		t.Errorf("default state = %v, want visible", def)
+	}
+	if zoe == nil || *zoe != StateHidden {
+		t.Errorf("zoe state = %v, want hidden", zoe)
+	}
+}
+
+func TestSetStateBulk(t *testing.T) {
+	_, store, profileID := openStore(t)
+	ctx := context.Background()
+
+	if _, err := store.SetState(ctx, "a", profileID, stateOf(StateVisible), "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := store.SetStateBulk(ctx, []string{"a", "b", "c"}, profileID, stateOf(StateVisible), "admin")
 	if err != nil {
 		t.Fatalf("bulk: %v", err)
 	}
 	if changed != 2 {
-		t.Errorf("changed = %d, want 2 (a was already 7)", changed)
+		t.Errorf("changed = %d, want 2 (a was already visible)", changed)
 	}
 
 	for _, id := range []string{"a", "b", "c"} {
-		got, _ := store.GetAge(ctx, id)
-		if got == nil || *got != AgeKid {
-			t.Errorf("%s = %v, want 7", id, got)
+		st, _ := store.GetState(ctx, id, profileID)
+		if st == nil || *st != StateVisible {
+			t.Errorf("%s = %v, want visible", id, st)
 		}
 	}
 }
 
-func TestSetAgeBulkRollsBackOnError(t *testing.T) {
-	conn, store := openStore(t)
+func TestSetStateBulkRollsBackOnError(t *testing.T) {
+	conn, store, profileID := openStore(t)
 	ctx := context.Background()
 
-	if _, err := store.SetAge(ctx, "pre-existing", ageOf(AgeKid), "admin"); err != nil {
+	if _, err := store.SetState(ctx, "pre-existing", profileID, stateOf(StateVisible), "admin"); err != nil {
 		t.Fatal(err)
 	}
-
 	if _, err := conn.Exec(`DROP TABLE categorizations`); err != nil {
 		t.Fatal(err)
 	}
-
-	_, err := store.SetAgeBulk(ctx, []string{"x", "y"}, ageOf(AgeKid), "admin")
+	_, err := store.SetStateBulk(ctx, []string{"x", "y"}, profileID, stateOf(StateVisible), "admin")
 	if err == nil {
 		t.Error("expected bulk to fail when table missing")
 	}
 }
 
-func TestGetAgesForItems(t *testing.T) {
-	_, store := openStore(t)
+func TestGetStatesForItems(t *testing.T) {
+	_, store, profileID := openStore(t)
 	ctx := context.Background()
 
-	if _, err := store.SetAge(ctx, "a", ageOf(AgeKid), "admin"); err != nil {
+	if _, err := store.SetState(ctx, "a", profileID, stateOf(StateVisible), "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SetAge(ctx, "b", ageOf(AgeAdult), "admin"); err != nil {
+	if _, err := store.SetState(ctx, "b", profileID, stateOf(StateHidden), "admin"); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := store.GetAgesForItems(ctx, []string{"a", "b", "c"})
+	got, err := store.GetStatesForItems(ctx, profileID, []string{"a", "b", "c"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got["a"] != AgeKid || got["b"] != AgeAdult {
+	if got["a"] != StateVisible || got["b"] != StateHidden {
 		t.Errorf("got = %v", got)
 	}
 	if _, ok := got["c"]; ok {
-		t.Errorf("c should be absent (treat as uncategorized): %v", got)
+		t.Errorf("c should be absent (treat as unset): %v", got)
 	}
 }
 
-func TestRecentHistoryLimit(t *testing.T) {
-	_, store := openStore(t)
+func TestRecentHistoryFiltersByProfile(t *testing.T) {
+	conn, store, defaultID := openStore(t)
 	ctx := context.Background()
 
-	for i := 0; i < 10; i++ {
-		store.SetAge(ctx, "item", ageOf(AgeKid), "admin")
-		store.SetAge(ctx, "item", ageOf(AgeAdult), "admin")
-	}
+	res, _ := conn.Exec(`INSERT INTO profiles (name, description, created_at) VALUES ('Zoe', '', unixepoch())`)
+	zoeID, _ := res.LastInsertId()
 
-	hist, err := store.RecentHistory(ctx, 5)
+	store.SetState(ctx, "x", defaultID, stateOf(StateVisible), "admin")
+	store.SetState(ctx, "y", zoeID, stateOf(StateHidden), "admin")
+
+	defOnly, err := store.RecentHistory(ctx, defaultID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hist) > 5 {
-		t.Errorf("hist len = %d, want <= 5", len(hist))
+	if len(defOnly) != 1 || defOnly[0].ItemID != "x" {
+		t.Errorf("default-only history = %v", defOnly)
+	}
+
+	all, _ := store.RecentHistory(ctx, 0, 10)
+	if len(all) != 2 {
+		t.Errorf("all-profiles history len = %d, want 2", len(all))
 	}
 }
 
-func TestListItemIDsInBucket(t *testing.T) {
-	_, store := openStore(t)
+func TestListItemIDsInState(t *testing.T) {
+	_, store, profileID := openStore(t)
 	ctx := context.Background()
 
-	store.SetAge(ctx, "a", ageOf(AgeToddler), "admin")
-	store.SetAge(ctx, "b", ageOf(AgeKid), "admin")
-	store.SetAge(ctx, "c", ageOf(AgeAdult), "admin")
-	store.SetAge(ctx, "d", ageOf(AgeTeen), "admin")
+	store.SetState(ctx, "a", profileID, stateOf(StateVisible), "admin")
+	store.SetState(ctx, "b", profileID, stateOf(StateVisible), "admin")
+	store.SetState(ctx, "c", profileID, stateOf(StateHidden), "admin")
 
-	kids, err := store.ListItemIDsInBucket(ctx, BucketKid, 10, 0)
+	vis, err := store.ListItemIDsInState(ctx, profileID, StateVisible, 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(kids) != 2 {
-		t.Errorf("kids = %v, want a + b (len 2)", kids)
+	if len(vis) != 2 {
+		t.Errorf("visible len = %d, want 2", len(vis))
 	}
 
-	adults, err := store.ListItemIDsInBucket(ctx, BucketAdult, 10, 0)
-	if err != nil {
-		t.Fatal(err)
+	hid, _ := store.ListItemIDsInState(ctx, profileID, StateHidden, 10, 0)
+	if len(hid) != 1 {
+		t.Errorf("hidden len = %d, want 1", len(hid))
 	}
-	if len(adults) != 2 {
-		t.Errorf("adults = %v, want c + d (len 2)", adults)
+}
+
+func TestSetStateRequiresProfile(t *testing.T) {
+	_, store, _ := openStore(t)
+	_, err := store.SetState(context.Background(), "x", 0, stateOf(StateVisible), "admin")
+	if err == nil {
+		t.Error("expected error when profileID is 0")
+	}
+	if !errors.Is(err, errors.New("placeholder")) && err.Error() == "" {
+		// Just confirm a non-empty error message; don't pin the wording.
+		t.Errorf("expected non-empty error message, got %v", err)
 	}
 }

@@ -4,11 +4,9 @@ import { api, HttpError, type Profile } from "../api";
 type FormState = {
     name: string;
     description: string;
-    minAge: number;
-    maxAge: number;
 };
 
-const blankForm: FormState = { name: "", description: "", minAge: 0, maxAge: 18 };
+const blankForm: FormState = { name: "", description: "" };
 
 export default function Profiles() {
     const [profiles, setProfiles] = useState<Profile[] | null>(null);
@@ -52,12 +50,7 @@ export default function Profiles() {
 
     function startEdit(p: Profile) {
         setEditing(p);
-        setForm({
-            name: p.name,
-            description: p.description ?? "",
-            minAge: p.minAge,
-            maxAge: p.maxAge,
-        });
+        setForm({ name: p.name, description: p.description ?? "" });
     }
 
     function cancelEdit() {
@@ -66,7 +59,7 @@ export default function Profiles() {
     }
 
     async function remove(p: Profile) {
-        if (!confirm(`Delete profile "${p.name}"?`)) return;
+        if (!confirm(`Delete profile "${p.name}"? Visibility decisions made for it will be lost.`)) return;
         setError(null);
         try {
             await api.deleteProfile(p.id);
@@ -80,64 +73,33 @@ export default function Profiles() {
         <div className="page">
             <h1>Profiles</h1>
             <p className="muted">
-                A profile is the age range a kid sees. Set a min and max age; the
-                kid view (and curation suggestions for this profile) filter content
-                whose target age falls within the range. The Default profile starts
-                wide (0..18) and can be narrowed later.
+                Each profile carries its own visibility decisions. An item can be
+                visible for one profile and hidden for another. Pick the active
+                profile in the top nav before triaging.
             </p>
 
             {error && <div className="error">{error}</div>}
 
-            <form className="profile-form profile-form-grid" onSubmit={submit}>
-                <label>
-                    Name
-                    <input
-                        value={form.name}
-                        onChange={(e) => setForm({ ...form, name: e.target.value })}
-                        placeholder="e.g. Young kids"
-                        required
-                    />
-                </label>
-                <label>
-                    Description
-                    <input
-                        value={form.description}
-                        onChange={(e) => setForm({ ...form, description: e.target.value })}
-                        placeholder="optional"
-                    />
-                </label>
-                <label>
-                    Min age
-                    <input
-                        type="number"
-                        min={0}
-                        max={99}
-                        value={form.minAge}
-                        onChange={(e) => setForm({ ...form, minAge: Number(e.target.value) })}
-                        required
-                    />
-                </label>
-                <label>
-                    Max age
-                    <input
-                        type="number"
-                        min={0}
-                        max={99}
-                        value={form.maxAge}
-                        onChange={(e) => setForm({ ...form, maxAge: Number(e.target.value) })}
-                        required
-                    />
-                </label>
-                <div className="profile-form-actions">
-                    <button type="submit" disabled={busy}>
-                        {editing ? "Save" : "Create"}
+            <form className="profile-form" onSubmit={submit}>
+                <input
+                    placeholder="Name (e.g. Ollie)"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    required
+                />
+                <input
+                    placeholder="Description (optional)"
+                    value={form.description}
+                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                />
+                <button type="submit" disabled={busy}>
+                    {editing ? "Save" : "Create"}
+                </button>
+                {editing && (
+                    <button type="button" onClick={cancelEdit}>
+                        Cancel
                     </button>
-                    {editing && (
-                        <button type="button" onClick={cancelEdit}>
-                            Cancel
-                        </button>
-                    )}
-                </div>
+                )}
             </form>
 
             {profiles === null ? (
@@ -150,7 +112,6 @@ export default function Profiles() {
                                 <div className="profile-info">
                                     <div className="profile-name">{p.name}</div>
                                     <div className="muted">
-                                        Ages {p.minAge}..{p.maxAge} ·{" "}
                                         {p.description ?? ""}
                                         {p.description ? " · " : ""}
                                         {p.kidCount} kid{p.kidCount === 1 ? "" : "s"}

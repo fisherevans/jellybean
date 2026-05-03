@@ -25,22 +25,45 @@ func sessionUserID(r *http.Request) string {
 	return sess.UserID
 }
 
-// handleAdminItems lists items from Jellyfin, optionally filtered by our
-// local categorization state and a server-side search term. Each returned
-// item is enriched with its current minAge + bucket so the UI can render
-// and act on it without a second round trip.
+// requireProfileID parses the profileId query param. It is required for
+// any handler that operates on per-profile state (set, bulk, list filtered
+// by state). Returns 400 with a helpful message when missing or invalid.
+func requireProfileID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	v := r.URL.Query().Get("profileId")
+	if v == "" {
+		http.Error(w, "profileId query param required", http.StatusBadRequest)
+		return 0, false
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		http.Error(w, "profileId must be a positive integer", http.StatusBadRequest)
+		return 0, false
+	}
+	return n, true
+}
+
+// handleAdminItems lists items from Jellyfin, optionally filtered by the
+// active profile's visibility state and a server-side search term. Each
+// returned item is enriched with its current state for the active profile
+// so the UI can render and act on it without a second round trip.
 //
 // Query params:
-//   type        - Jellyfin item type (default Movie)
-//   limit       - 1..200, default 50
-//   startIndex  - pagination offset, default 0
-//   search      - substring on name (passed through to Jellyfin's searchTerm),
-//                 capped at 200 chars
-//   category    - kid | adult | uncategorized; coarse bucket filter mapped
-//                 from min_age (kid = age < 13, adult = age >= 13)
-//   suggest     - "true" to enrich each item with an auto-categorization
-//                 suggestion
+//   profileId  - REQUIRED. Which profile's state to surface and filter by.
+//   type       - Jellyfin item type (default Movie)
+//   limit      - 1..200, default 50
+//   startIndex - pagination offset, default 0
+//   search     - substring on name (passed through to Jellyfin's
+//                searchTerm), capped at 200 chars
+//   state      - visible | hidden | unset; if set, only items in that
+//                state for this profile are returned
+//   suggest    - "true" to enrich each item with an auto-categorization
+//                suggestion
 func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
+	profileID, ok := requireProfileID(w, r)
+	if !ok {
+		return
+	}
+
 	q := r.URL.Query()
 	itemType := q.Get("type")
 	if itemType == "" {
@@ -64,14 +87,26 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 	}
 	withSuggest := q.Get("suggest") == "true"
 
-	var wantBucket curation.AgeBucket
-	if c := q.Get("category"); c != "" {
-		parsed, err := curation.ParseBucket(c)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		wantBucket = parsed
+	type stateFilter int
+	const (
+		filterAll stateFilter = iota
+		filterVisible
+		filterHidden
+		filterUnset
+	)
+	wantState := filterAll
+	switch q.Get("state") {
+	case "":
+		// no filter
+	case string(curation.StateVisible):
+		wantState = filterVisible
+	case string(curation.StateHidden):
+		wantState = filterHidden
+	case "unset":
+		wantState = filterUnset
+	default:
+		http.Error(w, "state must be visible, hidden, or unset", http.StatusBadRequest)
+		return
 	}
 
 	var (
@@ -81,11 +116,15 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 		nextStart = startIndex
 	)
 
-	switch wantBucket {
-	case curation.BucketKid, curation.BucketAdult:
-		ids, err := s.curation.ListItemIDsInBucket(r.Context(), wantBucket, limit+1, startIndex)
+	switch wantState {
+	case filterVisible, filterHidden:
+		st := curation.StateVisible
+		if wantState == filterHidden {
+			st = curation.StateHidden
+		}
+		ids, err := s.curation.ListItemIDsInState(r.Context(), profileID, st, limit+1, startIndex)
 		if err != nil {
-			s.logger.Error().Err(err).Msg("list bucket ids")
+			s.logger.Error().Err(err).Msg("list state ids")
 			http.Error(w, "failed to load items", http.StatusInternalServerError)
 			return
 		}
@@ -104,14 +143,14 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 			total = res.TotalRecordCount
 		}
 
-	case curation.BucketUncategorized:
-		excluded, err := s.curation.AllCategorizedIDs(r.Context())
+	case filterUnset:
+		excluded, err := s.curation.AllCategorizedIDsForProfile(r.Context(), profileID)
 		if err != nil {
 			s.logger.Error().Err(err).Msg("load excluded ids")
 			http.Error(w, "failed to load items", http.StatusInternalServerError)
 			return
 		}
-		items, total, nextStart, err = s.pageUncategorized(r.Context(), itemType, search, limit, startIndex, excluded)
+		items, total, nextStart, err = s.pageUnsetForProfile(r.Context(), itemType, search, limit, startIndex, excluded)
 		if err != nil {
 			s.logger.Error().Err(err).Msg("page items")
 			http.Error(w, "failed to load items", http.StatusBadGateway)
@@ -144,10 +183,10 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 	for i, it := range items {
 		idList[i] = it.ID
 	}
-	ages, err := s.curation.GetAgesForItems(r.Context(), idList)
+	states, err := s.curation.GetStatesForItems(r.Context(), profileID, idList)
 	if err != nil {
-		s.logger.Error().Err(err).Msg("fetch ages")
-		http.Error(w, "failed to load categories", http.StatusInternalServerError)
+		s.logger.Error().Err(err).Msg("fetch states")
+		http.Error(w, "failed to load states", http.StatusInternalServerError)
 		return
 	}
 
@@ -163,12 +202,10 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 			"ProductionYear": it.ProductionYear,
 			"ImageTags":      it.ImageTags,
 		}
-		if age, ok := ages[it.ID]; ok {
-			row["MinAge"] = age
-			row["Bucket"] = string(curation.AgeToBucket(&age))
+		if st, ok := states[it.ID]; ok {
+			row["State"] = string(st)
 		} else {
-			row["MinAge"] = nil
-			row["Bucket"] = string(curation.BucketUncategorized)
+			row["State"] = nil
 		}
 		if withSuggest {
 			row["Suggestion"] = curation.Suggest(it)
@@ -183,13 +220,13 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 		"StartIndex":       startIndex,
 		"NextStartIndex":   nextStart,
 		"HasMore":          hasMore,
+		"ProfileId":        profileID,
 	})
 }
 
-// pageUncategorized walks Jellyfin's catalog from `startIndex` forward,
-// skipping any item already in the categorizations table, until it has
-// `limit` matching items or hits the end of the catalog.
-func (s *Server) pageUncategorized(
+// pageUnsetForProfile walks Jellyfin's catalog and returns items that have
+// no state row for the given profile. This is the sweep view's data source.
+func (s *Server) pageUnsetForProfile(
 	ctx context.Context,
 	itemType, search string,
 	limit, startIndex int,
@@ -237,62 +274,57 @@ func (s *Server) pageUncategorized(
 	return items, total, idx, nil
 }
 
-// setAgeRequest carries a nullable minAge so the client can tag an item
-// uncategorized by sending null. Validity is enforced at the handler.
-type setAgeRequest struct {
-	MinAge *int `json:"minAge"`
+type setStateRequest struct {
+	ProfileID int64   `json:"profileId"`
+	State     *string `json:"state"` // null clears the row (back to unset)
 }
 
-// validAgeTier returns true for ages we accept as a stored tier, plus nil
-// (which means uncategorized). Constrains user input to the curated set so
-// stray values like 137 don't slip into the table.
-func validAgeTier(age *int) bool {
-	if age == nil {
-		return true
-	}
-	switch *age {
-	case curation.AgeToddler, curation.AgePreschool, curation.AgeKid, curation.AgeTeen, curation.AgeAdult:
-		return true
-	}
-	return false
-}
-
-func (s *Server) handleAdminSetAge(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAdminSetState(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if id == "" {
 		http.Error(w, "item id required", http.StatusBadRequest)
 		return
 	}
-	var req setAgeRequest
+	var req setStateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if !validAgeTier(req.MinAge) {
-		http.Error(w, "minAge must be null or one of 2,5,7,13,18", http.StatusBadRequest)
+	if req.ProfileID <= 0 {
+		http.Error(w, "profileId required", http.StatusBadRequest)
 		return
 	}
-	if _, err := s.curation.SetAge(r.Context(), id, req.MinAge, sessionUserID(r)); err != nil {
-		s.logger.Error().Err(err).Str("id", id).Msg("set age")
-		http.Error(w, "failed to set age", http.StatusInternalServerError)
+	var st *curation.State
+	if req.State != nil {
+		parsed, err := curation.ParseState(*req.State)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		st = &parsed
+	}
+	if _, err := s.curation.SetState(r.Context(), id, req.ProfileID, st, sessionUserID(r)); err != nil {
+		s.logger.Error().Err(err).Str("id", id).Int64("profile_id", req.ProfileID).Msg("set state")
+		http.Error(w, "failed to set state", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-type bulkAgeRequest struct {
-	ItemIDs []string `json:"itemIds"`
-	MinAge  *int     `json:"minAge"`
+type bulkStateRequest struct {
+	ProfileID int64    `json:"profileId"`
+	ItemIDs   []string `json:"itemIds"`
+	State     *string  `json:"state"`
 }
 
-func (s *Server) handleAdminBulkAge(w http.ResponseWriter, r *http.Request) {
-	var req bulkAgeRequest
+func (s *Server) handleAdminBulkState(w http.ResponseWriter, r *http.Request) {
+	var req bulkStateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if !validAgeTier(req.MinAge) {
-		http.Error(w, "minAge must be null or one of 2,5,7,13,18", http.StatusBadRequest)
+	if req.ProfileID <= 0 {
+		http.Error(w, "profileId required", http.StatusBadRequest)
 		return
 	}
 	if len(req.ItemIDs) == 0 {
@@ -303,10 +335,19 @@ func (s *Server) handleAdminBulkAge(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "too many items in one bulk (max 1000)", http.StatusBadRequest)
 		return
 	}
-	updated, err := s.curation.SetAgeBulk(r.Context(), req.ItemIDs, req.MinAge, sessionUserID(r))
+	var st *curation.State
+	if req.State != nil {
+		parsed, err := curation.ParseState(*req.State)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		st = &parsed
+	}
+	updated, err := s.curation.SetStateBulk(r.Context(), req.ItemIDs, req.ProfileID, st, sessionUserID(r))
 	if err != nil {
-		s.logger.Error().Err(err).Msg("bulk set age")
-		http.Error(w, "failed to apply bulk age", http.StatusInternalServerError)
+		s.logger.Error().Err(err).Msg("bulk set state")
+		http.Error(w, "failed to apply bulk", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"updated": updated})
@@ -319,7 +360,14 @@ func (s *Server) handleAdminRecentActivity(w http.ResponseWriter, r *http.Reques
 			limit = n
 		}
 	}
-	hist, err := s.curation.RecentHistory(r.Context(), limit)
+	// profileId is optional here; 0 = all profiles.
+	var profileID int64
+	if v := r.URL.Query().Get("profileId"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			profileID = n
+		}
+	}
+	hist, err := s.curation.RecentHistory(r.Context(), profileID, limit)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("recent history")
 		http.Error(w, "failed to load history", http.StatusInternalServerError)
@@ -348,13 +396,14 @@ func (s *Server) handleAdminRecentActivity(w http.ResponseWriter, r *http.Reques
 	}
 
 	type historyResponse struct {
-		ID         int64  `json:"id"`
-		ItemID     string `json:"itemId"`
-		ItemName   string `json:"itemName"`
-		FromMinAge *int   `json:"fromMinAge"`
-		ToMinAge   *int   `json:"toMinAge"`
-		ChangedBy  string `json:"changedBy,omitempty"`
-		ChangedAt  int64  `json:"changedAt"`
+		ID        int64   `json:"id"`
+		ItemID    string  `json:"itemId"`
+		ItemName  string  `json:"itemName"`
+		ProfileID int64   `json:"profileId"`
+		FromState *string `json:"fromState"`
+		ToState   *string `json:"toState"`
+		ChangedBy string  `json:"changedBy,omitempty"`
+		ChangedAt int64   `json:"changedAt"`
 	}
 	out := make([]historyResponse, 0, len(hist))
 	for _, h := range hist {
@@ -362,23 +411,31 @@ func (s *Server) handleAdminRecentActivity(w http.ResponseWriter, r *http.Reques
 		if !ok {
 			name = "(unknown)"
 		}
-		out = append(out, historyResponse{
-			ID:         h.ID,
-			ItemID:     h.ItemID,
-			ItemName:   name,
-			FromMinAge: h.FromAge,
-			ToMinAge:   h.ToAge,
-			ChangedBy:  h.ChangedBy,
-			ChangedAt:  h.ChangedAt.Unix(),
-		})
+		entry := historyResponse{
+			ID:        h.ID,
+			ItemID:    h.ItemID,
+			ItemName:  name,
+			ProfileID: h.ProfileID,
+			ChangedBy: h.ChangedBy,
+			ChangedAt: h.ChangedAt.Unix(),
+		}
+		if h.FromState != nil {
+			s := string(*h.FromState)
+			entry.FromState = &s
+		}
+		if h.ToState != nil {
+			s := string(*h.ToState)
+			entry.ToState = &s
+		}
+		out = append(out, entry)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entries": out})
 }
 
 // handleAdminStream returns the Jellyfin HLS manifest URL for the requested
 // item as JSON. We don't 302-redirect: hls.js needs to know the URL is HLS
-// (the original /api/admin/... path doesn't end in .m3u8) so it engages
-// instead of letting the browser try to natively decode the manifest.
+// so it engages instead of letting the browser try to natively decode the
+// manifest.
 func (s *Server) handleAdminStream(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if id == "" {

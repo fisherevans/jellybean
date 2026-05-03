@@ -1,6 +1,7 @@
 package curation
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/fisherevans/jellybean/internal/jellyfin"
@@ -11,62 +12,54 @@ func TestSuggest(t *testing.T) {
 		name               string
 		item               jellyfin.Item
 		wantBucket         string
-		wantMinAge         *int  // nil = unsure
 		wantConfMin        float64
 		wantReasonContains string
 	}{
 		{
-			name:        "rated G is toddler-tier kid",
+			name:        "rated G is visible",
 			item:        jellyfin.Item{OfficialRating: "G"},
-			wantBucket:  "kid",
-			wantMinAge:  ageOf(AgeToddler),
+			wantBucket:  "visible",
 			wantConfMin: 0.9,
 		},
 		{
-			name:        "rated TV-Y is toddler kid",
+			name:        "rated TV-Y is visible",
 			item:        jellyfin.Item{OfficialRating: "TV-Y"},
-			wantBucket:  "kid",
-			wantMinAge:  ageOf(AgeToddler),
+			wantBucket:  "visible",
 			wantConfMin: 0.9,
 		},
 		{
-			name:        "rated TV-Y7 is preschool",
+			name:        "rated TV-Y7 is visible",
 			item:        jellyfin.Item{OfficialRating: "TV-Y7"},
-			wantBucket:  "kid",
-			wantMinAge:  ageOf(AgePreschool),
+			wantBucket:  "visible",
 			wantConfMin: 0.9,
 		},
 		{
-			name:        "rated R is adult",
+			name:        "rated R is hidden",
 			item:        jellyfin.Item{OfficialRating: "R"},
-			wantBucket:  "adult",
-			wantMinAge:  ageOf(AgeAdult),
+			wantBucket:  "hidden",
 			wantConfMin: 0.9,
 		},
 		{
-			name:        "rated TV-MA is adult",
+			name:        "rated TV-MA is hidden",
 			item:        jellyfin.Item{OfficialRating: "TV-MA"},
-			wantBucket:  "adult",
-			wantMinAge:  ageOf(AgeAdult),
+			wantBucket:  "hidden",
 			wantConfMin: 0.9,
 		},
 		{
-			name: "Pixar studio with no rating leans preschool kid",
+			name: "Pixar studio with no rating leans visible",
 			item: jellyfin.Item{
 				Studios: []jellyfin.Studio{{Name: "Pixar Animation Studios"}},
 			},
-			wantBucket: "kid",
-			wantMinAge: ageOf(AgePreschool),
+			wantBucket:  "visible",
 			wantConfMin: 0.8,
 		},
 		{
-			name: "PG + animation is younger kid",
+			name: "PG + animation is visible",
 			item: jellyfin.Item{
 				OfficialRating: "PG",
 				Genres:         []string{"Animation", "Comedy"},
 			},
-			wantBucket:  "kid",
-			wantMinAge:  ageOf(AgeKid),
+			wantBucket:  "visible",
 			wantConfMin: 0.6,
 		},
 		{
@@ -76,16 +69,14 @@ func TestSuggest(t *testing.T) {
 				Genres:         []string{"Animation"},
 			},
 			wantBucket: "unsure",
-			wantMinAge: nil,
 		},
 		{
-			name: "PG-13 alone is teen",
+			name: "PG-13 alone is hidden",
 			item: jellyfin.Item{
 				OfficialRating: "PG-13",
 				Genres:         []string{"Drama"},
 			},
-			wantBucket: "adult",
-			wantMinAge: ageOf(AgeTeen),
+			wantBucket:  "hidden",
 			wantConfMin: 0.6,
 		},
 		{
@@ -95,22 +86,19 @@ func TestSuggest(t *testing.T) {
 				Genres:         []string{"Drama"},
 			},
 			wantBucket: "unsure",
-			wantMinAge: nil,
 		},
 		{
 			name:       "no signals is unsure low confidence",
 			item:       jellyfin.Item{},
 			wantBucket: "unsure",
-			wantMinAge: nil,
 		},
 		{
-			name: "kid rating wins over kid studio (toddler tier)",
+			name: "kid rating wins over kid studio",
 			item: jellyfin.Item{
 				OfficialRating: "G",
 				Studios:        []jellyfin.Studio{{Name: "Pixar"}},
 			},
-			wantBucket: "kid",
-			wantMinAge: ageOf(AgeToddler),
+			wantBucket: "visible",
 		},
 		{
 			name: "adult rating wins over animation",
@@ -118,23 +106,15 @@ func TestSuggest(t *testing.T) {
 				OfficialRating: "R",
 				Genres:         []string{"Animation"},
 			},
-			wantBucket: "adult",
-			wantMinAge: ageOf(AgeAdult),
+			wantBucket: "hidden",
 		},
 		{
-			name: "lowercase rating still matches",
-			item: jellyfin.Item{OfficialRating: "g"},
-			wantBucket: "kid",
-			wantMinAge: ageOf(AgeToddler),
-		},
-		{
-			name: "kid studio + PG nudges down to preschool",
+			name: "kid studio + teen rating is unsure",
 			item: jellyfin.Item{
-				OfficialRating: "PG",
+				OfficialRating: "PG-13",
 				Studios:        []jellyfin.Studio{{Name: "Pixar"}},
 			},
-			wantBucket: "kid",
-			wantMinAge: ageOf(AgePreschool),
+			wantBucket: "unsure",
 		},
 	}
 	for _, tt := range tests {
@@ -143,31 +123,21 @@ func TestSuggest(t *testing.T) {
 			if got.Bucket != tt.wantBucket {
 				t.Errorf("Bucket = %q, want %q", got.Bucket, tt.wantBucket)
 			}
-			if !intPtrEqual(got.MinAge, tt.wantMinAge) {
-				gotS, wantS := "nil", "nil"
-				if got.MinAge != nil {
-					gotS = itoa(*got.MinAge)
-				}
-				if tt.wantMinAge != nil {
-					wantS = itoa(*tt.wantMinAge)
-				}
-				t.Errorf("MinAge = %s, want %s", gotS, wantS)
-			}
 			if got.Confidence < tt.wantConfMin {
 				t.Errorf("Confidence = %v, want >= %v", got.Confidence, tt.wantConfMin)
 			}
+			if tt.wantReasonContains != "" {
+				ok := false
+				for _, r := range got.Reasoning {
+					if strings.Contains(r, tt.wantReasonContains) {
+						ok = true
+						break
+					}
+				}
+				if !ok {
+					t.Errorf("reasoning %v missing %q", got.Reasoning, tt.wantReasonContains)
+				}
+			}
 		})
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	digits := []byte{}
-	for n > 0 {
-		digits = append([]byte{byte('0' + n%10)}, digits...)
-		n /= 10
-	}
-	return string(digits)
 }

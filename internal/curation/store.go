@@ -1,12 +1,9 @@
-// Package curation owns Jellybean's categorization state and the data access
-// for the parent web app's curation features. The store is the source of
-// truth for "what minimum age this item is appropriate for."
+// Package curation owns Jellybean's per-profile visibility state.
 //
-// Categorizations are recorded as a numeric minimum age (in years). NULL
-// means the item is uncategorized. Common tiers: 2 (toddler), 5 (preschool),
-// 7 (younger kid), 13 (teen), 18 (adult / not for kids). Profile rules will
-// gate visibility per kid by comparing against this number; for now the
-// only consumer is the curation UI.
+// Each (item, profile) pair is independently visible, hidden, or unset.
+// A future "Zoe" profile gets her own triage; Ollie's decisions don't
+// carry over. The kid-stream filter for a given profile shows only items
+// whose state is 'visible' for that profile.
 package curation
 
 import (
@@ -18,31 +15,32 @@ import (
 	"time"
 )
 
-// AgeTier values are the standard buckets the UI shows. They are not a
-// closed set: the schema accepts any non-negative integer so we can add
-// granularity later (e.g. 16 for older teens) without a schema change.
+// State is the per-profile visibility verdict for an item.
+type State string
+
 const (
-	AgeToddler   = 2
-	AgePreschool = 5
-	AgeKid       = 7
-	AgeTeen      = 13
-	AgeAdult     = 18
+	StateVisible State = "visible"
+	StateHidden  State = "hidden"
 )
 
-// MinAge is a nullable age. The zero value (0) is "any age" / "no minimum",
-// which we don't currently use. Use a *int when the absence of a value
-// matters; this type is for documentation.
-type MinAge = int
-
 // Source tracks how a categorization landed in the table; used by the
-// future "auto-apply high-confidence suggestions" flow to distinguish manual
-// decisions from machine-applied ones.
+// future "auto-apply high-confidence suggestions" flow to distinguish
+// manual from machine-applied entries.
 type Source string
 
 const (
 	SourceManual    Source = "manual"
 	SourceSuggested Source = "auto-suggested"
 )
+
+// ParseState validates a state string from a request body.
+func ParseState(s string) (State, error) {
+	switch State(s) {
+	case StateVisible, StateHidden:
+		return State(s), nil
+	}
+	return "", fmt.Errorf("invalid state %q (expected visible or hidden)", s)
+}
 
 // Store is the data access layer for categorizations + history.
 type Store struct {
@@ -53,23 +51,27 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
-// HistoryEntry mirrors one row from categorization_history. Nullable ages
-// are surfaced as nil pointers so JSON encoding can render them as null.
+// HistoryEntry mirrors one row from categorization_history.
 type HistoryEntry struct {
 	ID         int64
 	ItemID     string
-	FromAge    *int
-	ToAge      *int
+	ProfileID  int64
+	FromState  *State // nil = no prior state
+	ToState    *State // nil = removed (back to unset)
 	ChangedBy  string
 	ChangedAt  time.Time
 }
 
-// SetAge upserts a single item's minimum age and appends to history.
-// Pass nil for `age` to mark the item uncategorized. Returns the previous
-// age (or nil if none) so callers can implement undo / display "from -> to".
-func (s *Store) SetAge(ctx context.Context, itemID string, age *int, setBy string) (*int, error) {
+// SetState upserts the visibility for a single (item, profile) pair and
+// appends to history. Pass nil for `state` to clear (mark unset). Returns
+// the previous state (or nil if none) so callers can implement undo /
+// "from -> to" displays.
+func (s *Store) SetState(ctx context.Context, itemID string, profileID int64, state *State, setBy string) (*State, error) {
 	if itemID == "" {
 		return nil, errors.New("itemID required")
+	}
+	if profileID <= 0 {
+		return nil, errors.New("profileID required")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -77,27 +79,39 @@ func (s *Store) SetAge(ctx context.Context, itemID string, age *int, setBy strin
 	}
 	defer tx.Rollback()
 
-	prev, err := getAgeTx(ctx, tx, itemID)
+	prev, err := getStateTx(ctx, tx, itemID, profileID)
 	if err != nil {
 		return nil, err
 	}
-	if intPtrEqual(prev, age) {
+	if statePtrEqual(prev, state) {
 		return prev, tx.Commit()
 	}
-	if err := upsertAgeTx(ctx, tx, itemID, age, SourceManual, setBy); err != nil {
-		return nil, err
+	if state == nil {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM categorizations WHERE jellyfin_item_id = ? AND profile_id = ?`,
+			itemID, profileID); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := upsertStateTx(ctx, tx, itemID, profileID, *state, SourceManual, setBy); err != nil {
+			return nil, err
+		}
 	}
-	if err := appendHistoryTx(ctx, tx, itemID, prev, age, setBy); err != nil {
+	if err := appendHistoryTx(ctx, tx, itemID, profileID, prev, state, setBy); err != nil {
 		return nil, err
 	}
 	return prev, tx.Commit()
 }
 
-// SetAgeBulk applies the same minimum age to many items in one transaction.
-// Returns the count of items whose age actually changed.
-func (s *Store) SetAgeBulk(ctx context.Context, itemIDs []string, age *int, setBy string) (int, error) {
+// SetStateBulk applies the same state to many items for a single profile
+// in one transaction. Returns the count of items whose state actually
+// changed.
+func (s *Store) SetStateBulk(ctx context.Context, itemIDs []string, profileID int64, state *State, setBy string) (int, error) {
 	if len(itemIDs) == 0 {
 		return 0, nil
+	}
+	if profileID <= 0 {
+		return 0, errors.New("profileID required")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -110,17 +124,25 @@ func (s *Store) SetAgeBulk(ctx context.Context, itemIDs []string, age *int, setB
 		if id == "" {
 			continue
 		}
-		prev, err := getAgeTx(ctx, tx, id)
+		prev, err := getStateTx(ctx, tx, id, profileID)
 		if err != nil {
 			return 0, err
 		}
-		if intPtrEqual(prev, age) {
+		if statePtrEqual(prev, state) {
 			continue
 		}
-		if err := upsertAgeTx(ctx, tx, id, age, SourceManual, setBy); err != nil {
-			return 0, err
+		if state == nil {
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM categorizations WHERE jellyfin_item_id = ? AND profile_id = ?`,
+				id, profileID); err != nil {
+				return 0, err
+			}
+		} else {
+			if err := upsertStateTx(ctx, tx, id, profileID, *state, SourceManual, setBy); err != nil {
+				return 0, err
+			}
 		}
-		if err := appendHistoryTx(ctx, tx, id, prev, age, setBy); err != nil {
+		if err := appendHistoryTx(ctx, tx, id, profileID, prev, state, setBy); err != nil {
 			return 0, err
 		}
 		changed++
@@ -131,114 +153,68 @@ func (s *Store) SetAgeBulk(ctx context.Context, itemIDs []string, age *int, setB
 	return changed, nil
 }
 
-// GetAge returns the current minimum age for an item, or nil if the item
-// has not been categorized.
-func (s *Store) GetAge(ctx context.Context, itemID string) (*int, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT min_age FROM categorizations WHERE jellyfin_item_id = ?`, itemID)
-	var n sql.NullInt64
-	if err := row.Scan(&n); err != nil {
+// GetState returns the current visibility for one (item, profile), or nil
+// if the row is unset.
+func (s *Store) GetState(ctx context.Context, itemID string, profileID int64) (*State, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT state FROM categorizations WHERE jellyfin_item_id = ? AND profile_id = ?`,
+		itemID, profileID)
+	var v string
+	if err := row.Scan(&v); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	if !n.Valid {
-		return nil, nil
-	}
-	v := int(n.Int64)
-	return &v, nil
+	st := State(v)
+	return &st, nil
 }
 
-// GetAgesForItems returns a map of itemID -> *minAge for the given IDs.
-// Items not in the table or with NULL min_age are absent from the result.
-func (s *Store) GetAgesForItems(ctx context.Context, itemIDs []string) (map[string]int, error) {
-	out := make(map[string]int, len(itemIDs))
-	if len(itemIDs) == 0 {
+// GetStatesForItems returns a map of itemID -> state for the given items
+// and profile. Items without a row are absent from the result.
+func (s *Store) GetStatesForItems(ctx context.Context, profileID int64, itemIDs []string) (map[string]State, error) {
+	out := make(map[string]State, len(itemIDs))
+	if len(itemIDs) == 0 || profileID <= 0 {
 		return out, nil
 	}
 	placeholders := strings.Repeat("?,", len(itemIDs))
 	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, len(itemIDs))
-	for i, id := range itemIDs {
-		args[i] = id
+	args := make([]any, 0, len(itemIDs)+1)
+	args = append(args, profileID)
+	for _, id := range itemIDs {
+		args = append(args, id)
 	}
-	q := `SELECT jellyfin_item_id, min_age FROM categorizations WHERE jellyfin_item_id IN (` + placeholders + `) AND min_age IS NOT NULL`
+	q := `SELECT jellyfin_item_id, state FROM categorizations
+		WHERE profile_id = ? AND jellyfin_item_id IN (` + placeholders + `)`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id string
-		var n sql.NullInt64
-		if err := rows.Scan(&id, &n); err != nil {
+		var id, st string
+		if err := rows.Scan(&id, &st); err != nil {
 			return nil, err
 		}
-		if n.Valid {
-			out[id] = int(n.Int64)
-		}
+		out[id] = State(st)
 	}
 	return out, rows.Err()
 }
 
-// AgeBucket is a coarser-grained label the kid-stream filtering layer cares
-// about. Lets the existing API surface (?category=kid|adult|uncategorized)
-// keep working without exposing tier semantics outside this package.
-type AgeBucket string
-
-const (
-	BucketKid           AgeBucket = "kid"
-	BucketAdult         AgeBucket = "adult"
-	BucketUncategorized AgeBucket = "uncategorized"
-)
-
-// AgeToBucket maps a stored min_age (or nil) to the coarse bucket. The
-// kid/adult cutoff sits at 13: ages 12 and below are "kid", 13 and above
-// are "adult". This is purely a UI convenience; the underlying age value
-// is what gets stored.
-func AgeToBucket(age *int) AgeBucket {
-	if age == nil {
-		return BucketUncategorized
-	}
-	if *age < 13 {
-		return BucketKid
-	}
-	return BucketAdult
-}
-
-// ParseBucket validates a bucket string from a query param.
-func ParseBucket(s string) (AgeBucket, error) {
-	switch AgeBucket(s) {
-	case BucketKid, BucketAdult, BucketUncategorized:
-		return AgeBucket(s), nil
-	}
-	return "", fmt.Errorf("invalid bucket %q (expected kid, adult, or uncategorized)", s)
-}
-
-// ListItemIDsInBucket returns IDs whose stored min_age maps to the given
-// bucket, ordered by most-recently-set first. Used by the items handler to
-// page through filtered views without fetching the entire library.
-func (s *Store) ListItemIDsInBucket(ctx context.Context, bucket AgeBucket, limit, offset int) ([]string, error) {
+// ListItemIDsInState returns IDs whose stored state for the given profile
+// matches `state`, ordered by most-recently-set first.
+func (s *Store) ListItemIDsInState(ctx context.Context, profileID int64, state State, limit, offset int) ([]string, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	var where string
-	switch bucket {
-	case BucketKid:
-		where = "min_age IS NOT NULL AND min_age < 13"
-	case BucketAdult:
-		where = "min_age IS NOT NULL AND min_age >= 13"
-	default:
-		return nil, fmt.Errorf("ListItemIDsInBucket only supports kid / adult; got %q", bucket)
-	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT jellyfin_item_id FROM categorizations
-		WHERE `+where+`
+		WHERE profile_id = ? AND state = ?
 		ORDER BY set_at DESC
-		LIMIT ? OFFSET ?`, limit, offset)
+		LIMIT ? OFFSET ?`, profileID, string(state), limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -254,13 +230,12 @@ func (s *Store) ListItemIDsInBucket(ctx context.Context, bucket AgeBucket, limit
 	return out, rows.Err()
 }
 
-// AllCategorizedIDs returns every item ID that has a non-NULL min_age. The
-// items handler uses this to filter the "uncategorized" view by paging
-// through Jellyfin's catalog and skipping anything in the returned set.
-func (s *Store) AllCategorizedIDs(ctx context.Context) (map[string]struct{}, error) {
+// AllCategorizedIDsForProfile returns every item ID that has ANY state
+// (visible or hidden) for the given profile. The "uncategorized" sweep
+// view uses this set to skip items the parent has already decided on.
+func (s *Store) AllCategorizedIDsForProfile(ctx context.Context, profileID int64) (map[string]struct{}, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT jellyfin_item_id FROM categorizations
-		WHERE min_age IS NOT NULL`)
+		SELECT jellyfin_item_id FROM categorizations WHERE profile_id = ?`, profileID)
 	if err != nil {
 		return nil, err
 	}
@@ -276,16 +251,30 @@ func (s *Store) AllCategorizedIDs(ctx context.Context) (map[string]struct{}, err
 	return out, rows.Err()
 }
 
-// RecentHistory returns the last N history entries, newest first.
-func (s *Store) RecentHistory(ctx context.Context, limit int) ([]HistoryEntry, error) {
+// RecentHistory returns the last N history entries for the given profile,
+// newest first. Pass profileID = 0 to get history across all profiles.
+func (s *Store) RecentHistory(ctx context.Context, profileID int64, limit int) ([]HistoryEntry, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, jellyfin_item_id, from_min_age, to_min_age, changed_by, changed_at
-		FROM categorization_history
-		ORDER BY changed_at DESC, id DESC
-		LIMIT ?`, limit)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if profileID == 0 {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, jellyfin_item_id, profile_id, from_state, to_state, changed_by, changed_at
+			FROM categorization_history
+			ORDER BY changed_at DESC, id DESC
+			LIMIT ?`, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, jellyfin_item_id, profile_id, from_state, to_state, changed_by, changed_at
+			FROM categorization_history
+			WHERE profile_id = ?
+			ORDER BY changed_at DESC, id DESC
+			LIMIT ?`, profileID, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -294,25 +283,24 @@ func (s *Store) RecentHistory(ctx context.Context, limit int) ([]HistoryEntry, e
 	var out []HistoryEntry
 	for rows.Next() {
 		var (
-			e    HistoryEntry
-			from sql.NullInt64
-			to   sql.NullInt64
-			by   sql.NullString
-			at   int64
+			e          HistoryEntry
+			fromN, toN sql.NullString
+			byN        sql.NullString
+			at         int64
 		)
-		if err := rows.Scan(&e.ID, &e.ItemID, &from, &to, &by, &at); err != nil {
+		if err := rows.Scan(&e.ID, &e.ItemID, &e.ProfileID, &fromN, &toN, &byN, &at); err != nil {
 			return nil, err
 		}
-		if from.Valid {
-			v := int(from.Int64)
-			e.FromAge = &v
+		if fromN.Valid {
+			s := State(fromN.String)
+			e.FromState = &s
 		}
-		if to.Valid {
-			v := int(to.Int64)
-			e.ToAge = &v
+		if toN.Valid {
+			s := State(toN.String)
+			e.ToState = &s
 		}
-		if by.Valid {
-			e.ChangedBy = by.String
+		if byN.Valid {
+			e.ChangedBy = byN.String
 		}
 		e.ChangedAt = time.Unix(at, 0)
 		out = append(out, e)
@@ -322,62 +310,57 @@ func (s *Store) RecentHistory(ctx context.Context, limit int) ([]HistoryEntry, e
 
 // --- internal helpers (operate within a transaction) --------------------
 
-func getAgeTx(ctx context.Context, tx *sql.Tx, itemID string) (*int, error) {
-	row := tx.QueryRowContext(ctx, `SELECT min_age FROM categorizations WHERE jellyfin_item_id = ?`, itemID)
-	var n sql.NullInt64
-	if err := row.Scan(&n); err != nil {
+func getStateTx(ctx context.Context, tx *sql.Tx, itemID string, profileID int64) (*State, error) {
+	row := tx.QueryRowContext(ctx,
+		`SELECT state FROM categorizations WHERE jellyfin_item_id = ? AND profile_id = ?`,
+		itemID, profileID)
+	var v string
+	if err := row.Scan(&v); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	if !n.Valid {
-		return nil, nil
-	}
-	v := int(n.Int64)
-	return &v, nil
+	st := State(v)
+	return &st, nil
 }
 
-func upsertAgeTx(ctx context.Context, tx *sql.Tx, itemID string, age *int, src Source, setBy string) error {
-	var ageVal any
-	if age != nil {
-		ageVal = *age
-	}
+func upsertStateTx(ctx context.Context, tx *sql.Tx, itemID string, profileID int64, state State, src Source, setBy string) error {
 	var setByVal any
 	if setBy != "" {
 		setByVal = setBy
 	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO categorizations (jellyfin_item_id, min_age, source, set_at, set_by)
-		VALUES (?, ?, ?, unixepoch(), ?)
-		ON CONFLICT(jellyfin_item_id) DO UPDATE SET
-			min_age = excluded.min_age,
+		INSERT INTO categorizations (jellyfin_item_id, profile_id, state, source, set_at, set_by)
+		VALUES (?, ?, ?, ?, unixepoch(), ?)
+		ON CONFLICT(jellyfin_item_id, profile_id) DO UPDATE SET
+			state = excluded.state,
 			source = excluded.source,
 			set_at = excluded.set_at,
 			set_by = excluded.set_by`,
-		itemID, ageVal, string(src), setByVal)
+		itemID, profileID, string(state), string(src), setByVal)
 	return err
 }
 
-func appendHistoryTx(ctx context.Context, tx *sql.Tx, itemID string, from, to *int, by string) error {
+func appendHistoryTx(ctx context.Context, tx *sql.Tx, itemID string, profileID int64, from, to *State, by string) error {
 	var fromVal, toVal, byVal any
 	if from != nil {
-		fromVal = *from
+		fromVal = string(*from)
 	}
 	if to != nil {
-		toVal = *to
+		toVal = string(*to)
 	}
 	if by != "" {
 		byVal = by
 	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO categorization_history (jellyfin_item_id, from_min_age, to_min_age, changed_by, changed_at)
-		VALUES (?, ?, ?, ?, unixepoch())`,
-		itemID, fromVal, toVal, byVal)
+		INSERT INTO categorization_history (jellyfin_item_id, profile_id, from_state, to_state, changed_by, changed_at)
+		VALUES (?, ?, ?, ?, ?, unixepoch())`,
+		itemID, profileID, fromVal, toVal, byVal)
 	return err
 }
 
-func intPtrEqual(a, b *int) bool {
+func statePtrEqual(a, b *State) bool {
 	if a == nil && b == nil {
 		return true
 	}
@@ -386,4 +369,3 @@ func intPtrEqual(a, b *int) bool {
 	}
 	return *a == *b
 }
-

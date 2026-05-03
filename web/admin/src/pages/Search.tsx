@@ -1,9 +1,14 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { api, HttpError, type Item } from "../api";
+import { Link, useSearchParams } from "react-router-dom";
+import { api, HttpError, type Item, type ItemState } from "../api";
+import { useActiveProfile } from "../activeProfile";
 import ItemCard from "../ItemCard";
 
+// Search hits Jellyfin's substring filter and shows results with the
+// active profile's visibility state per item.
+
 export default function Search() {
+    const { profile } = useActiveProfile();
     const [params, setParams] = useSearchParams();
     const [query, setQuery] = useState(params.get("q") ?? "");
     const [items, setItems] = useState<Item[] | null>(null);
@@ -13,6 +18,7 @@ export default function Search() {
     const [busy, setBusy] = useState<string | null>(null);
 
     useEffect(() => {
+        if (!profile) return;
         const trimmed = query.trim();
         if (!trimmed) {
             setItems(null);
@@ -22,7 +28,11 @@ export default function Search() {
         }
         const handle = setTimeout(async () => {
             try {
-                const res = await api.listItems({ search: trimmed, limit: 100 });
+                const res = await api.listItems({
+                    profileId: profile.id,
+                    search: trimmed,
+                    limit: 100,
+                });
                 setItems(res.Items);
                 setTotal(res.TotalRecordCount);
                 setHasMore(res.HasMore);
@@ -31,7 +41,7 @@ export default function Search() {
             }
         }, 250);
         return () => clearTimeout(handle);
-    }, [query]);
+    }, [query, profile?.id]);
 
     useEffect(() => {
         if (query) {
@@ -43,28 +53,14 @@ export default function Search() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [query]);
 
-    async function setAge(itemId: string, age: number | null) {
+    async function setItemState(itemId: string, state: ItemState) {
+        if (!profile) return;
         setBusy(itemId);
         setError(null);
         try {
-            await api.setAge(itemId, age);
+            await api.setState(itemId, profile.id, state);
             setItems((cur) =>
-                cur
-                    ? cur.map((it) =>
-                          it.Id === itemId
-                              ? {
-                                    ...it,
-                                    MinAge: age,
-                                    Bucket:
-                                        age === null
-                                            ? "uncategorized"
-                                            : age < 13
-                                            ? "kid"
-                                            : "adult",
-                                }
-                              : it,
-                      )
-                    : cur,
+                cur ? cur.map((it) => (it.Id === itemId ? { ...it, State: state } : it)) : cur,
             );
         } catch (err) {
             setError(err instanceof HttpError ? err.message : String(err));
@@ -73,12 +69,21 @@ export default function Search() {
         }
     }
 
+    if (!profile) {
+        return (
+            <div className="page">
+                <h1>Search</h1>
+                <p>No profile selected. <Link to="/profiles">Pick or create one</Link>.</p>
+            </div>
+        );
+    }
+
     return (
         <div className="page">
             <h1>Search</h1>
             <p className="muted">
-                Substring match on item names. Use this to find a specific title and
-                re-categorize it.
+                Substring match on item names. Visibility shown is for{" "}
+                <strong>{profile.name}</strong>; switch profiles in the top nav.
             </p>
             <input
                 className="search-input"
@@ -105,7 +110,7 @@ export default function Search() {
                             <li key={it.Id}>
                                 <ItemCard
                                     item={it}
-                                    onAgeChange={(c) => setAge(it.Id, c)}
+                                    onStateChange={(s) => setItemState(it.Id, s)}
                                     busy={busy === it.Id}
                                 />
                             </li>
