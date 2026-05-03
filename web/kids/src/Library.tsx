@@ -648,7 +648,11 @@ type TileProps = {
 
 function Tile({ item, large, focused, onClick, onFocus, refCallback }: TileProps) {
     const tag = item.ImageTags?.Primary ?? "";
-    const width = large ? 360 : 220;
+    // Tile poster CSS is 180px wide for the grid and 180px for cw (both
+    // single-column at native res; ~270px on HiDPI). Request 1.5x the
+    // rendered size and let the immutable Cache-Control + per-tag URL
+    // do the rest. Larger sizes were a 2-4x oversize on cheap TVs.
+    const width = large ? 280 : 220;
     const src = `/api/kids/items/${encodeURIComponent(item.Id)}/image?type=Primary&width=${width}${
         tag ? `&tag=${encodeURIComponent(tag)}` : ""
     }`;
@@ -663,7 +667,10 @@ function Tile({ item, large, focused, onClick, onFocus, refCallback }: TileProps
         >
             <div className="tile-poster">
                 {tag ? (
-                    <img src={src} alt={item.Name} loading="lazy" />
+                    // decoding="async" keeps image decode off the main
+                    // thread on slow TV hardware; loading="lazy" still
+                    // defers the network fetch.
+                    <img src={src} alt={item.Name} loading="lazy" decoding="async" />
                 ) : (
                     <div className="tile-poster-placeholder">{item.Name}</div>
                 )}

@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+#
+# jb-tv: build and sideload the Jellybean Android TV shell.
+#
+# Subcommands:
+#   connect <ip>   adb connect <ip>:5555
+#   build          gradle assembleDebug
+#   install        build + adb install -r
+#   launch         am start -n com.fisherevans.jellybean.debug/com.fisherevans.jellybean.MainActivity
+#   logs           adb logcat filtered to our package
+#   uninstall      remove the debug build from the connected device
+#   devices        adb devices passthrough
+#
+# Assumes:
+#   - adb is on PATH (Android platform-tools installed).
+#   - A system `gradle` 8.x is available, OR android-tv/gradlew exists.
+#   - The TV / device is reachable on the LAN (or USB-attached).
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_DIR="$REPO_ROOT/android-tv"
+PACKAGE_ID="com.fisherevans.jellybean"
+DEBUG_PACKAGE_ID="com.fisherevans.jellybean.debug"
+APK_PATH="$APP_DIR/app/build/outputs/apk/debug/app-debug.apk"
+ADB_PORT="5555"
+
+color_red() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+color_yel() { printf '\033[33m%s\033[0m\n' "$*"; }
+color_grn() { printf '\033[32m%s\033[0m\n' "$*"; }
+
+die() { color_red "error: $*"; exit 1; }
+
+usage() {
+    cat <<'EOF'
+Usage: jb-tv <command> [args]
+
+Commands:
+  connect <ip>   adb connect <ip>:5555 (Android TV network debugging)
+  devices        list adb devices
+  build          assemble the debug APK
+  install        assemble + install on the connected device
+  launch         start the Jellybean Activity on the connected device
+  logs           tail logcat filtered to the Jellybean package
+  uninstall      remove the debug build
+  help           this message
+
+Examples:
+  jb-tv connect 192.168.1.42
+  jb-tv install
+  jb-tv launch
+  jb-tv logs
+EOF
+}
+
+require_adb() {
+    command -v adb >/dev/null 2>&1 \
+        || die "adb not on PATH. Install Android platform-tools: https://developer.android.com/tools/releases/platform-tools"
+}
+
+require_device() {
+    require_adb
+    # `adb devices` exits 0 even with no devices; check the line count.
+    local count
+    count=$(adb devices | awk 'NR>1 && $2=="device" {n++} END {print n+0}')
+    if [[ "$count" -eq 0 ]]; then
+        die "no adb device connected. Try: jb-tv connect <ip>  (or attach USB and authorize the debug prompt on the TV)"
+    fi
+}
+
+resolve_gradle() {
+    # Prefer the project's wrapper if it exists, otherwise system gradle.
+    if [[ -x "$APP_DIR/gradlew" ]]; then
+        echo "$APP_DIR/gradlew"
+    elif command -v gradle >/dev/null 2>&1; then
+        echo "gradle"
+    else
+        die "neither android-tv/gradlew nor system gradle found. Install gradle 8.x, or run 'cd android-tv && gradle wrapper' once."
+    fi
+}
+
+cmd_connect() {
+    local ip="${1:-}"
+    [[ -n "$ip" ]] || die "usage: jb-tv connect <ip>"
+    require_adb
+    color_yel "adb connect $ip:$ADB_PORT"
+    adb connect "$ip:$ADB_PORT"
+    color_grn "if this is the first connect, accept the RSA fingerprint prompt on the TV."
+}
+
+cmd_devices() {
+    require_adb
+    adb devices
+}
+
+cmd_build() {
+    local gradle
+    gradle="$(resolve_gradle)"
+    color_yel "[build] $gradle :app:assembleDebug (in $APP_DIR)"
+    ( cd "$APP_DIR" && "$gradle" :app:assembleDebug )
+    [[ -f "$APK_PATH" ]] || die "build finished but APK missing at $APK_PATH"
+    color_grn "[build] APK: $APK_PATH"
+}
+
+cmd_install() {
+    cmd_build
+    require_device
+    color_yel "[install] adb install -r $APK_PATH"
+    adb install -r "$APK_PATH"
+    color_grn "[install] done. launch with: jb-tv launch"
+}
+
+cmd_launch() {
+    require_device
+    # Try the debug variant first (applicationIdSuffix=.debug), fall back
+    # to the release id so this still works for non-debug installs.
+    if adb shell pm list packages | grep -q "package:$DEBUG_PACKAGE_ID\$"; then
+        local target="$DEBUG_PACKAGE_ID/$PACKAGE_ID.MainActivity"
+    else
+        local target="$PACKAGE_ID/$PACKAGE_ID.MainActivity"
+    fi
+    color_yel "[launch] am start -n $target"
+    adb shell am start -n "$target"
+}
+
+cmd_logs() {
+    require_device
+    color_yel "[logs] logcat | grep $PACKAGE_ID  (Ctrl-C to exit)"
+    # `adb logcat -v color` is friendlier; fall back to plain if unsupported.
+    adb logcat | grep --line-buffered -E "$PACKAGE_ID|chromium|WebView" || true
+}
+
+cmd_uninstall() {
+    require_device
+    for pkg in "$DEBUG_PACKAGE_ID" "$PACKAGE_ID"; do
+        if adb shell pm list packages | grep -q "package:$pkg\$"; then
+            color_yel "[uninstall] $pkg"
+            adb uninstall "$pkg" || true
+        fi
+    done
+}
+
+main() {
+    local cmd="${1:-help}"
+    shift || true
+    case "$cmd" in
+        connect)    cmd_connect "$@" ;;
+        devices)    cmd_devices ;;
+        build)      cmd_build ;;
+        install)    cmd_install ;;
+        launch)     cmd_launch ;;
+        logs)       cmd_logs ;;
+        uninstall)  cmd_uninstall ;;
+        help|-h|--help) usage ;;
+        *) usage; exit 2 ;;
+    esac
+}
+
+main "$@"

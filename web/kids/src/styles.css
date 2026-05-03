@@ -324,6 +324,9 @@ a,
     overflow-x: auto;
     padding: 0.5rem 0;
     scroll-snap-type: x mandatory;
+    /* Isolate paint + layout so the horizontal scrolling strip doesn't
+       cascade invalidations through Library on cheap TV hardware. */
+    contain: layout paint;
 }
 
 .cw-scroll::-webkit-scrollbar {
@@ -339,6 +342,9 @@ a,
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 1.25rem;
+    /* Same reason as .cw-scroll: isolate the grid's paint/layout.
+       Especially relevant once we virtualize. */
+    contain: layout paint;
 }
 
 .sentinel {
