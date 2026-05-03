@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-
-const KEY_STORAGE = "jellybean.kids.key";
+import { authHeaders } from "./auth";
 
 type StreamResponse = {
     streamUrl: string;
@@ -16,15 +15,18 @@ export default function Play() {
 
     useEffect(() => {
         if (!itemId) return;
-        const key = localStorage.getItem(KEY_STORAGE);
-        if (!key) {
-            setError("No kid API key on this device. Visit /kids/setup first.");
-            return;
-        }
+        // Always include the API key header if we have one, but rely on the
+        // session cookie too. Server picks: cookie (admin) > key (kid).
         fetch(`/api/kids/items/${encodeURIComponent(itemId)}/stream`, {
-            headers: { "X-Jellybean-Key": key },
+            credentials: "same-origin",
+            headers: authHeaders(),
         })
             .then(async (res) => {
+                if (res.status === 401) {
+                    throw new Error(
+                        "Not authenticated. Sign in as admin (/) or set a kid key in /kids/setup.",
+                    );
+                }
                 if (!res.ok) {
                     const text = await res.text();
                     throw new Error(`${res.status} ${res.statusText}: ${text}`);

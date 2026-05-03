@@ -87,9 +87,13 @@ func (s *Server) routes() {
 	admin.HandleFunc("/items", s.handleAdminItems).Methods(http.MethodGet)
 	admin.HandleFunc("/items/{id}/stream", s.handleAdminStream).Methods(http.MethodGet)
 
-	// Kids API: not gated by parent session; auth is the X-Jellybean-Key
-	// header carrying a per-profile API key.
+	// Kids API: dual auth. An admin session gets in (so testing the kids
+	// UI from the same browser as the admin works without provisioning a
+	// kid key); otherwise X-Jellybean-Key is required. OptionalMiddleware
+	// populates the session if present without 401-ing when missing; the
+	// handler decides which path to honor.
 	kids := api.PathPrefix("/kids").Subrouter()
+	kids.Use(s.auth.OptionalMiddleware)
 	kids.HandleFunc("/items/{id}/stream", s.handleKidsStream).Methods(http.MethodGet)
 
 	// Static SPAs. Order matters: /kids prefix wins over /, so the more

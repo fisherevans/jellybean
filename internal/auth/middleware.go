@@ -41,3 +41,22 @@ func (h *Handlers) Middleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
+
+// OptionalMiddleware attaches the session to the context if a valid cookie is
+// present but does not 401 when one is missing. Used on routes (like the
+// kids API) that have a secondary auth path; the handler decides what to
+// do with `SessionFromContext(ctx) == nil`.
+func (h *Handlers) OptionalMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie(cookieName)
+		if err == nil && c.Value != "" {
+			sess, err := h.Sessions.Get(r.Context(), c.Value)
+			if err == nil {
+				ctx := context.WithValue(r.Context(), sessionKey, sess)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
