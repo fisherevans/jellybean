@@ -320,15 +320,21 @@ start_binary() {
     done < <(collect_env)
 
     : > "$LOG_FILE"  # truncate previous log
-    nohup env -i \
-        HOME="$HOME" \
-        PATH="$PATH" \
-        TMPDIR="${TMPDIR:-/tmp}" \
-        "${env_args[@]}" \
-        "$BIN_PATH" \
-        >>"$LOG_FILE" 2>&1 &
-    pid=$!
-    echo "$pid" > "$PID_FILE"
+    # cd to ROOT_DIR so the daemon resolves the default JELLYBEAN_DB_PATH
+    # ("./jellybean.db") relative to the repo root, not whatever directory
+    # the caller happened to be in.
+    (
+        cd "$ROOT_DIR" || exit 1
+        nohup env -i \
+            HOME="$HOME" \
+            PATH="$PATH" \
+            TMPDIR="${TMPDIR:-/tmp}" \
+            "${env_args[@]}" \
+            "$BIN_PATH" \
+            >>"$LOG_FILE" 2>&1 &
+        echo $! > "$PID_FILE"
+    )
+    pid="$(cat "$PID_FILE")"
 
     if wait_for_health 15; then
         echo "started (pid $pid, port $(get_port)). logs: $LOG_FILE"

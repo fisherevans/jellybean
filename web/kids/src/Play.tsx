@@ -25,7 +25,7 @@ export default function Play() {
             .then(async (res) => {
                 if (res.status === 401) {
                     throw new Error(
-                        "Not authenticated. Sign in as admin (/) or set a kid key in /kids/setup.",
+                        "Not authenticated. Pick a kid profile (/kids) or sign in as admin (/).",
                     );
                 }
                 if (!res.ok) {

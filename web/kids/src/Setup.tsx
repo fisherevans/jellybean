@@ -1,24 +1,36 @@
 import { useEffect, useState } from "react";
-import { setKidKey, getKidKey, probeAdmin, type AdminUser } from "./auth";
+import { Link, useNavigate } from "react-router-dom";
+import {
+    addProfile,
+    listProfiles,
+    probeAdmin,
+    setActiveKey,
+    type AdminUser,
+    type KidProfile,
+} from "./auth";
 
-// Setup is the M1 helper page. Two flows live here:
+// Setup adds another kid profile to this device. Two flows:
 //
-// - Admin viewing the kids UI: detects an existing /api/auth/me session.
-//   No key is needed; we just show a "you're admin, here's an item ID box"
-//   shortcut so you can jump into /kids/play/:itemId.
+// - Manual entry: parent types a kid display name + API key from the parent
+//   web app, taps Add. New entry appended to localStorage.
 //
-// - Kid TV onboarding: paste an API key (one of the values from
-//   JELLYBEAN_KIDS_KEYS) and an item ID. Real key issuance / profile
-//   provisioning ships with M2.
+// - Query-param shortcut: opening
+//     /kids/setup?key=KIDKEY&name=KIDNAME[&item=ITEMID]
+//   adds the profile, makes it active, then either jumps to playback (when
+//   item is present) or returns to the picker. This is the M2 flow that the
+//   parent app shares with each TV.
 //
-// Supports a query-param shortcut so you can open
-//   /kids/setup?key=KIDKEY&item=ITEMID
-// and be redirected straight into playback.
+// Admin sessions also see a small "test playback by item id" helper so the
+// kids UI is testable from a logged-in browser without minting a kid key.
 
 export default function Setup() {
+    const nav = useNavigate();
     const [admin, setAdmin] = useState<AdminUser | null | undefined>(undefined);
-    const [key, setKey] = useState(getKidKey() ?? "");
+    const [name, setName] = useState("");
+    const [key, setKey] = useState("");
     const [itemId, setItemId] = useState("");
+    const [profiles, setProfiles] = useState<KidProfile[]>(() => listProfiles());
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         probeAdmin().then(setAdmin);
@@ -27,19 +39,35 @@ export default function Setup() {
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         const k = params.get("key");
+        const n = params.get("name");
         const item = params.get("item");
-        if (k) {
-            setKidKey(k);
-            if (item) {
-                window.location.replace(`/kids/play/${encodeURIComponent(item)}`);
-            } else {
-                setKey(k);
-            }
+        if (!k) return;
+        const profileName = (n ?? "").trim() || "Kid";
+        addProfile({ name: profileName, apiKey: k });
+        setActiveKey(k);
+        if (item) {
+            window.location.replace(`/kids/play/${encodeURIComponent(item)}`);
+        } else {
+            nav("/", { replace: true });
         }
-    }, []);
+    }, [nav]);
 
-    function saveKey() {
-        if (key.trim()) setKidKey(key.trim());
+    function add() {
+        const n = name.trim();
+        const k = key.trim();
+        if (!n) {
+            setError("Display name is required");
+            return;
+        }
+        if (!k) {
+            setError("API key is required");
+            return;
+        }
+        const updated = addProfile({ name: n, apiKey: k });
+        setProfiles(updated);
+        setName("");
+        setKey("");
+        setError(null);
     }
 
     function go() {
@@ -53,35 +81,48 @@ export default function Setup() {
 
     return (
         <div className="setup">
-            <h1>Jellybean Kids - setup</h1>
-
-            {admin ? (
-                <p>
-                    Signed in as <strong>{admin.name}</strong> (admin). No kid key
-                    needed - the cookie authenticates kids endpoints too. Paste an
-                    item ID below to jump into playback.
-                </p>
-            ) : (
-                <>
-                    <p>
-                        Paste a kid API key (one of the values configured via{" "}
-                        <code>JELLYBEAN_KIDS_KEYS</code>). Real per-profile key
-                        issuance lands with the curation app (M2).
-                    </p>
-                    <label>
-                        Kid API key
-                        <input value={key} onChange={(e) => setKey(e.target.value)} />
-                    </label>
-                    <button onClick={saveKey}>Save key</button>
-                    <hr />
-                </>
-            )}
+            <h1>Add kid profile</h1>
+            <p>
+                Each profile binds a kid name to an API key issued by the
+                parent web app. Keys are stored locally on this device only.
+            </p>
 
             <label>
-                Jellyfin item id
-                <input value={itemId} onChange={(e) => setItemId(e.target.value)} />
+                Display name
+                <input value={name} onChange={(e) => setName(e.target.value)} />
             </label>
-            <button onClick={go}>Play</button>
+            <label>
+                Kid API key
+                <input value={key} onChange={(e) => setKey(e.target.value)} />
+            </label>
+            {error && <p className="error">{error}</p>}
+            <button onClick={add}>Add profile</button>
+
+            {profiles.length > 0 && (
+                <p className="setup-meta">
+                    {profiles.length} profile{profiles.length === 1 ? "" : "s"}{" "}
+                    configured. <Link to="/">Back to picker</Link>
+                </p>
+            )}
+
+            {admin && (
+                <>
+                    <hr />
+                    <p>
+                        Signed in as <strong>{admin.name}</strong> (admin). The
+                        admin cookie also authenticates kids endpoints, so you
+                        can jump straight into playback by item id.
+                    </p>
+                    <label>
+                        Jellyfin item id
+                        <input
+                            value={itemId}
+                            onChange={(e) => setItemId(e.target.value)}
+                        />
+                    </label>
+                    <button onClick={go}>Play</button>
+                </>
+            )}
         </div>
     );
 }
