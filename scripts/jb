@@ -22,6 +22,16 @@
 #   jb auth-setup       store dev login credentials (username + password) in keychain
 #   jb auth             mint a session cookie from the stored credentials
 #   jb api METHOD PATH [body-json]  authenticated request via the cookie
+#   jb kid-set NAME KEY store a kid api key under that name in the keychain
+#                       (NAME is a label you choose, e.g. "dex"; the actual
+#                       key is read from stdin or arg-2 to avoid shell history)
+#   jb kid-list         list known kid labels (no key values)
+#   jb kid-rm NAME      delete a stored kid label
+#   jb kapi NAME METHOD PATH [body-json]
+#                       authenticated kids-API request as the named kid;
+#                       sends X-Jellybean-Key + X-Jellybean-DeviceId
+#                       (DeviceId persisted at .run/kid-device-NAME so calls
+#                       from the same label show up as one Jellyfin session)
 #   jb e2e [pw-args]    run the Playwright UI suite (uses keychain creds)
 #   jb help             this text
 #
@@ -548,6 +558,105 @@ cmd_api() {
     echo
 }
 
+# Per-kid keychain entries are namespaced under jellybean.KID_<NAME>. The
+# label NAME is whatever the user picks; we uppercase it for consistency.
+kid_kc_key() {
+    local name="$1"
+    # Allow letters/digits/underscore/dash; reject the rest so the key
+    # name can't smuggle in spaces or colons.
+    if [[ ! "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then
+        echo "kid label must match [A-Za-z0-9_-]+ (got: $name)" >&2
+        return 2
+    fi
+    local upper
+    upper="$(echo "$name" | tr '[:lower:]' '[:upper:]')"
+    echo "KID_${upper}"
+}
+
+cmd_kid_set() {
+    local name="${1:-}"; shift || true
+    local key="${1:-}"
+    if [[ -z "$name" ]]; then
+        echo "usage: jb kid-set NAME [KEY]" >&2
+        echo "  if KEY is omitted, reads from stdin (silenced)" >&2
+        exit 2
+    fi
+    local kc
+    kc="$(kid_kc_key "$name")" || exit $?
+    if [[ -z "$key" ]]; then
+        # Read silently so the key never echoes to the terminal.
+        printf 'paste kid api key (no echo): ' >&2
+        IFS= read -r -s key
+        echo >&2
+    fi
+    if [[ -z "$key" ]]; then
+        echo "no key provided" >&2
+        exit 2
+    fi
+    kc_set "$kc" "$key"
+    echo "stored kid '$name' (keychain $KC_PREFIX$kc)"
+}
+
+cmd_kid_list() {
+    # Just filter the existing keychain list to KID_* entries. Values are
+    # never printed.
+    cmd_keychain list | sed -n 's/^KID_/  /p' | tr '[:upper:]' '[:lower:]' | sort -u
+}
+
+cmd_kid_rm() {
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+        echo "usage: jb kid-rm NAME" >&2
+        exit 2
+    fi
+    local kc
+    kc="$(kid_kc_key "$name")" || exit $?
+    kc_rm "$kc"
+    rm -f "$RUN_DIR/kid-device-${name}.txt"
+    echo "removed kid '$name'"
+}
+
+cmd_kapi() {
+    local name="${1:-}"; shift || true
+    local method="${1:-GET}"; shift || true
+    local path="${1:-}"; shift || true
+    if [[ -z "$name" || -z "$path" ]]; then
+        echo "usage: jb kapi NAME METHOD PATH [body-json]" >&2
+        exit 2
+    fi
+    local kc
+    kc="$(kid_kc_key "$name")" || exit $?
+    local key
+    if ! key="$(kc_get "$kc")" || [[ -z "$key" ]]; then
+        echo "no kid key stored under '$name'; run 'jb kid-set $name' first" >&2
+        exit 1
+    fi
+
+    # Persist a per-label DeviceId so repeated calls show up as one session
+    # in Jellyfin's activity view (matches how a real TV would behave).
+    local dev_file="$RUN_DIR/kid-device-${name}.txt"
+    local device_id
+    if [[ -f "$dev_file" ]]; then
+        device_id="$(cat "$dev_file")"
+    else
+        device_id="$(uuidgen)"
+        echo "$device_id" > "$dev_file"
+        chmod 600 "$dev_file"
+    fi
+
+    local port; port="$(get_port)"
+    local body="${1:-}"
+    local args=(-sS -X "$method"
+        -H "X-Jellybean-Key: $key"
+        -H "X-Jellybean-DeviceId: $device_id")
+    if [[ -n "$body" ]]; then
+        args+=(-H 'Content-Type: application/json' -d "$body")
+    fi
+    args+=("http://127.0.0.1:${port}${path}")
+    curl "${args[@]}"
+    echo
+}
+
 cmd_e2e() {
     if ! pid_is_running "$(read_pid)"; then
         echo "daemon not running; start it first with 'jb start'" >&2
@@ -602,6 +711,10 @@ case "${1:-help}" in
     auth-setup)  shift; cmd_auth_setup "$@" ;;
     auth)        shift; cmd_auth "$@" ;;
     api)         shift; cmd_api "$@" ;;
+    kid-set)     shift; cmd_kid_set "$@" ;;
+    kid-list)    shift; cmd_kid_list "$@" ;;
+    kid-rm)      shift; cmd_kid_rm "$@" ;;
+    kapi)        shift; cmd_kapi "$@" ;;
     e2e)         shift; cmd_e2e "$@" ;;
     help|-h|--help) cmd_help ;;
     *) echo "unknown command: $1" >&2; cmd_help; exit 2 ;;
