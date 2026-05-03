@@ -224,6 +224,7 @@ export default function Library() {
 
     return (
         <div className="library" onKeyDown={onKey}>
+            {adminProfileId && !profile && <AdminPreviewBanner />}
             <header className="library-header">
                 <div>
                     <h1>{profile ? profile.name : "Library"}</h1>
@@ -325,6 +326,21 @@ export default function Library() {
                     </section>
                 </>
             )}
+        </div>
+    );
+}
+
+// AdminPreviewBanner is rendered when the kids client is being previewed
+// from the admin app (i.e. ?profileId=N is in the URL). The kids SPA's
+// basename is /kids, so the link uses a real <a href> to escape back to
+// the admin shell rather than the React Router Link.
+function AdminPreviewBanner() {
+    return (
+        <div className="admin-preview-banner" role="status">
+            <span>Previewing as admin. Resume / continue-watching are disabled in preview.</span>
+            <a href="/manage-kids" className="admin-preview-back">
+                Back to admin
+            </a>
         </div>
     );
 }

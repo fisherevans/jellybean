@@ -612,6 +612,10 @@ button:disabled {
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 0.5rem;
+    /* Grid items default to min-width: auto, which lets card contents
+       push the column wider than the 1fr track. Force tracks to honor
+       the 3-equal layout and let card text clip via ellipsis instead. */
+    min-width: 0;
 }
 
 .sweep-column-header {

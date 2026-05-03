@@ -183,6 +183,29 @@ a,
     margin: 0 auto;
 }
 
+/* Banner shown only when previewing the kids client from the admin app
+   (?profileId=N in URL). Gives the parent a one-click escape back to the
+   admin shell, since the kids client itself has no admin nav. */
+.admin-preview-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.5rem 1rem;
+    margin-bottom: 1rem;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.admin-preview-back {
+    color: var(--accent-fg);
+    text-decoration: underline;
+    font-weight: 600;
+}
+
 .library-header {
     display: flex;
     justify-content: space-between;

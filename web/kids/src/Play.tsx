@@ -172,8 +172,18 @@ export default function Play() {
         return <div className="screen play-loading">Loading...</div>;
     }
 
+    const isAdminPreview = new URLSearchParams(location.search).has("profileId");
+
     return (
         <div className="play-screen">
+            {isAdminPreview && (
+                <div className="admin-preview-banner" role="status">
+                    <span>Previewing as admin.</span>
+                    <a href="/manage-kids" className="admin-preview-back">
+                        Back to admin
+                    </a>
+                </div>
+            )}
             <header className="play-header">
                 <Link to={libraryHref} className="play-back" aria-label="Back to library">
                     <span aria-hidden>{"←"}</span>
