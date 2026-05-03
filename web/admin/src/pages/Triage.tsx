@@ -137,6 +137,15 @@ export default function Triage() {
     if (current.ProductionYear) meta.push(String(current.ProductionYear));
     if (current.OfficialRating) meta.push(current.OfficialRating);
 
+    const posterURL = current.ImageTags?.Primary
+        ? `/api/admin/items/${current.Id}/image?type=Primary&width=400`
+        : null;
+    const backdropURL = (() => {
+        // Item type doesn't carry Backdrop tag info today; the proxy 404s
+        // when there isn't one, and <img onerror> hides it gracefully.
+        return `/api/admin/items/${current.Id}/image?type=Backdrop&width=1280`;
+    })();
+
     return (
         <div className="page triage">
             <div className="triage-counter muted">
@@ -144,22 +153,37 @@ export default function Triage() {
             </div>
 
             <div className="triage-card">
-                <h1>{current.Name}</h1>
-                {meta.length > 0 && <div className="muted">{meta.join(" · ")}</div>}
-                {current.Studios && current.Studios.length > 0 && (
-                    <div className="muted">
-                        {current.Studios.map((s) => s.Name).join(", ")}
+                <img
+                    className="triage-backdrop"
+                    src={backdropURL}
+                    alt=""
+                    onError={(e) => (e.currentTarget.style.display = "none")}
+                />
+                <div className="triage-content">
+                    {posterURL ? (
+                        <img className="triage-poster" src={posterURL} alt="" />
+                    ) : (
+                        <div className="triage-poster placeholder">no poster</div>
+                    )}
+                    <div className="triage-info">
+                        <h1>{current.Name}</h1>
+                        {meta.length > 0 && <div className="muted">{meta.join(" · ")}</div>}
+                        {current.Studios && current.Studios.length > 0 && (
+                            <div className="muted">
+                                {current.Studios.map((s) => s.Name).join(", ")}
+                            </div>
+                        )}
+                        {current.Suggestion && (
+                            <div className={`triage-suggestion sugg-${current.Suggestion.category}`}>
+                                guess: <strong>{current.Suggestion.category}</strong> (
+                                {Math.round(current.Suggestion.confidence * 100)}%)
+                                {current.Suggestion.reasoning?.length ? (
+                                    <span> — {current.Suggestion.reasoning.join("; ")}</span>
+                                ) : null}
+                            </div>
+                        )}
                     </div>
-                )}
-                {current.Suggestion && (
-                    <div className={`triage-suggestion sugg-${current.Suggestion.category}`}>
-                        guess: <strong>{current.Suggestion.category}</strong> (
-                        {Math.round(current.Suggestion.confidence * 100)}%)
-                        {current.Suggestion.reasoning?.length ? (
-                            <span> — {current.Suggestion.reasoning.join("; ")}</span>
-                        ) : null}
-                    </div>
-                )}
+                </div>
             </div>
 
             <div className="triage-actions">

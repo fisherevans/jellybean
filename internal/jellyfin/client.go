@@ -117,6 +117,13 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body io.Re
 	return req, nil
 }
 
+// AuthHeaderForServiceAccount is the exported form of authHeader for callers
+// outside this package (e.g. the image proxy in internal/server). Always
+// includes the service-account token.
+func AuthHeaderForServiceAccount(token string) string {
+	return authHeader(token)
+}
+
 // authHeader returns the Jellyfin "MediaBrowser" auth header. Token may be the
 // service-account API key or a per-user access token. Empty token is allowed
 // for endpoints that do not require auth (e.g. AuthenticateByName).

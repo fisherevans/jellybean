@@ -88,6 +88,7 @@ func (s *Server) routes() {
 	admin := api.PathPrefix("/admin").Subrouter()
 	admin.Use(s.auth.Middleware)
 	admin.HandleFunc("/items", s.handleAdminItems).Methods(http.MethodGet)
+	admin.HandleFunc("/items/{id}/image", s.handleAdminImage).Methods(http.MethodGet)
 	admin.HandleFunc("/items/{id}/stream", s.handleAdminStream).Methods(http.MethodGet)
 	admin.HandleFunc("/items/{id}/category", s.handleAdminSetCategory).Methods(http.MethodPost)
 	admin.HandleFunc("/items/category/bulk", s.handleAdminBulkCategory).Methods(http.MethodPost)

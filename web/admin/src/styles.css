@@ -315,7 +315,7 @@ button:disabled {
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 0.5rem 0.75rem;
+    padding: 0.5rem;
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
@@ -335,10 +335,36 @@ button:disabled {
     cursor: pointer;
     width: 100%;
     font-weight: 400;
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-start;
+}
+
+.item-card-poster {
+    flex: 0 0 auto;
+    border-radius: 4px;
+    object-fit: cover;
+    background: #1a1c20;
+    aspect-ratio: 2 / 3;
+}
+
+.item-card-poster.placeholder {
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    font-size: 1.5rem;
+    border: 1px dashed var(--border);
+}
+
+.item-card-text {
+    flex: 1;
+    min-width: 0;
 }
 
 .item-card-name {
     font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .item-card-meta,
@@ -440,11 +466,60 @@ button:disabled {
 
 /* triage */
 .triage-card {
+    position: relative;
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 1.5rem 1.25rem;
+    overflow: hidden;
     margin: 1rem 0;
+    min-height: 360px;
+}
+
+.triage-backdrop {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.18;
+    filter: blur(2px);
+    z-index: 0;
+}
+
+.triage-content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    gap: 1.5rem;
+    padding: 1.5rem;
+    align-items: flex-start;
+}
+
+.triage-poster {
+    flex: 0 0 200px;
+    width: 200px;
+    aspect-ratio: 2 / 3;
+    border-radius: 6px;
+    object-fit: cover;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    background: #1a1c20;
+}
+
+.triage-poster.placeholder {
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    border: 1px dashed var(--border);
+    font-size: 0.85rem;
+}
+
+.triage-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.triage-info h1 {
+    margin: 0 0 0.5rem;
 }
 
 .triage-counter {
