@@ -82,11 +82,14 @@ test.describe("profiles", () => {
     test("create + delete a temporary profile", async ({ page }) => {
         await gotoAndWaitReady(page, "/profiles");
         const tempName = `e2e-temp-${Date.now()}`;
-        await page.getByPlaceholder(/^Name/).fill(tempName);
-        await page.getByRole("button", { name: "Create" }).click();
+        // Profile create now happens through a modal opened by "+ Add profile".
+        await page.getByRole("button", { name: /\+ Add profile/ }).click();
+        const modal = page.locator(".modal");
+        await expect(modal).toBeVisible();
+        await modal.locator("input").first().fill(tempName);
+        await modal.getByRole("button", { name: "Create" }).click();
         const row = page.locator("li").filter({ hasText: tempName });
         await expect(row).toBeVisible();
-        // Skip the confirm() dialog automatically.
         page.once("dialog", (d) => d.accept());
         await row.getByRole("button", { name: "Delete" }).click();
         await expect(row).toHaveCount(0);

@@ -49,6 +49,7 @@ type profileMutation struct {
 	Name            string `json:"name"`
 	Description     string `json:"description"`
 	DefaultLanguage string `json:"defaultLanguage"`
+	BaseProfileID   int64  `json:"baseProfileId,omitempty"` // create-only
 }
 
 func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
@@ -61,6 +62,7 @@ func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
 		Name:            req.Name,
 		Description:     req.Description,
 		DefaultLanguage: req.DefaultLanguage,
+		BaseProfileID:   req.BaseProfileID,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

@@ -60,6 +60,7 @@ export type ProfileInput = {
     name: string;
     description: string;
     defaultLanguage?: string;
+    baseProfileId?: number; // create-only: copy categorizations from this profile
 };
 
 export type Kid = {
@@ -187,6 +188,8 @@ export const api = {
         request<{ apiKey: string }>("POST", `/api/admin/kids/${id}/regenerate`),
     updateKidProfile: (id: number, profileId: number) =>
         request<void>("PATCH", `/api/admin/kids/${id}`, { profileId }),
+    updateKid: (id: number, body: { name?: string; profileId?: number }) =>
+        request<void>("PATCH", `/api/admin/kids/${id}`, body),
     deleteKid: (id: number) => request<void>("DELETE", `/api/admin/kids/${id}`),
 };
 

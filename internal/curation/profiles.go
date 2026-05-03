@@ -90,10 +90,17 @@ type ProfileInput struct {
 	Name            string
 	Description     string
 	DefaultLanguage string // ISO 639-3; empty means "leave existing value" on update or default to "eng" on create
+	// BaseProfileID is honored by CreateProfile only. When > 0, the new
+	// profile copies every categorization row from the named source so
+	// the user can start from "what we already decided for sibling X"
+	// instead of an empty slate.
+	BaseProfileID int64
 }
 
 // CreateProfile inserts a profile. Name is trimmed and required; uniqueness
-// is enforced by the schema's UNIQUE constraint.
+// is enforced by the schema's UNIQUE constraint. When BaseProfileID is
+// set, every categorization row from the source profile is duplicated
+// into the new profile so the user starts from a meaningful baseline.
 func (s *Store) CreateProfile(ctx context.Context, in ProfileInput) (*Profile, error) {
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
@@ -103,6 +110,13 @@ func (s *Store) CreateProfile(ctx context.Context, in ProfileInput) (*Profile, e
 	if lang == "" {
 		lang = "eng"
 	}
+	// Confirm base exists (when supplied) before we create the new row;
+	// keeps the error path clean.
+	if in.BaseProfileID > 0 {
+		if _, err := s.GetProfile(ctx, in.BaseProfileID); err != nil {
+			return nil, err
+		}
+	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO profiles (name, description, default_language, created_at)
 		VALUES (?, ?, ?, unixepoch())`,
@@ -111,6 +125,11 @@ func (s *Store) CreateProfile(ctx context.Context, in ProfileInput) (*Profile, e
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
+	if in.BaseProfileID > 0 {
+		if _, err := s.CopyCategorizations(ctx, in.BaseProfileID, id); err != nil {
+			return nil, fmt.Errorf("copy from base profile: %w", err)
+		}
+	}
 	return s.GetProfile(ctx, id)
 }
 

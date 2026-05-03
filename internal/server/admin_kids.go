@@ -122,9 +122,9 @@ func (s *Server) handleRegenerateKidKey(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]string{"apiKey": rawKey})
 }
 
-// handleUpdateKid lets the admin reassign a kid to a different profile.
-// API key + Jellyfin token are preserved; only profile_id changes. Body:
-// {"profileId": <int>}.
+// handleUpdateKid renames a kid and/or reassigns it to a different
+// profile. API key + Jellyfin token are preserved across the update.
+// Body: {"name"?, "profileId"?}; at least one must be present.
 func (s *Server) handleUpdateKid(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
 	if err != nil {
@@ -132,13 +132,14 @@ func (s *Server) handleUpdateKid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ProfileID int64 `json:"profileId"`
+		Name      string `json:"name"`
+		ProfileID int64  `json:"profileId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if err := s.curation.UpdateKidProfile(r.Context(), id, req.ProfileID); err != nil {
+	if err := s.curation.UpdateKid(r.Context(), id, req.Name, req.ProfileID); err != nil {
 		switch {
 		case errors.Is(err, curation.ErrKidNotFound):
 			http.Error(w, "kid not found", http.StatusNotFound)

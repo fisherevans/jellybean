@@ -1,20 +1,19 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type Kid, type Profile } from "../api";
-// useState is also used inside RevealKey below.
+import KidModal from "../KidModal";
+
+type Modal =
+    | { kind: "closed" }
+    | { kind: "create" }
+    | { kind: "edit"; kid: Kid };
 
 export default function Kids() {
     const [kids, setKids] = useState<Kid[] | null>(null);
     const [profiles, setProfiles] = useState<Profile[]>([]);
     const [error, setError] = useState<string | null>(null);
+    const [modal, setModal] = useState<Modal>({ kind: "closed" });
 
-    // Add-kid form
-    const [name, setName] = useState("");
-    const [profileId, setProfileId] = useState<number>(0);
-    const [jellyfinUsername, setJellyfinUsername] = useState("");
-    const [jellyfinPassword, setJellyfinPassword] = useState("");
-    const [submitting, setSubmitting] = useState(false);
-
-    // Show-once API key dialog
+    // Show-once API key dialog (after creating or regenerating).
     const [revealKey, setRevealKey] = useState<{ name: string; apiKey: string } | null>(null);
 
     async function refresh() {
@@ -25,9 +24,6 @@ export default function Kids() {
             ]);
             setKids(kidsRes.kids);
             setProfiles(profilesRes.profiles);
-            if (!profileId && profilesRes.profiles.length > 0) {
-                setProfileId(profilesRes.profiles[0].id);
-            }
         } catch (err) {
             setError(err instanceof Error ? err.message : "load failed");
         }
@@ -37,29 +33,6 @@ export default function Kids() {
         refresh();
     }, []);
 
-    async function submit(e: React.FormEvent) {
-        e.preventDefault();
-        setError(null);
-        setSubmitting(true);
-        try {
-            const res = await api.createKid(
-                name.trim(),
-                profileId,
-                jellyfinUsername.trim(),
-                jellyfinPassword,
-            );
-            setName("");
-            setJellyfinUsername("");
-            setJellyfinPassword("");
-            setRevealKey({ name: res.kid.name, apiKey: res.apiKey });
-            await refresh();
-        } catch (err) {
-            setError(err instanceof HttpError ? err.message : String(err));
-        } finally {
-            setSubmitting(false);
-        }
-    }
-
     async function regenerate(k: Kid) {
         if (!confirm(`Regenerate API key for "${k.name}"? The old key will stop working immediately.`)) {
             return;
@@ -67,17 +40,6 @@ export default function Kids() {
         try {
             const res = await api.regenerateKidKey(k.id);
             setRevealKey({ name: k.name, apiKey: res.apiKey });
-            await refresh();
-        } catch (err) {
-            setError(err instanceof HttpError ? err.message : String(err));
-        }
-    }
-
-    async function changeProfile(k: Kid, nextProfileId: number) {
-        if (nextProfileId === k.profileId) return;
-        setError(null);
-        try {
-            await api.updateKidProfile(k.id, nextProfileId);
             await refresh();
         } catch (err) {
             setError(err instanceof HttpError ? err.message : String(err));
@@ -98,65 +60,24 @@ export default function Kids() {
 
     return (
         <div className="page">
-            <h1>Kids</h1>
-            <p className="muted">
-                Each kid maps to a Jellyfin user. We mint a per-kid Jellyfin token so
-                playback attributes correctly, and issue an API key the kid's TV
-                presents in the X-Jellybean-Key header. Passwords are never stored.
-            </p>
+            <div className="page-head">
+                <div>
+                    <h1>Kids</h1>
+                    <p className="muted">
+                        Each kid maps to a Jellyfin user. We mint a per-kid Jellyfin token so
+                        playback attributes correctly, and issue an API key the kid's TV
+                        presents in the X-Jellybean-Key header. Passwords are never stored.
+                    </p>
+                </div>
+                <button onClick={() => setModal({ kind: "create" })}>+ Add kid</button>
+            </div>
 
             {error && <div className="error">{error}</div>}
-
-            <form className="kid-form kid-form-grid" onSubmit={submit}>
-                <h3 className="kid-form-title">Add a kid</h3>
-                <label>
-                    Display name
-                    <input value={name} onChange={(e) => setName(e.target.value)} required />
-                </label>
-                <label>
-                    Profile
-                    <select
-                        value={profileId}
-                        onChange={(e) => setProfileId(Number(e.target.value))}
-                        required
-                    >
-                        {profiles.map((p) => (
-                            <option key={p.id} value={p.id}>
-                                {p.name}
-                            </option>
-                        ))}
-                    </select>
-                </label>
-                <label>
-                    Jellyfin username
-                    <input
-                        value={jellyfinUsername}
-                        onChange={(e) => setJellyfinUsername(e.target.value)}
-                        required
-                        autoComplete="username"
-                    />
-                </label>
-                <label>
-                    Jellyfin password
-                    <input
-                        type="password"
-                        value={jellyfinPassword}
-                        onChange={(e) => setJellyfinPassword(e.target.value)}
-                        required
-                        autoComplete="new-password"
-                    />
-                </label>
-                <div className="kid-form-actions">
-                    <button type="submit" disabled={submitting}>
-                        {submitting ? "Adding..." : "Add kid"}
-                    </button>
-                </div>
-            </form>
 
             {kids === null ? (
                 <p className="muted">Loading...</p>
             ) : kids.length === 0 ? (
-                <p className="muted">No kids yet. Add one above.</p>
+                <p className="muted">No kids yet. Tap "+ Add kid" above.</p>
             ) : (
                 <ul className="kid-list">
                     {kids.map((k) => (
@@ -165,25 +86,10 @@ export default function Kids() {
                                 <div className="kid-info">
                                     <div className="kid-name">{k.name}</div>
                                     <div className="muted">
-                                        Jellyfin user: {k.jellyfinUserId} ·{" "}
+                                        Profile: {k.profileName} · Jellyfin user: {k.jellyfinUserId} ·{" "}
                                         {k.hasToken ? "token issued" : "no token"}
                                     </div>
                                 </div>
-                                <label className="kid-profile-pick">
-                                    <span className="muted">Profile</span>
-                                    <select
-                                        value={k.profileId}
-                                        onChange={(e) =>
-                                            changeProfile(k, Number(e.target.value))
-                                        }
-                                    >
-                                        {profiles.map((p) => (
-                                            <option key={p.id} value={p.id}>
-                                                {p.name}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </label>
                                 <div className="kid-actions">
                                     <a
                                         className="kid-preview"
@@ -192,8 +98,11 @@ export default function Kids() {
                                         rel="noopener noreferrer"
                                         title="Open the kids client scoped to this kid's profile (admin cookie auth; library + filters work, but no resume / continue-watching since it's not the kid's Jellyfin token)"
                                     >
-                                        View app as {k.name}
+                                        View as {k.name}
                                     </a>
+                                    <button onClick={() => setModal({ kind: "edit", kid: k })}>
+                                        Edit
+                                    </button>
                                     <button onClick={() => regenerate(k)}>Regenerate key</button>
                                     <button onClick={() => remove(k)}>Remove</button>
                                 </div>
@@ -201,6 +110,32 @@ export default function Kids() {
                         </li>
                     ))}
                 </ul>
+            )}
+
+            {modal.kind !== "closed" && (
+                <KidModal
+                    mode={modal.kind}
+                    kid={modal.kind === "edit" ? modal.kid : undefined}
+                    profiles={profiles}
+                    onClose={() => setModal({ kind: "closed" })}
+                    onSaved={async (apiKey) => {
+                        setModal({ kind: "closed" });
+                        if (apiKey && modal.kind === "create") {
+                            // Capture the newly created kid's name from the form.
+                            // refresh() will give us the latest list to find it.
+                            await refresh();
+                            // Find the most recently created kid by ID and surface
+                            // the show-once API key.
+                            const latest = await api.listKids();
+                            const newest = latest.kids[latest.kids.length - 1];
+                            if (newest) {
+                                setRevealKey({ name: newest.name, apiKey });
+                            }
+                        } else {
+                            await refresh();
+                        }
+                    }}
+                />
             )}
 
             {revealKey && (

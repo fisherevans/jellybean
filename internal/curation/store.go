@@ -325,6 +325,28 @@ func getStateTx(ctx context.Context, tx *sql.Tx, itemID string, profileID int64)
 	return &st, nil
 }
 
+// CopyCategorizations bulk-copies every categorization row from src to
+// dst. Existing rows in dst with the same item id are left alone (no-op
+// on conflict). Returns the number of rows inserted. Used when creating
+// a new profile that should start from another profile's decisions.
+func (s *Store) CopyCategorizations(ctx context.Context, src, dst int64) (int, error) {
+	if src <= 0 || dst <= 0 || src == dst {
+		return 0, fmt.Errorf("invalid src/dst profile ids")
+	}
+	res, err := s.db.ExecContext(ctx, `
+		INSERT OR IGNORE INTO categorizations (
+			jellyfin_item_id, profile_id, state, source, set_at, set_by
+		)
+		SELECT jellyfin_item_id, ?, state, source, unixepoch(), 'profile-copy'
+		FROM categorizations
+		WHERE profile_id = ?`, dst, src)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 func upsertStateTx(ctx context.Context, tx *sql.Tx, itemID string, profileID int64, state State, src Source, setBy string) error {
 	var setByVal any
 	if setBy != "" {

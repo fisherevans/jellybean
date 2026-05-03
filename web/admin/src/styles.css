@@ -1237,6 +1237,25 @@ button:disabled {
     filter: brightness(1.08);
 }
 
+/* page heading row with a primary action button on the right
+   (used on Profiles + Kids where "+ Add" lives next to the title). */
+.page-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.page-head h1 {
+    margin: 0 0 0.25rem;
+}
+
+.page-head > button {
+    white-space: nowrap;
+    align-self: flex-start;
+}
+
 /* modal */
 .modal-backdrop {
     position: fixed;
@@ -1254,6 +1273,49 @@ button:disabled {
     padding: 1.25rem;
     max-width: 560px;
     width: 92%;
+}
+
+/* form layout used inside ProfileModal / KidModal */
+.modal-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.modal-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+.modal-form input,
+.modal-form select {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    padding: 0.45rem 0.6rem;
+    font-size: 0.95rem;
+    border-radius: 4px;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+}
+
+.modal-form select {
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+                      linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+    padding-right: 1.5rem;
+}
+
+.modal-hint {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-style: italic;
 }
 
 .modal h2 {
