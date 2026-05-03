@@ -15,6 +15,8 @@ type profileResponse struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	MinAge      int    `json:"minAge"`
+	MaxAge      int    `json:"maxAge"`
 	CreatedAt   int64  `json:"createdAt"`
 	KidCount    int    `json:"kidCount"`
 }
@@ -24,6 +26,8 @@ func toProfileResponse(p curation.ProfileWithKidCount) profileResponse {
 		ID:          p.ID,
 		Name:        p.Name,
 		Description: p.Description,
+		MinAge:      p.MinAge,
+		MaxAge:      p.MaxAge,
 		CreatedAt:   p.CreatedAt.Unix(),
 		KidCount:    p.KidCount,
 	}
@@ -46,6 +50,8 @@ func (s *Server) handleListProfiles(w http.ResponseWriter, r *http.Request) {
 type profileMutation struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	MinAge      int    `json:"minAge"`
+	MaxAge      int    `json:"maxAge"`
 }
 
 func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +60,12 @@ func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	p, err := s.curation.CreateProfile(r.Context(), req.Name, req.Description)
+	p, err := s.curation.CreateProfile(r.Context(), curation.ProfileInput{
+		Name:        req.Name,
+		Description: req.Description,
+		MinAge:      req.MinAge,
+		MaxAge:      req.MaxAge,
+	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -73,7 +84,12 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	p, err := s.curation.UpdateProfile(r.Context(), id, req.Name, req.Description)
+	p, err := s.curation.UpdateProfile(r.Context(), id, curation.ProfileInput{
+		Name:        req.Name,
+		Description: req.Description,
+		MinAge:      req.MinAge,
+		MaxAge:      req.MaxAge,
+	})
 	if err != nil {
 		if errors.Is(err, curation.ErrProfileNotFound) {
 			http.Error(w, "profile not found", http.StatusNotFound)

@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type Profile } from "../api";
 
+type FormState = {
+    name: string;
+    description: string;
+    minAge: number;
+    maxAge: number;
+};
+
+const blankForm: FormState = { name: "", description: "", minAge: 0, maxAge: 18 };
+
 export default function Profiles() {
     const [profiles, setProfiles] = useState<Profile[] | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [name, setName] = useState("");
-    const [description, setDescription] = useState("");
+    const [form, setForm] = useState<FormState>(blankForm);
     const [editing, setEditing] = useState<Profile | null>(null);
     const [busy, setBusy] = useState(false);
 
@@ -28,12 +36,11 @@ export default function Profiles() {
         setBusy(true);
         try {
             if (editing) {
-                await api.updateProfile(editing.id, name, description);
+                await api.updateProfile(editing.id, form);
             } else {
-                await api.createProfile(name, description);
+                await api.createProfile(form);
             }
-            setName("");
-            setDescription("");
+            setForm(blankForm);
             setEditing(null);
             await refresh();
         } catch (err) {
@@ -45,14 +52,17 @@ export default function Profiles() {
 
     function startEdit(p: Profile) {
         setEditing(p);
-        setName(p.name);
-        setDescription(p.description ?? "");
+        setForm({
+            name: p.name,
+            description: p.description ?? "",
+            minAge: p.minAge,
+            maxAge: p.maxAge,
+        });
     }
 
     function cancelEdit() {
         setEditing(null);
-        setName("");
-        setDescription("");
+        setForm(blankForm);
     }
 
     async function remove(p: Profile) {
@@ -70,33 +80,64 @@ export default function Profiles() {
         <div className="page">
             <h1>Profiles</h1>
             <p className="muted">
-                Profiles define what content a kid can see. v1 has no rules yet -
-                profiles are name + description only. Each kid is assigned to one
-                profile; multiple kids can share. Default exists from setup.
+                A profile is the age range a kid sees. Set a min and max age; the
+                kid view (and curation suggestions for this profile) filter content
+                whose target age falls within the range. The Default profile starts
+                wide (0..18) and can be narrowed later.
             </p>
 
             {error && <div className="error">{error}</div>}
 
-            <form className="profile-form" onSubmit={submit}>
-                <input
-                    placeholder="Name (e.g. Young kids)"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    required
-                />
-                <input
-                    placeholder="Description (optional)"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                />
-                <button type="submit" disabled={busy}>
-                    {editing ? "Save" : "Create"}
-                </button>
-                {editing && (
-                    <button type="button" onClick={cancelEdit}>
-                        Cancel
+            <form className="profile-form profile-form-grid" onSubmit={submit}>
+                <label>
+                    Name
+                    <input
+                        value={form.name}
+                        onChange={(e) => setForm({ ...form, name: e.target.value })}
+                        placeholder="e.g. Young kids"
+                        required
+                    />
+                </label>
+                <label>
+                    Description
+                    <input
+                        value={form.description}
+                        onChange={(e) => setForm({ ...form, description: e.target.value })}
+                        placeholder="optional"
+                    />
+                </label>
+                <label>
+                    Min age
+                    <input
+                        type="number"
+                        min={0}
+                        max={99}
+                        value={form.minAge}
+                        onChange={(e) => setForm({ ...form, minAge: Number(e.target.value) })}
+                        required
+                    />
+                </label>
+                <label>
+                    Max age
+                    <input
+                        type="number"
+                        min={0}
+                        max={99}
+                        value={form.maxAge}
+                        onChange={(e) => setForm({ ...form, maxAge: Number(e.target.value) })}
+                        required
+                    />
+                </label>
+                <div className="profile-form-actions">
+                    <button type="submit" disabled={busy}>
+                        {editing ? "Save" : "Create"}
                     </button>
-                )}
+                    {editing && (
+                        <button type="button" onClick={cancelEdit}>
+                            Cancel
+                        </button>
+                    )}
+                </div>
             </form>
 
             {profiles === null ? (
@@ -109,8 +150,10 @@ export default function Profiles() {
                                 <div className="profile-info">
                                     <div className="profile-name">{p.name}</div>
                                     <div className="muted">
-                                        {p.description ?? ""} · {p.kidCount} kid
-                                        {p.kidCount === 1 ? "" : "s"}
+                                        Ages {p.minAge}..{p.maxAge} ·{" "}
+                                        {p.description ?? ""}
+                                        {p.description ? " · " : ""}
+                                        {p.kidCount} kid{p.kidCount === 1 ? "" : "s"}
                                     </div>
                                 </div>
                                 <div className="profile-actions">

@@ -1,19 +1,33 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { AGE_TIERS, AGE_LABELS, type AgeTier, api, HttpError, formatMinAge, type Item } from "../api";
+import {
+    AGE_TIERS,
+    AGE_LABELS,
+    type AgeTier,
+    api,
+    HttpError,
+    formatMinAge,
+    type Item,
+} from "../api";
 
-// Tinder-style triage. One uncategorized item at a time, keyboard nav for
-// fast burndown. Number keys map to age tiers; ↓ skips; Z undoes.
+// Triage primary actions are kid-safe / adult / skip - same shape as M2.
+// The granular age tier ("baby content", "preschool", etc.) is a secondary
+// row for when the parent wants to be specific. Default kid-safe action
+// stamps a generic "kid" age (7) so profile filtering can still operate;
+// the user can pick a tier first to override that default.
 
 type UndoEntry = {
     item: Item;
     appliedAge: number | null;
 };
 
-// Number-key shortcuts: 1=2, 2=5, 3=7, 4=13, 5=18 (in tier order).
+// Mapping for shortcut keys: arrows are the primary "kid-safe / adult /
+// skip" actions; number keys 1-5 set a specific age tier directly.
 const KEY_TO_AGE: Record<string, AgeTier> = {
     "1": 2, "2": 5, "3": 7, "4": 13, "5": 18,
 };
+
+const DEFAULT_KID_AGE = 7;
 
 export default function Triage() {
     const [queue, setQueue] = useState<Item[]>([]);
@@ -73,10 +87,7 @@ export default function Triage() {
             setError(null);
             try {
                 await api.setAge(current.Id, age);
-                setUndoStack((u) => [
-                    ...u.slice(-9),
-                    { item: current, appliedAge: age },
-                ]);
+                setUndoStack((u) => [...u.slice(-9), { item: current, appliedAge: age }]);
                 setDoneCount((n) => n + 1);
                 await advance();
             } catch (err) {
@@ -112,13 +123,18 @@ export default function Triage() {
     useEffect(() => {
         function onKey(e: KeyboardEvent) {
             if (e.target instanceof HTMLInputElement) return;
-            const age = KEY_TO_AGE[e.key];
-            if (age !== undefined) {
-                apply(age);
+            // Primary actions on arrow keys.
+            if (e.key === "ArrowLeft") {
+                apply(18); // adult
+            } else if (e.key === "ArrowRight") {
+                apply(DEFAULT_KID_AGE);
             } else if (e.key === "ArrowDown" || e.key === " ") {
                 apply(null);
             } else if (e.key === "z" || e.key === "Z" || e.key === "u" || e.key === "U") {
                 undo();
+            } else if (KEY_TO_AGE[e.key] !== undefined) {
+                // Secondary: number keys jump straight to a specific age tier.
+                apply(KEY_TO_AGE[e.key]);
             }
         }
         window.addEventListener("keydown", onKey);
@@ -175,8 +191,8 @@ export default function Triage() {
                         )}
                         {current.Suggestion && (
                             <div className={`triage-suggestion sugg-${current.Suggestion.bucket}`}>
-                                guess: <strong>{formatMinAge(current.Suggestion.minAge)}</strong> (
-                                {Math.round(current.Suggestion.confidence * 100)}%)
+                                guess: <strong>{formatMinAge(current.Suggestion.minAge)}</strong>{" "}
+                                ({Math.round(current.Suggestion.confidence * 100)}%)
                                 {current.Suggestion.reasoning?.length ? (
                                     <span> — {current.Suggestion.reasoning.join("; ")}</span>
                                 ) : null}
@@ -187,31 +203,52 @@ export default function Triage() {
             </div>
 
             <div className="triage-actions">
-                {AGE_TIERS.map((age, i) => (
-                    <button
-                        key={age}
-                        onClick={() => apply(age)}
-                        disabled={busy}
-                        className={`cat-button cat-${age < 13 ? "kid" : "adult"}`}
-                        title={`${i + 1} key`}
-                    >
-                        {i + 1}: {AGE_LABELS[age as AgeTier]}
-                    </button>
-                ))}
+                <button
+                    onClick={() => apply(18)}
+                    disabled={busy}
+                    className="cat-button cat-adult primary-action"
+                    title="Left arrow"
+                >
+                    ← Adult / not for kids
+                </button>
                 <button
                     onClick={() => apply(null)}
                     disabled={busy}
-                    className="cat-button cat-uncategorized"
+                    className="cat-button cat-uncategorized primary-action"
+                    title="Down arrow"
                 >
                     ↓ Skip
+                </button>
+                <button
+                    onClick={() => apply(DEFAULT_KID_AGE)}
+                    disabled={busy}
+                    className="cat-button cat-kid primary-action"
+                    title="Right arrow"
+                >
+                    Kid-safe →
                 </button>
                 <button onClick={undo} disabled={undoStack.length === 0 || busy}>
                     Z Undo ({undoStack.length})
                 </button>
             </div>
 
+            <div className="triage-tier-row">
+                <span className="muted">Be specific (overrides Kid-safe default of {DEFAULT_KID_AGE}+):</span>
+                {AGE_TIERS.map((age, i) => (
+                    <button
+                        key={age}
+                        onClick={() => apply(age)}
+                        disabled={busy}
+                        className={`cat-button cat-${age < 13 ? "kid" : "adult"} secondary-action`}
+                        title={`${i + 1} key · ${AGE_LABELS[age as AgeTier]}`}
+                    >
+                        {age === 18 ? "18+" : `${age}+`}
+                    </button>
+                ))}
+            </div>
+
             <p className="muted">
-                Keyboard: 1 toddler · 2 preschool · 3 younger kid · 4 teen · 5 adult · ↓ skip · Z undo
+                Keyboard: ← adult · → kid-safe (default {DEFAULT_KID_AGE}+) · ↓ skip · Z undo · 1-5 specific tier
             </p>
         </div>
     );

@@ -64,8 +64,17 @@ export type Profile = {
     id: number;
     name: string;
     description?: string;
+    minAge: number;
+    maxAge: number;
     createdAt: number;
     kidCount: number;
+};
+
+export type ProfileInput = {
+    name: string;
+    description: string;
+    minAge: number;
+    maxAge: number;
 };
 
 export type Kid = {
@@ -161,10 +170,10 @@ export const api = {
         request<StreamInfo>("GET", `/api/admin/items/${itemId}/stream`),
 
     listProfiles: () => request<{ profiles: Profile[] }>("GET", `/api/admin/profiles`),
-    createProfile: (name: string, description: string) =>
-        request<Profile>("POST", `/api/admin/profiles`, { name, description }),
-    updateProfile: (id: number, name: string, description: string) =>
-        request<Profile>("PATCH", `/api/admin/profiles/${id}`, { name, description }),
+    createProfile: (input: ProfileInput) =>
+        request<Profile>("POST", `/api/admin/profiles`, input),
+    updateProfile: (id: number, input: ProfileInput) =>
+        request<Profile>("PATCH", `/api/admin/profiles/${id}`, input),
     deleteProfile: (id: number) =>
         request<void>("DELETE", `/api/admin/profiles/${id}`),
 
