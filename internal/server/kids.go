@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -291,6 +292,101 @@ func itemIDs(items []jellyfin.Item) []string {
 		out[i] = it.ID
 	}
 	return out
+}
+
+// playbackPayload is the wire shape the kid client posts. Lowercase JSON
+// because that's what the rest of /api/kids/* uses; we translate to
+// Jellyfin's PascalCase in the jellyfin client layer.
+type playbackPayload struct {
+	ItemID           string `json:"itemId"`
+	MediaSourceID    string `json:"mediaSourceId,omitempty"`
+	PositionTicks    int64  `json:"positionTicks"`
+	IsPaused         bool   `json:"isPaused,omitempty"`
+	AudioStreamIndex int    `json:"audioStreamIndex,omitempty"`
+}
+
+func decodePlaybackPayload(r *http.Request) (*playbackPayload, error) {
+	var p playbackPayload
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		return nil, err
+	}
+	if p.ItemID == "" {
+		return nil, errors.New("itemId required")
+	}
+	return &p, nil
+}
+
+func (s *Server) handleKidsPlaybackStart(w http.ResponseWriter, r *http.Request) {
+	kc := s.resolveKidsAuth(r)
+	if kc == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	p, err := decodePlaybackPayload(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = s.jellyfin.ReportPlaybackStart(r.Context(), kc.JellyfinToken, jellyfin.PlaybackStartInfo{
+		ItemID:           p.ItemID,
+		MediaSourceID:    p.MediaSourceID,
+		PositionTicks:    p.PositionTicks,
+		IsPaused:         p.IsPaused,
+		CanSeek:          true,
+		AudioStreamIndex: p.AudioStreamIndex,
+	})
+	if err != nil {
+		// Don't fail the kid's playback over a reporting hiccup; warn and
+		// return 204 so the client moves on.
+		s.logger.Warn().Err(err).Str("kid", kc.Label).Str("item", p.ItemID).Msg("playback start report")
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleKidsPlaybackProgress(w http.ResponseWriter, r *http.Request) {
+	kc := s.resolveKidsAuth(r)
+	if kc == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	p, err := decodePlaybackPayload(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = s.jellyfin.ReportPlaybackProgress(r.Context(), kc.JellyfinToken, jellyfin.PlaybackProgressInfo{
+		ItemID:           p.ItemID,
+		MediaSourceID:    p.MediaSourceID,
+		PositionTicks:    p.PositionTicks,
+		IsPaused:         p.IsPaused,
+		AudioStreamIndex: p.AudioStreamIndex,
+	})
+	if err != nil {
+		s.logger.Warn().Err(err).Str("kid", kc.Label).Str("item", p.ItemID).Msg("playback progress report")
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleKidsPlaybackStopped(w http.ResponseWriter, r *http.Request) {
+	kc := s.resolveKidsAuth(r)
+	if kc == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	p, err := decodePlaybackPayload(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = s.jellyfin.ReportPlaybackStopped(r.Context(), kc.JellyfinToken, jellyfin.PlaybackStopInfo{
+		ItemID:        p.ItemID,
+		MediaSourceID: p.MediaSourceID,
+		PositionTicks: p.PositionTicks,
+	})
+	if err != nil {
+		s.logger.Warn().Err(err).Str("kid", kc.Label).Str("item", p.ItemID).Msg("playback stopped report")
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleKidsStream returns a direct-play stream URL for the requested item.

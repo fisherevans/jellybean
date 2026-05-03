@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -17,10 +18,18 @@ import (
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
+// playbackHit captures one POST to a Jellyfin /Sessions/Playing* endpoint
+// so tests can assert what got forwarded.
+type playbackHit struct {
+	Path string
+	Body []byte
+	Auth string
+}
+
 // kidsLibraryFakeJellyfin returns an httptest.Server that serves the
-// endpoints handleKidsLibrary touches: /Items (with Ids=) and
-// /Users/{id}/Items/Resume.
-func kidsLibraryFakeJellyfin(t *testing.T, library []jellyfin.Item, resume []jellyfin.Item) *httptest.Server {
+// endpoints handleKidsLibrary + handleKidsPlayback* touch. If a playback
+// pointer is supplied, every /Sessions/Playing* call is recorded.
+func kidsLibraryFakeJellyfin(t *testing.T, library []jellyfin.Item, resume []jellyfin.Item, playback *[]playbackHit) *httptest.Server {
 	t.Helper()
 	byID := map[string]jellyfin.Item{}
 	for _, it := range library {
@@ -57,6 +66,20 @@ func kidsLibraryFakeJellyfin(t *testing.T, library []jellyfin.Item, resume []jel
 			TotalRecordCount: len(resume),
 		})
 	})
+	for _, p := range []string{"/Sessions/Playing", "/Sessions/Playing/Progress", "/Sessions/Playing/Stopped"} {
+		path := p
+		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			if playback != nil {
+				*playback = append(*playback, playbackHit{
+					Path: path,
+					Body: body,
+					Auth: r.Header.Get("Authorization"),
+				})
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -64,8 +87,10 @@ func kidsLibraryFakeJellyfin(t *testing.T, library []jellyfin.Item, resume []jel
 
 // kidsTestServer spins up a Jellybean Server backed by an in-memory DB
 // pre-seeded with one kid (and the Default profile). Returns the kid's
-// raw API key so tests can attach it as X-Jellybean-Key.
-func kidsTestServer(t *testing.T, library []jellyfin.Item, resume []jellyfin.Item) (*Server, string, int64) {
+// raw API key so tests can attach it as X-Jellybean-Key. The playback
+// slice (when supplied) is appended to by the fake Jellyfin on every
+// /Sessions/Playing* POST.
+func kidsTestServer(t *testing.T, library []jellyfin.Item, resume []jellyfin.Item, playback *[]playbackHit) (*Server, string, int64) {
 	t.Helper()
 	conn, err := db.Open(":memory:")
 	if err != nil {
@@ -73,7 +98,7 @@ func kidsTestServer(t *testing.T, library []jellyfin.Item, resume []jellyfin.Ite
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	jfSrv := kidsLibraryFakeJellyfin(t, library, resume)
+	jfSrv := kidsLibraryFakeJellyfin(t, library, resume, playback)
 
 	cfg := &config.Config{
 		JellyfinURL:    jfSrv.URL,
@@ -117,7 +142,7 @@ func kidRequest(srv *Server, method, target, key string) *httptest.ResponseRecor
 }
 
 func TestKidsLibraryRequiresAuth(t *testing.T) {
-	srv, _, _ := kidsTestServer(t, nil, nil)
+	srv, _, _ := kidsTestServer(t, nil, nil, nil)
 	rec := kidRequest(srv, http.MethodGet, "/api/kids/library", "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", rec.Code)
@@ -130,7 +155,7 @@ func TestKidsLibraryShowsOnlyVisible(t *testing.T) {
 		{ID: "b", Name: "Hidden Movie", Type: "Movie"},
 		{ID: "c", Name: "Unset Movie", Type: "Movie"},
 	}
-	srv, key, profileID := kidsTestServer(t, library, nil)
+	srv, key, profileID := kidsTestServer(t, library, nil, nil)
 
 	store := curation.NewStore(srv.db)
 	visible := curation.StateVisible
@@ -162,7 +187,7 @@ func TestKidsLibraryTypeFilter(t *testing.T) {
 		{ID: "m1", Name: "Movie 1", Type: "Movie"},
 		{ID: "s1", Name: "Series 1", Type: "Series"},
 	}
-	srv, key, profileID := kidsTestServer(t, library, nil)
+	srv, key, profileID := kidsTestServer(t, library, nil, nil)
 	store := curation.NewStore(srv.db)
 	visible := curation.StateVisible
 	store.SetState(t.Context(), "m1", profileID, &visible, "admin")
@@ -202,7 +227,7 @@ func TestKidsLibraryContinueWatching(t *testing.T) {
 		{ID: "a", Name: "Visible Resume", Type: "Movie"},
 		{ID: "b", Name: "Hidden Resume", Type: "Movie"},
 	}
-	srv, key, profileID := kidsTestServer(t, library, resume)
+	srv, key, profileID := kidsTestServer(t, library, resume, nil)
 	store := curation.NewStore(srv.db)
 	visible := curation.StateVisible
 	hidden := curation.StateHidden
@@ -221,8 +246,75 @@ func TestKidsLibraryContinueWatching(t *testing.T) {
 }
 
 func TestKidsLibraryRejectsBadSection(t *testing.T) {
-	srv, key, _ := kidsTestServer(t, nil, nil)
+	srv, key, _ := kidsTestServer(t, nil, nil, nil)
 	rec := kidRequest(srv, http.MethodGet, "/api/kids/library?section=bogus", key)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestKidsPlaybackForwardsToJellyfin(t *testing.T) {
+	var hits []playbackHit
+	srv, key, _ := kidsTestServer(t, nil, nil, &hits)
+
+	post := func(path, payload string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(payload))
+		req.Header.Set("X-Jellybean-Key", key)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := post("/api/kids/playback/start", `{"itemId":"abc","positionTicks":0}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("start: status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if rec := post("/api/kids/playback/progress", `{"itemId":"abc","positionTicks":12345678,"isPaused":false}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("progress: status = %d", rec.Code)
+	}
+	if rec := post("/api/kids/playback/stopped", `{"itemId":"abc","positionTicks":99999999}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("stopped: status = %d", rec.Code)
+	}
+
+	if len(hits) != 3 {
+		t.Fatalf("expected 3 jellyfin hits, got %d", len(hits))
+	}
+	wantPaths := []string{"/Sessions/Playing", "/Sessions/Playing/Progress", "/Sessions/Playing/Stopped"}
+	for i, want := range wantPaths {
+		if hits[i].Path != want {
+			t.Errorf("hit[%d] path = %q, want %q", i, hits[i].Path, want)
+		}
+		if !strings.Contains(hits[i].Auth, `Token="kid-token-1"`) {
+			t.Errorf("hit[%d] auth missing kid token: %s", i, hits[i].Auth)
+		}
+	}
+
+	// Verify the wire shape Jellyfin gets: PascalCase, ItemId carries
+	// through, PositionTicks is the int64 we sent.
+	var progress map[string]any
+	json.Unmarshal(hits[1].Body, &progress)
+	if progress["ItemId"] != "abc" || progress["PositionTicks"] != float64(12345678) {
+		t.Errorf("progress payload wrong: %v", progress)
+	}
+}
+
+func TestKidsPlaybackRequiresAuth(t *testing.T) {
+	srv, _, _ := kidsTestServer(t, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/kids/playback/start", strings.NewReader(`{"itemId":"abc"}`))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestKidsPlaybackRejectsMissingItemID(t *testing.T) {
+	srv, key, _ := kidsTestServer(t, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/kids/playback/start", strings.NewReader(`{}`))
+	req.Header.Set("X-Jellybean-Key", key)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -231,7 +323,7 @@ func TestKidsLibraryRejectsBadSection(t *testing.T) {
 // kidsTestServer with synthetic library + an admin-path call missing
 // profileId returns 400.
 func TestKidsLibraryAdminMissingProfileID(t *testing.T) {
-	srv, _, _ := kidsTestServer(t, nil, nil)
+	srv, _, _ := kidsTestServer(t, nil, nil, nil)
 	// Inject an admin session via the auth store.
 	tok, err := makeAdminSession(t, srv)
 	if err != nil {
