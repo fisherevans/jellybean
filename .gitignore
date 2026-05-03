@@ -60,6 +60,11 @@ __debug_bin*
 # scripts/jb daemon state (pid file, log, built binary)
 .run/
 
+# Playwright artifacts
+web/admin/test-results/
+web/admin/playwright-report/
+web/admin/playwright/.cache/
+
 # Tizen / TV build output
 *.wgt
 *.ipk

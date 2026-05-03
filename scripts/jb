@@ -22,6 +22,7 @@
 #   jb auth-setup       store dev login credentials (username + password) in keychain
 #   jb auth             mint a session cookie from the stored credentials
 #   jb api METHOD PATH [body-json]  authenticated request via the cookie
+#   jb e2e [pw-args]    run the Playwright UI suite (uses keychain creds)
 #   jb help             this text
 #
 # Modes:
@@ -250,14 +251,17 @@ cmd_keychain() {
 
 needs_build() {
     [[ ! -x "$BIN_PATH" ]] && return 0
-    # Rebuild if any source file is newer than the binary.
+    # Rebuild if any source file OR embedded web bundle is newer than the
+    # binary. The Go binary embeds web/{admin,kids}/dist via go:embed, so
+    # a fresh `npm run build` requires a fresh `go build` to ship the new
+    # JS hash. Skip web/*/src so Vite-only edits don't force a Go rebuild.
     local newer
     newer=$(find . \
         -path ./.run -prune -o \
         -path ./node_modules -prune -o \
         -path '*/node_modules' -prune -o \
-        -path '*/dist' -prune -o \
-        -type f \( -name '*.go' -o -name '*.sql' \) \
+        -path '*/src' -prune -o \
+        -type f \( -name '*.go' -o -name '*.sql' -o -path '*/dist/*' \) \
         -newer "$BIN_PATH" -print 2>/dev/null | head -n1)
     [[ -n "$newer" ]]
 }
@@ -538,6 +542,40 @@ cmd_api() {
     echo
 }
 
+cmd_e2e() {
+    if ! pid_is_running "$(read_pid)"; then
+        echo "daemon not running; start it first with 'jb start'" >&2
+        exit 1
+    fi
+    if ! command -v npx >/dev/null 2>&1; then
+        echo "npx not found; install Node 20+ and re-run" >&2
+        exit 1
+    fi
+    local username password
+    if ! username="$(kc_get JELLYFIN_USERNAME)" || [[ -z "$username" ]]; then
+        echo "JELLYFIN_USERNAME not in keychain; run 'jb auth-setup' first" >&2
+        exit 1
+    fi
+    if ! password="$(kc_get JELLYFIN_PASSWORD)" || [[ -z "$password" ]]; then
+        echo "JELLYFIN_PASSWORD not in keychain; run 'jb auth-setup' first" >&2
+        exit 1
+    fi
+
+    if [[ ! -d "$ROOT_DIR/web/admin/node_modules" ]]; then
+        ( cd "$ROOT_DIR/web/admin" && npm ci --no-audit --no-fund )
+    fi
+    if [[ ! -d "$ROOT_DIR/web/admin/node_modules/@playwright" ]]; then
+        ( cd "$ROOT_DIR/web/admin" && npx playwright install chromium )
+    fi
+
+    local port; port="$(get_port)"
+    cd "$ROOT_DIR/web/admin"
+    JB_BASE_URL="http://127.0.0.1:${port}" \
+    JELLYFIN_USERNAME="$username" \
+    JELLYFIN_PASSWORD="$password" \
+        npx playwright test "$@"
+}
+
 cmd_help() {
     sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
 }
@@ -558,6 +596,7 @@ case "${1:-help}" in
     auth-setup)  shift; cmd_auth_setup "$@" ;;
     auth)        shift; cmd_auth "$@" ;;
     api)         shift; cmd_api "$@" ;;
+    e2e)         shift; cmd_e2e "$@" ;;
     help|-h|--help) cmd_help ;;
     *) echo "unknown command: $1" >&2; cmd_help; exit 2 ;;
 esac
