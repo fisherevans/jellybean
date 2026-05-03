@@ -1,0 +1,91 @@
+name: build
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+
+permissions:
+    contents: read
+    packages: write
+
+env:
+    REGISTRY: ghcr.io
+    IMAGE_NAME: ${{ github.repository }}
+    GO_VERSION: "1.25"
+    NODE_VERSION: "20"
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-go@v5
+              with:
+                  go-version: ${{ env.GO_VERSION }}
+                  cache: true
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ env.NODE_VERSION }}
+                  cache: npm
+                  cache-dependency-path: |
+                      web/admin/package-lock.json
+                      web/kids/package-lock.json
+
+            - name: Build admin web app
+              working-directory: web/admin
+              run: |
+                  npm ci --no-audit --no-fund
+                  npm run build
+
+            - name: Build kids web app
+              working-directory: web/kids
+              run: |
+                  npm ci --no-audit --no-fund
+                  npm run build
+
+            - name: Go vet
+              run: GOWORK=off go vet ./...
+
+            - name: Go test
+              run: GOWORK=off go test -race ./...
+
+            - name: Go build
+              run: GOWORK=off go build ./...
+
+    publish:
+        needs: test
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: docker/setup-qemu-action@v3
+              with:
+                  platforms: arm64
+
+            - uses: docker/setup-buildx-action@v3
+
+            - uses: docker/login-action@v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Compute short sha
+              id: sha
+              run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+            - name: Build and push image
+              uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  platforms: linux/amd64,linux/arm64
+                  push: true
+                  tags: |
+                      ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+                      ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.short }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
