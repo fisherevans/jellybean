@@ -17,6 +17,7 @@ import (
 
 	"github.com/fisherevans/jellybean/internal/auth"
 	"github.com/fisherevans/jellybean/internal/config"
+	"github.com/fisherevans/jellybean/internal/curation"
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
@@ -26,6 +27,7 @@ type Server struct {
 	jellyfin *jellyfin.Client
 	db       *sql.DB
 	auth     *auth.Handlers
+	curation *curation.Store
 	router   *mux.Router
 
 	jellyfinVersion string
@@ -60,6 +62,7 @@ func New(opts Options) *Server {
 		jellyfin:        opts.Jellyfin,
 		db:              opts.DB,
 		auth:            authH,
+		curation:        curation.NewStore(opts.DB),
 		router:          mux.NewRouter(),
 		jellyfinVersion: opts.JellyfinVersion,
 		adminAssets:     opts.AdminAssets,
@@ -86,6 +89,9 @@ func (s *Server) routes() {
 	admin.Use(s.auth.Middleware)
 	admin.HandleFunc("/items", s.handleAdminItems).Methods(http.MethodGet)
 	admin.HandleFunc("/items/{id}/stream", s.handleAdminStream).Methods(http.MethodGet)
+	admin.HandleFunc("/items/{id}/category", s.handleAdminSetCategory).Methods(http.MethodPost)
+	admin.HandleFunc("/items/category/bulk", s.handleAdminBulkCategory).Methods(http.MethodPost)
+	admin.HandleFunc("/categorizations/recent", s.handleAdminRecentActivity).Methods(http.MethodGet)
 
 	// Kids API: dual auth. An admin session gets in (so testing the kids
 	// UI from the same browser as the admin works without provisioning a
