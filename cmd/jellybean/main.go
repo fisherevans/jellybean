@@ -13,6 +13,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	jellybean "github.com/fisherevans/jellybean"
 	"github.com/fisherevans/jellybean/internal/config"
 	"github.com/fisherevans/jellybean/internal/db"
 	"github.com/fisherevans/jellybean/internal/jellyfin"
@@ -63,7 +64,15 @@ func run() error {
 	defer conn.Close()
 	logger.Info().Str("path", cfg.DBPath).Msg("database opened")
 
-	srv := server.New(cfg, logger, jf, conn, info.Version)
+	srv := server.New(server.Options{
+		Config:          cfg,
+		Logger:          logger,
+		Jellyfin:        jf,
+		DB:              conn,
+		JellyfinVersion: info.Version,
+		AdminAssets:     jellybean.AdminDist,
+		KidsAssets:      jellybean.KidsDist,
+	})
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           srv.Handler(),

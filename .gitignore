@@ -38,6 +38,13 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Web build outputs (embedded into the Go binary at build time).
+# .gitkeep is preserved so go build works without a prior web build.
+web/admin/dist/*
+!web/admin/dist/.gitkeep
+web/kids/dist/*
+!web/kids/dist/.gitkeep
+
 # Local dev state
 *.db
 *.db-journal

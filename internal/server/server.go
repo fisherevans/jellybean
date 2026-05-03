@@ -8,6 +8,7 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"time"
 
@@ -28,27 +29,41 @@ type Server struct {
 	router   *mux.Router
 
 	jellyfinVersion string
+	adminAssets     fs.FS
+	kidsAssets      fs.FS
 }
 
-func New(cfg *config.Config, logger zerolog.Logger, jf *jellyfin.Client, db *sql.DB, jellyfinVersion string) *Server {
-	sessions := auth.NewSessionStore(db, cfg.SessionSecret)
+type Options struct {
+	Config          *config.Config
+	Logger          zerolog.Logger
+	Jellyfin        *jellyfin.Client
+	DB              *sql.DB
+	JellyfinVersion string
+	AdminAssets     fs.FS // root containing web/admin/dist
+	KidsAssets      fs.FS // root containing web/kids/dist
+}
+
+func New(opts Options) *Server {
+	sessions := auth.NewSessionStore(opts.DB, opts.Config.SessionSecret)
 	rl := auth.NewRateLimiter(5, 5*time.Minute)
 	authH := &auth.Handlers{
 		Sessions:      sessions,
-		Jellyfin:      jf,
-		Logger:        logger,
+		Jellyfin:      opts.Jellyfin,
+		Logger:        opts.Logger,
 		RateLimit:     rl,
-		SecureCookies: !cfg.IsDev(),
+		SecureCookies: !opts.Config.IsDev(),
 	}
 
 	s := &Server{
-		cfg:             cfg,
-		logger:          logger,
-		jellyfin:        jf,
-		db:              db,
+		cfg:             opts.Config,
+		logger:          opts.Logger,
+		jellyfin:        opts.Jellyfin,
+		db:              opts.DB,
 		auth:            authH,
 		router:          mux.NewRouter(),
-		jellyfinVersion: jellyfinVersion,
+		jellyfinVersion: opts.JellyfinVersion,
+		adminAssets:     opts.AdminAssets,
+		kidsAssets:      opts.KidsAssets,
 	}
 	s.routes()
 	return s
@@ -65,14 +80,31 @@ func (s *Server) routes() {
 	authR := api.PathPrefix("/auth").Subrouter()
 	authR.HandleFunc("/login", s.auth.Login).Methods(http.MethodPost)
 	authR.HandleFunc("/logout", s.auth.Logout).Methods(http.MethodPost)
-	// /api/auth/me is the "am I logged in" probe; gate it with the auth middleware.
 	authR.Handle("/me", s.auth.Middleware(http.HandlerFunc(s.auth.Me))).Methods(http.MethodGet)
 
-	// Future authenticated routes (curation API in M2) hang off /api/admin and
-	// share the auth middleware via a subrouter.
 	admin := api.PathPrefix("/admin").Subrouter()
 	admin.Use(s.auth.Middleware)
-	_ = admin // M2 will mount handlers here
+	admin.HandleFunc("/items", s.handleAdminItems).Methods(http.MethodGet)
+	admin.HandleFunc("/items/{id}/stream", s.handleAdminStream).Methods(http.MethodGet)
+
+	// Static SPAs. Order matters: /kids prefix wins over /, so the more
+	// specific one is registered first.
+	if s.kidsAssets != nil {
+		kids, err := newSPA(s.kidsAssets, "web/kids/dist")
+		if err == nil {
+			s.router.PathPrefix("/kids").Handler(http.StripPrefix("/kids", kids))
+		} else {
+			s.logger.Warn().Err(err).Msg("kids SPA disabled")
+		}
+	}
+	if s.adminAssets != nil {
+		admin, err := newSPA(s.adminAssets, "web/admin/dist")
+		if err == nil {
+			s.router.PathPrefix("/").Handler(admin)
+		} else {
+			s.logger.Warn().Err(err).Msg("admin SPA disabled")
+		}
+	}
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
