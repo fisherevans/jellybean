@@ -37,6 +37,7 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	search := q.Get("search")
+	withSuggest := q.Get("suggest") == "true"
 
 	var wantCat curation.Category
 	if c := q.Get("category"); c != "" {
@@ -91,7 +92,7 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 		if wantCat != "" && cat != wantCat {
 			continue
 		}
-		enriched = append(enriched, map[string]any{
+		row := map[string]any{
 			"Id":             it.ID,
 			"Name":           it.Name,
 			"Type":           it.Type,
@@ -101,7 +102,11 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 			"ProductionYear": it.ProductionYear,
 			"ImageTags":      it.ImageTags,
 			"Category":       string(cat),
-		})
+		}
+		if withSuggest {
+			row["Suggestion"] = curation.Suggest(it)
+		}
+		enriched = append(enriched, row)
 		if len(enriched) >= limit {
 			break
 		}
