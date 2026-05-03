@@ -2,11 +2,16 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 
@@ -250,6 +255,36 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx, _ := kidsRequestContext(r)
+
+	// Build the ETag from DB-only state (no Jellyfin round-trip yet) so a
+	// matching If-None-Match can short-circuit to 304 without leaving the
+	// database. The composition has to cover everything that affects the
+	// response shape: profile id, paging + filter params, the profile's
+	// max(set_at) (so a parent flipping visibility invalidates), and for
+	// continue-watching the kid's user id plus a coarse time bucket.
+	maxSetAt, err := s.curation.ProfileMaxSetAt(ctx, profileID)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("kids library etag")
+		http.Error(w, "failed to load library", http.StatusInternalServerError)
+		return
+	}
+	etag := computeKidsLibraryETag(kidsLibraryETagInputs{
+		ProfileID:      profileID,
+		Section:        section,
+		Types:          itemTypes,
+		Limit:          limit,
+		StartIndex:     startIndex,
+		Search:         search,
+		MaxSetAt:       maxSetAt,
+		JellyfinUserID: kc.JellyfinUserID,
+	})
+	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+		w.Header().Set("ETag", etag)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("ETag", etag)
+
 	if section == "continue-watching" {
 		if kc.JellyfinUserID == "" || kc.JellyfinToken == "" {
 			writeJSON(w, http.StatusOK, kidsLibraryResponse{ProfileID: profileID})
@@ -350,6 +385,54 @@ type kidsLibraryResponse struct {
 	NextStartIndex int             `json:"NextStartIndex,omitempty"`
 	HasMore        bool            `json:"HasMore,omitempty"`
 	ProfileID      int64           `json:"ProfileId"`
+}
+
+// kidsLibraryETagInputs is the set of values that feed the GET
+// /api/kids/library ETag. Anything that affects the response shape goes
+// here; anything that doesn't (e.g. Jellyfin item fields) does not. The
+// goal is to compute the ETag from DB-only state so a matching
+// If-None-Match can short-circuit to 304 without a Jellyfin round-trip.
+type kidsLibraryETagInputs struct {
+	ProfileID      int64
+	Section        string
+	Types          []string
+	Limit          int
+	StartIndex     int
+	Search         string
+	MaxSetAt       int64
+	JellyfinUserID string
+}
+
+// computeKidsLibraryETag returns a weak ETag (W/"...") for the given
+// inputs. For section=continue-watching we mix in a per-minute time
+// bucket so the resume row refreshes at most once a minute on inactive
+// devices but invalidates promptly when the kid plays. This is
+// intentional: continue-watching state lives in Jellyfin (resume ticks
+// updated by playback reports) and we have no cheap server-side signal
+// for "did playback happen since last request", so a coarse clock bucket
+// is the cheapest correct invalidator. Don't try to "fix" this by
+// removing the time bucket — stale resume rows are a worse failure mode
+// than an extra round-trip per minute.
+func computeKidsLibraryETag(in kidsLibraryETagInputs) string {
+	types := append([]string(nil), in.Types...)
+	sort.Strings(types)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "profile=%d;sec=%s;type=%s;limit=%d;start=%d;search=%s;mtime=%d",
+		in.ProfileID,
+		in.Section,
+		strings.Join(types, ","),
+		in.Limit,
+		in.StartIndex,
+		in.Search,
+		in.MaxSetAt,
+	)
+	if in.Section == "continue-watching" {
+		fmt.Fprintf(&b, ";userId=%s;tbucket=%d", in.JellyfinUserID, time.Now().Unix()/60)
+	}
+
+	sum := sha256.Sum256([]byte(b.String()))
+	return `W/"` + base64.RawURLEncoding.EncodeToString(sum[:]) + `"`
 }
 
 func itemIDs(items []jellyfin.Item) []string {

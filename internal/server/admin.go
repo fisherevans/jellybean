@@ -456,6 +456,47 @@ func (s *Server) handleAdminRecentActivity(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"entries": out})
 }
 
+// handleAdminReconcile walks every categorization, asks Jellyfin which
+// item ids still resolve, and tombstones (or untombstones) the rest via
+// curation.Store.Reconcile. Manual trigger only — no scheduler yet. Safe
+// to invoke at any time; the reconciler is service-account scoped and
+// idempotent for unchanged rows.
+//
+// Response shape: {"checked": N, "marked": N, "cleared": N}.
+func (s *Server) handleAdminReconcile(w http.ResponseWriter, r *http.Request) {
+	lookup := func(ctx context.Context, ids []string) (map[string]struct{}, error) {
+		if len(ids) == 0 {
+			return map[string]struct{}{}, nil
+		}
+		res, err := s.jellyfin.GetItems(ctx, jellyfin.ItemsFilter{IDs: ids})
+		if err != nil {
+			return nil, err
+		}
+		found := make(map[string]struct{}, len(res.Items))
+		for _, it := range res.Items {
+			found[it.ID] = struct{}{}
+		}
+		return found, nil
+	}
+	checked, marked, cleared, err := s.curation.Reconcile(r.Context(), lookup)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("reconcile orphan categorizations")
+		http.Error(w, "reconcile failed", http.StatusBadGateway)
+		return
+	}
+	s.logger.Info().
+		Int("checked", checked).
+		Int("marked", marked).
+		Int("cleared", cleared).
+		Str("changed_by", sessionUserID(r)).
+		Msg("reconcile complete")
+	writeJSON(w, http.StatusOK, map[string]int{
+		"checked": checked,
+		"marked":  marked,
+		"cleared": cleared,
+	})
+}
+
 // handleAdminStream returns the Jellyfin HLS manifest URL for the requested
 // item as JSON. We don't 302-redirect: hls.js needs to know the URL is HLS
 // so it engages instead of letting the browser try to natively decode the

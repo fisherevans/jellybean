@@ -171,7 +171,9 @@ func (s *Store) GetState(ctx context.Context, itemID string, profileID int64) (*
 }
 
 // GetStatesForItems returns a map of itemID -> state for the given items
-// and profile. Items without a row are absent from the result.
+// and profile. Items without a row are absent from the result. Orphan-
+// tombstoned rows (orphan_at IS NOT NULL) are skipped so callers see
+// them as if there were no row at all.
 func (s *Store) GetStatesForItems(ctx context.Context, profileID int64, itemIDs []string) (map[string]State, error) {
 	out := make(map[string]State, len(itemIDs))
 	if len(itemIDs) == 0 || profileID <= 0 {
@@ -185,7 +187,7 @@ func (s *Store) GetStatesForItems(ctx context.Context, profileID int64, itemIDs 
 		args = append(args, id)
 	}
 	q := `SELECT jellyfin_item_id, state FROM categorizations
-		WHERE profile_id = ? AND jellyfin_item_id IN (` + placeholders + `)`
+		WHERE profile_id = ? AND orphan_at IS NULL AND jellyfin_item_id IN (` + placeholders + `)`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -202,7 +204,8 @@ func (s *Store) GetStatesForItems(ctx context.Context, profileID int64, itemIDs 
 }
 
 // ListItemIDsInState returns IDs whose stored state for the given profile
-// matches `state`, ordered by most-recently-set first.
+// matches `state`, ordered by most-recently-set first. Orphan-tombstoned
+// rows are skipped.
 func (s *Store) ListItemIDsInState(ctx context.Context, profileID int64, state State, limit, offset int) ([]string, error) {
 	if limit <= 0 {
 		limit = 50
@@ -212,7 +215,7 @@ func (s *Store) ListItemIDsInState(ctx context.Context, profileID int64, state S
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT jellyfin_item_id FROM categorizations
-		WHERE profile_id = ? AND state = ?
+		WHERE profile_id = ? AND state = ? AND orphan_at IS NULL
 		ORDER BY set_at DESC
 		LIMIT ? OFFSET ?`, profileID, string(state), limit, offset)
 	if err != nil {
@@ -230,12 +233,38 @@ func (s *Store) ListItemIDsInState(ctx context.Context, profileID int64, state S
 	return out, rows.Err()
 }
 
+// ProfileMaxSetAt returns the max of set_at and orphan_at across all
+// categorizations for a profile. Used as the cache key for that profile's
+// library: any visible/hidden state change OR an orphan tombstone from
+// the reconciler must invalidate cached pages, since both can change
+// what items the kid sees. Returns 0 when no rows exist.
+func (s *Store) ProfileMaxSetAt(ctx context.Context, profileID int64) (int64, error) {
+	if profileID <= 0 {
+		return 0, errors.New("profileID required")
+	}
+	var v sql.NullInt64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT MAX(MAX(set_at), COALESCE(MAX(orphan_at), 0))
+		 FROM categorizations WHERE profile_id = ?`,
+		profileID).Scan(&v)
+	if err != nil {
+		return 0, err
+	}
+	if !v.Valid {
+		return 0, nil
+	}
+	return v.Int64, nil
+}
+
 // AllCategorizedIDsForProfile returns every item ID that has ANY state
 // (visible or hidden) for the given profile. The "uncategorized" sweep
 // view uses this set to skip items the parent has already decided on.
+// Orphan-tombstoned rows are skipped so a re-imported item shows up in
+// sweep again rather than staying hidden behind a stale decision.
 func (s *Store) AllCategorizedIDsForProfile(ctx context.Context, profileID int64) (map[string]struct{}, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT jellyfin_item_id FROM categorizations WHERE profile_id = ?`, profileID)
+		SELECT jellyfin_item_id FROM categorizations
+		WHERE profile_id = ? AND orphan_at IS NULL`, profileID)
 	if err != nil {
 		return nil, err
 	}
@@ -308,6 +337,148 @@ func (s *Store) RecentHistory(ctx context.Context, profileID int64, limit int) (
 	return out, rows.Err()
 }
 
+// --- orphan reconciliation ----------------------------------------------
+
+// ListAllCategorizationItemIDs returns every distinct jellyfin_item_id in
+// the categorizations table, regardless of profile or orphan state. This
+// is the input set for Reconcile — we ask Jellyfin which of these still
+// exist and tombstone the rest.
+func (s *Store) ListAllCategorizationItemIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT jellyfin_item_id FROM categorizations
+		ORDER BY jellyfin_item_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// MarkOrphan stamps orphan_at on every row matching itemID across all
+// profiles. Idempotent: rows that are already orphaned are not touched.
+func (s *Store) MarkOrphan(ctx context.Context, jellyfinItemID string) error {
+	if jellyfinItemID == "" {
+		return errors.New("jellyfinItemID required")
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE categorizations
+		SET orphan_at = unixepoch()
+		WHERE jellyfin_item_id = ? AND orphan_at IS NULL`, jellyfinItemID)
+	return err
+}
+
+// ClearOrphan removes the orphan tombstone on every row matching itemID.
+// Used when the reconciler sees an item reappear in Jellyfin's catalog.
+func (s *Store) ClearOrphan(ctx context.Context, jellyfinItemID string) error {
+	if jellyfinItemID == "" {
+		return errors.New("jellyfinItemID required")
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE categorizations
+		SET orphan_at = NULL
+		WHERE jellyfin_item_id = ? AND orphan_at IS NOT NULL`, jellyfinItemID)
+	return err
+}
+
+// orphanReconcileBatchSize caps each Jellyfin lookup. Jellyfin's Ids=
+// query param is comma-separated and large lists hit URL length limits;
+// 200 is a comfortable margin.
+const orphanReconcileBatchSize = 200
+
+// Reconcile walks every distinct categorization item id, asks the
+// supplied lookup func which of them Jellyfin still resolves, and
+// reconciles orphan_at. Items missing from the lookup result are
+// tombstoned (MarkOrphan); items present that were previously
+// tombstoned are restored (ClearOrphan).
+//
+// The lookup func is injected so callers (and tests) can decide how to
+// resolve ids — production wires it to jellyfin.GetItems with an Ids
+// filter; tests pass a fake. It must return a set of ids actually found
+// in the input batch; ids absent from the returned set are treated as
+// missing.
+//
+// Returns: number of distinct ids checked, number marked as orphan in
+// this pass, number cleared.
+func (s *Store) Reconcile(
+	ctx context.Context,
+	lookup func(ctx context.Context, ids []string) (map[string]struct{}, error),
+) (checked, marked, cleared int, err error) {
+	ids, err := s.ListAllCategorizationItemIDs(ctx)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("list ids: %w", err)
+	}
+	if len(ids) == 0 {
+		return 0, 0, 0, nil
+	}
+
+	// Snapshot which ids are currently tombstoned so we know whether to
+	// MarkOrphan / ClearOrphan / leave alone after the lookup.
+	orphanedNow, err := s.listOrphanedItemIDs(ctx)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("list orphaned: %w", err)
+	}
+
+	for start := 0; start < len(ids); start += orphanReconcileBatchSize {
+		end := start + orphanReconcileBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		found, err := lookup(ctx, batch)
+		if err != nil {
+			return checked, marked, cleared, fmt.Errorf("lookup batch: %w", err)
+		}
+		for _, id := range batch {
+			checked++
+			_, isOrphan := orphanedNow[id]
+			_, exists := found[id]
+			switch {
+			case !exists && !isOrphan:
+				if err := s.MarkOrphan(ctx, id); err != nil {
+					return checked, marked, cleared, fmt.Errorf("mark orphan %s: %w", id, err)
+				}
+				marked++
+			case exists && isOrphan:
+				if err := s.ClearOrphan(ctx, id); err != nil {
+					return checked, marked, cleared, fmt.Errorf("clear orphan %s: %w", id, err)
+				}
+				cleared++
+			}
+		}
+	}
+	return checked, marked, cleared, nil
+}
+
+// listOrphanedItemIDs returns the set of distinct item ids that have at
+// least one orphaned row. Used by Reconcile to decide between mark /
+// clear / no-op without re-querying per id.
+func (s *Store) listOrphanedItemIDs(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT jellyfin_item_id FROM categorizations
+		WHERE orphan_at IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
 // --- internal helpers (operate within a transaction) --------------------
 
 func getStateTx(ctx context.Context, tx *sql.Tx, itemID string, profileID int64) (*State, error) {
@@ -352,6 +523,9 @@ func upsertStateTx(ctx context.Context, tx *sql.Tx, itemID string, profileID int
 	if setBy != "" {
 		setByVal = setBy
 	}
+	// orphan_at is cleared on upsert: an explicit categorization implies
+	// the caller believes the item exists. The reconciler will re-mark it
+	// later if Jellyfin still says otherwise.
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO categorizations (jellyfin_item_id, profile_id, state, source, set_at, set_by)
 		VALUES (?, ?, ?, ?, unixepoch(), ?)
@@ -359,7 +533,8 @@ func upsertStateTx(ctx context.Context, tx *sql.Tx, itemID string, profileID int
 			state = excluded.state,
 			source = excluded.source,
 			set_at = excluded.set_at,
-			set_by = excluded.set_by`,
+			set_by = excluded.set_by,
+			orphan_at = NULL`,
 		itemID, profileID, string(state), string(src), setByVal)
 	return err
 }

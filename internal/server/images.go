@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"net/url"
@@ -16,9 +18,10 @@ import (
 // (poster), Backdrop (hero / scene capture), and Thumb (wide thumbnail)
 // types are exposed; anything else returns 400.
 //
-// Cache headers come from Jellyfin and we forward them; tested in practice
-// with Cache-Control: public, max-age=31536000 since Jellyfin's image data
-// is content-addressed by ImageTags hash. The browser will cache hard.
+// Cache-Control is overwritten authoritatively (Jellyfin's value is
+// unreliable across versions). When the caller passes ?tag=<hash> -
+// Jellyfin's content-addressed ImageTags hash - the response is treated
+// as immutable for a week. Otherwise, a 1-day max-age fallback applies.
 func (s *Server) handleAdminImage(w http.ResponseWriter, r *http.Request) {
 	s.proxyJellyfinImage(w, r)
 }
@@ -52,14 +55,34 @@ func (s *Server) proxyJellyfinImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tag := r.URL.Query().Get("tag")
+	width := r.URL.Query().Get("width")
+	height := r.URL.Query().Get("height")
+
+	// Cache headers + ETag are computed from the request alone (item id +
+	// type + tag + render dims), so a client revisiting a poster can be
+	// served a 304 without round-tripping to Jellyfin.
+	etag := imageETag(id, imgType, tag, width, height)
+	cacheControl := "public, max-age=86400"
+	if tag != "" {
+		cacheControl = "public, max-age=604800, immutable"
+	}
+
+	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", cacheControl)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
 	q := url.Values{}
-	if v := r.URL.Query().Get("width"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 2000 {
+	if width != "" {
+		if n, err := strconv.Atoi(width); err == nil && n > 0 && n <= 2000 {
 			q.Set("fillWidth", strconv.Itoa(n))
 		}
 	}
-	if v := r.URL.Query().Get("height"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 2000 {
+	if height != "" {
+		if n, err := strconv.Atoi(height); err == nil && n > 0 && n <= 2000 {
 			q.Set("fillHeight", strconv.Itoa(n))
 		}
 	}
@@ -94,16 +117,26 @@ func (s *Server) proxyJellyfinImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, h := range []string{"Content-Type", "Content-Length", "Cache-Control", "ETag", "Last-Modified"} {
+	// Pass through payload metadata from upstream, but Cache-Control +
+	// ETag are authoritative on our side: Jellyfin's values aren't
+	// reliable across versions, and we can answer 304s ourselves.
+	for _, h := range []string{"Content-Type", "Content-Length", "Last-Modified"} {
 		if v := resp.Header.Get(h); v != "" {
 			w.Header().Set(h, v)
 		}
 	}
-	if w.Header().Get("Cache-Control") == "" {
-		w.Header().Set("Cache-Control", "public, max-age=86400")
-	}
+	w.Header().Set("Cache-Control", cacheControl)
+	w.Header().Set("ETag", etag)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// imageETag returns a weak ETag derived from the request signature so two
+// requests for the same content-addressed image produce the same tag
+// regardless of upstream behavior.
+func imageETag(id, imgType, tag, width, height string) string {
+	sum := sha256.Sum256([]byte(id + "|" + imgType + "|" + tag + "|" + width + "|" + height))
+	return `W/"` + base64.RawURLEncoding.EncodeToString(sum[:]) + `"`
 }
 
 // jellyfinAuthHeader builds the same "MediaBrowser" auth header the

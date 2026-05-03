@@ -93,6 +93,7 @@ func (s *Server) routes() {
 	admin.HandleFunc("/items/{id}/state", s.handleAdminSetState).Methods(http.MethodPost)
 	admin.HandleFunc("/items/state/bulk", s.handleAdminBulkState).Methods(http.MethodPost)
 	admin.HandleFunc("/categorizations/recent", s.handleAdminRecentActivity).Methods(http.MethodGet)
+	admin.HandleFunc("/maintenance/reconcile", s.handleAdminReconcile).Methods(http.MethodPost)
 	admin.HandleFunc("/profiles", s.handleListProfiles).Methods(http.MethodGet)
 	admin.HandleFunc("/profiles", s.handleCreateProfile).Methods(http.MethodPost)
 	admin.HandleFunc("/profiles/{id}", s.handleUpdateProfile).Methods(http.MethodPatch)
