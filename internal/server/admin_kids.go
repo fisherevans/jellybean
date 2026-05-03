@@ -9,7 +9,6 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/fisherevans/jellybean/internal/curation"
-	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
 type kidResponse struct {
@@ -18,7 +17,6 @@ type kidResponse struct {
 	ProfileID      int64  `json:"profileId"`
 	ProfileName    string `json:"profileName"`
 	JellyfinUserID string `json:"jellyfinUserId"`
-	HasToken       bool   `json:"hasToken"`
 	CreatedAt      int64  `json:"createdAt"`
 }
 
@@ -29,7 +27,6 @@ func toKidResponse(k curation.KidWithProfile) kidResponse {
 		ProfileID:      k.ProfileID,
 		ProfileName:    k.ProfileName,
 		JellyfinUserID: k.JellyfinUserID,
-		HasToken:       k.HasToken,
 		CreatedAt:      k.CreatedAt.Unix(),
 	}
 }
@@ -49,40 +46,28 @@ func (s *Server) handleListKids(w http.ResponseWriter, r *http.Request) {
 }
 
 type createKidRequest struct {
-	Name             string `json:"name"`
-	ProfileID        int64  `json:"profileId"`
-	JellyfinUsername string `json:"jellyfinUsername"`
-	JellyfinPassword string `json:"jellyfinPassword"`
+	Name           string `json:"name"`
+	ProfileID      int64  `json:"profileId"`
+	JellyfinUserID string `json:"jellyfinUserId"`
 }
 
-// handleCreateKid mints a Jellyfin token via AuthenticateByName, persists
-// the kid row + a freshly generated API key, and returns the raw key
-// exactly once. The kid's password never lands in the DB or in any log.
+// handleCreateKid persists a (jellyfin user -> profile) mapping. Auth
+// pivot: no password is collected here. The kid TV will authenticate
+// directly with Jellyfin via /api/kids/auth/login on first launch.
 func (s *Server) handleCreateKid(w http.ResponseWriter, r *http.Request) {
 	var req createKidRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if req.Name == "" || req.JellyfinUsername == "" || req.JellyfinPassword == "" || req.ProfileID == 0 {
-		http.Error(w, "name, profileId, jellyfinUsername, jellyfinPassword required", http.StatusBadRequest)
+	if req.Name == "" || req.JellyfinUserID == "" || req.ProfileID == 0 {
+		http.Error(w, "name, profileId, jellyfinUserId required", http.StatusBadRequest)
 		return
 	}
-	auth, err := s.jellyfin.AuthenticateByName(r.Context(), req.JellyfinUsername, req.JellyfinPassword)
-	if err != nil {
-		if jellyfin.IsUnauthorized(err) {
-			http.Error(w, "Jellyfin login failed for that username/password", http.StatusUnauthorized)
-			return
-		}
-		s.logger.Error().Err(err).Msg("kid jellyfin auth")
-		http.Error(w, "Jellyfin auth backend error", http.StatusBadGateway)
-		return
-	}
-	res, err := s.curation.CreateKid(r.Context(), curation.CreateKidParams{
+	kid, err := s.curation.CreateKid(r.Context(), curation.CreateKidParams{
 		Name:           req.Name,
 		ProfileID:      req.ProfileID,
-		JellyfinUserID: auth.User.ID,
-		JellyfinToken:  auth.AccessToken,
+		JellyfinUserID: req.JellyfinUserID,
 	})
 	if err != nil {
 		switch {
@@ -94,37 +79,12 @@ func (s *Server) handleCreateKid(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	s.logger.Info().Int64("kid_id", res.Kid.ID).Str("name", res.Kid.Name).Msg("kid created")
-
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"kid":    toKidResponse(*res.Kid),
-		"apiKey": res.RawAPIKey, // shown ONCE; the parent must save it
-	})
-}
-
-func (s *Server) handleRegenerateKidKey(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
-	if err != nil {
-		http.Error(w, "bad id", http.StatusBadRequest)
-		return
-	}
-	rawKey, err := s.curation.RegenerateAPIKey(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, curation.ErrKidNotFound) {
-			http.Error(w, "kid not found", http.StatusNotFound)
-			return
-		}
-		s.logger.Error().Err(err).Int64("kid_id", id).Msg("regenerate kid key")
-		http.Error(w, "failed to regenerate", http.StatusInternalServerError)
-		return
-	}
-	s.logger.Info().Int64("kid_id", id).Msg("kid api key regenerated")
-	writeJSON(w, http.StatusOK, map[string]string{"apiKey": rawKey})
+	s.logger.Info().Int64("kid_id", kid.ID).Str("name", kid.Name).Msg("kid created")
+	writeJSON(w, http.StatusCreated, map[string]any{"kid": toKidResponse(*kid)})
 }
 
 // handleUpdateKid renames a kid and/or reassigns it to a different
-// profile. API key + Jellyfin token are preserved across the update.
-// Body: {"name"?, "profileId"?}; at least one must be present.
+// profile. Body: {"name"?, "profileId"?}; at least one must be present.
 func (s *Server) handleUpdateKid(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
 	if err != nil {
@@ -171,4 +131,45 @@ func (s *Server) handleDeleteKid(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Info().Int64("kid_id", id).Msg("kid deleted")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleListJellyfinUsers powers the admin "create kid" dropdown.
+// Returns every Jellyfin user the service-account key can see, with
+// flags for is-admin / is-disabled and (computed here) whether the user
+// is already mapped to a kid in Jellybean.
+func (s *Server) handleListJellyfinUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := s.jellyfin.ListUsers(r.Context())
+	if err != nil {
+		s.logger.Error().Err(err).Msg("list jellyfin users")
+		http.Error(w, "failed to list jellyfin users", http.StatusBadGateway)
+		return
+	}
+	kids, err := s.curation.ListKids(r.Context())
+	if err != nil {
+		s.logger.Error().Err(err).Msg("list kids for jellyfin user dropdown")
+		http.Error(w, "failed to list kids", http.StatusInternalServerError)
+		return
+	}
+	assigned := make(map[string]string, len(kids))
+	for _, k := range kids {
+		assigned[k.JellyfinUserID] = k.Name
+	}
+	type userResp struct {
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		IsAdmin    bool   `json:"isAdmin"`
+		IsDisabled bool   `json:"isDisabled"`
+		AssignedTo string `json:"assignedTo,omitempty"`
+	}
+	out := make([]userResp, 0, len(users))
+	for _, u := range users {
+		out = append(out, userResp{
+			ID:         u.ID,
+			Name:       u.Name,
+			IsAdmin:    u.IsAdmin,
+			IsDisabled: u.IsDisabled,
+			AssignedTo: assigned[u.ID],
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"users": out})
 }

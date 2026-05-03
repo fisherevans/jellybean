@@ -9,6 +9,47 @@ import (
 	"net/http"
 )
 
+// JellyfinUser is the subset of /Users fields the admin "pick a user"
+// dropdown needs. We expose IsDisabled so the UI can dim disabled rows
+// without filtering them out.
+type JellyfinUser struct {
+	ID         string `json:"Id"`
+	Name       string `json:"Name"`
+	IsAdmin    bool   `json:"-"`
+	IsDisabled bool   `json:"-"`
+}
+
+// ListUsers returns every user Jellyfin knows about. Service-account
+// scoped. Used by the admin "create kid" flow to populate the Jellyfin
+// user dropdown without making the parent type a username.
+func (c *Client) ListUsers(ctx context.Context) ([]JellyfinUser, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/Users", nil)
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		ID     string `json:"Id"`
+		Name   string `json:"Name"`
+		Policy struct {
+			IsAdministrator bool `json:"IsAdministrator"`
+			IsDisabled      bool `json:"IsDisabled"`
+		} `json:"Policy"`
+	}
+	if err := c.do(req, &raw); err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	out := make([]JellyfinUser, 0, len(raw))
+	for _, u := range raw {
+		out = append(out, JellyfinUser{
+			ID:         u.ID,
+			Name:       u.Name,
+			IsAdmin:    u.Policy.IsAdministrator,
+			IsDisabled: u.Policy.IsDisabled,
+		})
+	}
+	return out, nil
+}
+
 // AuthenticateByName validates a user's Jellyfin credentials and returns the
 // resulting access token plus user info. Used to power the parent web app
 // login flow; Jellybean issues its own session afterwards.

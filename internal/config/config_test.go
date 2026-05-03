@@ -79,24 +79,6 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
-			name: "kids keys parsed",
-			env: merge(required, map[string]string{
-				"JELLYBEAN_KIDS_KEYS": "key1=user1,key2=user2",
-			}),
-			check: func(t *testing.T, c *Config) {
-				if c.KidsKeys["key1"] != "user1" || c.KidsKeys["key2"] != "user2" {
-					t.Errorf("KidsKeys = %v", c.KidsKeys)
-				}
-			},
-		},
-		{
-			name: "kids keys malformed",
-			env: merge(required, map[string]string{
-				"JELLYBEAN_KIDS_KEYS": "missingequals",
-			}),
-			wantErr: true,
-		},
-		{
 			name: "dev env detected",
 			env: merge(required, map[string]string{
 				"JELLYBEAN_ENV": "dev",
@@ -129,14 +111,13 @@ func TestLoad(t *testing.T) {
 }
 
 var allEnvKeys = map[string]struct{}{
-	"JELLYFIN_URL":                 {},
-	"JELLYFIN_API_KEY":             {},
-	"JELLYBEAN_PORT":               {},
-	"JELLYBEAN_DB_PATH":            {},
-	"JELLYBEAN_SESSION_SECRET":     {},
+	"JELLYFIN_URL":                  {},
+	"JELLYFIN_API_KEY":              {},
+	"JELLYBEAN_PORT":                {},
+	"JELLYBEAN_DB_PATH":             {},
+	"JELLYBEAN_SESSION_SECRET":      {},
 	"JELLYBEAN_JELLYFIN_TAG_MIRROR": {},
-	"JELLYBEAN_ENV":                {},
-	"JELLYBEAN_KIDS_KEYS":          {},
+	"JELLYBEAN_ENV":                 {},
 }
 
 func merge(maps ...map[string]string) map[string]string {

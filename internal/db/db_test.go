@@ -80,7 +80,7 @@ func TestCategorizationsTableSchema(t *testing.T) {
 	}
 }
 
-func TestKidsTableUniqueConstraints(t *testing.T) {
+func TestKidsTableUniqueJellyfinUser(t *testing.T) {
 	conn, err := Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -93,22 +93,15 @@ func TestKidsTableUniqueConstraints(t *testing.T) {
 	}
 
 	if err := exec(`INSERT INTO kids
-		(name, profile_id, jellyfin_user_id, api_key_hash, created_at)
-		VALUES ('alice', 1, 'jf-1', 'hash-1', unixepoch())`); err != nil {
+		(name, profile_id, jellyfin_user_id, created_at)
+		VALUES ('alice', 1, 'jf-1', unixepoch())`); err != nil {
 		t.Fatalf("first kid: %v", err)
 	}
 
 	// Duplicate jellyfin_user_id rejected.
 	if err := exec(`INSERT INTO kids
-		(name, profile_id, jellyfin_user_id, api_key_hash, created_at)
-		VALUES ('alice2', 1, 'jf-1', 'hash-2', unixepoch())`); err == nil {
+		(name, profile_id, jellyfin_user_id, created_at)
+		VALUES ('alice2', 1, 'jf-1', unixepoch())`); err == nil {
 		t.Error("expected duplicate jellyfin_user_id to fail")
-	}
-
-	// Duplicate api_key_hash rejected.
-	if err := exec(`INSERT INTO kids
-		(name, profile_id, jellyfin_user_id, api_key_hash, created_at)
-		VALUES ('bob', 1, 'jf-2', 'hash-1', unixepoch())`); err == nil {
-		t.Error("expected duplicate api_key_hash to fail")
 	}
 }

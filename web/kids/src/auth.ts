@@ -1,90 +1,102 @@
 // Auth + device-local state for the kids client.
 //
-// A device (TV) can host multiple kid profiles. Each profile binds a kid
-// display name to an API key minted by the parent web app. The active
-// profile drives every /api/kids/* call on this device.
+// One device = one signed-in kid. The login screen POSTs username +
+// password to /api/kids/auth/login; Jellybean forwards to Jellyfin's
+// AuthenticateByName, looks up which Jellybean profile that Jellyfin
+// user is mapped to, and returns a session payload. We persist that
+// payload in localStorage and present it as bearer auth on every
+// subsequent /api/kids/* call.
 //
 // Storage shape:
-//   jellybean.kids.profiles  - JSON array of {name, apiKey}
-//   jellybean.kids.activeKey - the apiKey of the picked profile
-//   jellybean.kids.deviceId  - lazily-generated per-install UUID
-//
-// The legacy single-key model (jellybean.kids.key from M1) is migrated
-// transparently on first read so existing TVs don't need re-onboarding.
+//   jellybean.kids.token       - Jellyfin access token from /auth/login
+//   jellybean.kids.userId      - Jellyfin user id (sent as header)
+//   jellybean.kids.profileId   - Jellybean profile id (numeric, stringified)
+//   jellybean.kids.userName    - Jellyfin user's "name" (e.g. "alice")
+//   jellybean.kids.kidName     - Jellybean's display name for the kid
+//   jellybean.kids.profileName - Jellybean profile name (informational)
+//   jellybean.kids.kidId       - Jellybean kid row id (informational)
+//   jellybean.kids.deviceId    - lazily-generated per-install UUID
 //
 // An admin session cookie is also accepted server-side; when present, the
-// kid key is unnecessary. We still send the deviceId header so Jellyfin's
-// session view sees the right device identity even on admin-driven calls.
+// bearer token is unnecessary. We still send the deviceId header so
+// Jellyfin's session view sees the right device identity even on
+// admin-driven calls (e.g. preview at /kids/library?profileId=N).
 
-const PROFILES_KEY = "jellybean.kids.profiles";
-const ACTIVE_KEY = "jellybean.kids.activeKey";
+const TOKEN_KEY = "jellybean.kids.token";
+const USER_ID_KEY = "jellybean.kids.userId";
+const PROFILE_ID_KEY = "jellybean.kids.profileId";
+const USER_NAME_KEY = "jellybean.kids.userName";
+const KID_NAME_KEY = "jellybean.kids.kidName";
+const PROFILE_NAME_KEY = "jellybean.kids.profileName";
+const KID_ID_KEY = "jellybean.kids.kidId";
 const DEVICE_ID_KEY = "jellybean.kids.deviceId";
-const LEGACY_KEY = "jellybean.kids.key";
 
-export type KidProfile = { name: string; apiKey: string };
+const SESSION_KEY_PREFIX = "jellybean.kids.";
+const SESSION_KEY_KEEP = new Set([DEVICE_ID_KEY]);
+
+export type Session = {
+    token: string;
+    userId: string;
+    userName: string;
+    profileId: number;
+    profileName?: string;
+    kidName?: string;
+    kidId?: number;
+};
+
 export type AdminUser = { id: string; name: string; admin: boolean };
 
-export function listProfiles(): KidProfile[] {
-    migrateLegacy();
-    const raw = localStorage.getItem(PROFILES_KEY);
-    if (!raw) return [];
-    try {
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed.filter(isProfile) : [];
-    } catch {
-        return [];
+export function getSession(): Session | null {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const userId = localStorage.getItem(USER_ID_KEY);
+    const userName = localStorage.getItem(USER_NAME_KEY);
+    const profileIdRaw = localStorage.getItem(PROFILE_ID_KEY);
+    if (!token || !userId || !userName || !profileIdRaw) return null;
+    const profileId = Number(profileIdRaw);
+    if (!Number.isFinite(profileId)) return null;
+    const session: Session = {
+        token,
+        userId,
+        userName,
+        profileId,
+    };
+    const profileName = localStorage.getItem(PROFILE_NAME_KEY);
+    if (profileName) session.profileName = profileName;
+    const kidName = localStorage.getItem(KID_NAME_KEY);
+    if (kidName) session.kidName = kidName;
+    const kidIdRaw = localStorage.getItem(KID_ID_KEY);
+    if (kidIdRaw) {
+        const kidId = Number(kidIdRaw);
+        if (Number.isFinite(kidId)) session.kidId = kidId;
     }
+    return session;
 }
 
-function isProfile(v: unknown): v is KidProfile {
-    return (
-        typeof v === "object" &&
-        v !== null &&
-        typeof (v as KidProfile).name === "string" &&
-        typeof (v as KidProfile).apiKey === "string"
-    );
+export function setSession(s: Session): void {
+    localStorage.setItem(TOKEN_KEY, s.token);
+    localStorage.setItem(USER_ID_KEY, s.userId);
+    localStorage.setItem(USER_NAME_KEY, s.userName);
+    localStorage.setItem(PROFILE_ID_KEY, String(s.profileId));
+    if (s.profileName) localStorage.setItem(PROFILE_NAME_KEY, s.profileName);
+    else localStorage.removeItem(PROFILE_NAME_KEY);
+    if (s.kidName) localStorage.setItem(KID_NAME_KEY, s.kidName);
+    else localStorage.removeItem(KID_NAME_KEY);
+    if (s.kidId !== undefined) localStorage.setItem(KID_ID_KEY, String(s.kidId));
+    else localStorage.removeItem(KID_ID_KEY);
 }
 
-// addProfile appends or updates a profile, deduped by apiKey. Returns the
-// full updated list so callers can re-render without re-reading storage.
-export function addProfile(p: KidProfile): KidProfile[] {
-    const trimmed: KidProfile = { name: p.name.trim(), apiKey: p.apiKey.trim() };
-    const existing = listProfiles();
-    const idx = existing.findIndex((x) => x.apiKey === trimmed.apiKey);
-    let next: KidProfile[];
-    if (idx >= 0) {
-        next = [...existing];
-        next[idx] = trimmed;
-    } else {
-        next = [...existing, trimmed];
+// clearSession wipes every jellybean.kids.* entry except the deviceId,
+// which is per-install and outlives sign-in/sign-out cycles.
+export function clearSession(): void {
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (!k.startsWith(SESSION_KEY_PREFIX)) continue;
+        if (SESSION_KEY_KEEP.has(k)) continue;
+        toRemove.push(k);
     }
-    localStorage.setItem(PROFILES_KEY, JSON.stringify(next));
-    return next;
-}
-
-export function removeProfile(apiKey: string): KidProfile[] {
-    const next = listProfiles().filter((p) => p.apiKey !== apiKey);
-    localStorage.setItem(PROFILES_KEY, JSON.stringify(next));
-    if (getActiveKey() === apiKey) clearActiveKey();
-    return next;
-}
-
-export function getActiveKey(): string | null {
-    return localStorage.getItem(ACTIVE_KEY);
-}
-
-export function setActiveKey(apiKey: string): void {
-    localStorage.setItem(ACTIVE_KEY, apiKey);
-}
-
-export function clearActiveKey(): void {
-    localStorage.removeItem(ACTIVE_KEY);
-}
-
-export function getActiveProfile(): KidProfile | null {
-    const k = getActiveKey();
-    if (!k) return null;
-    return listProfiles().find((p) => p.apiKey === k) ?? null;
+    for (const k of toRemove) localStorage.removeItem(k);
 }
 
 // getDeviceId returns a stable per-install UUID, generating + persisting one
@@ -96,17 +108,6 @@ export function getDeviceId(): string {
         localStorage.setItem(DEVICE_ID_KEY, id);
     }
     return id;
-}
-
-function migrateLegacy(): void {
-    const old = localStorage.getItem(LEGACY_KEY);
-    if (!old) return;
-    if (!localStorage.getItem(PROFILES_KEY)) {
-        const profile: KidProfile = { name: "Kid", apiKey: old };
-        localStorage.setItem(PROFILES_KEY, JSON.stringify([profile]));
-        localStorage.setItem(ACTIVE_KEY, old);
-    }
-    localStorage.removeItem(LEGACY_KEY);
 }
 
 export async function probeAdmin(): Promise<AdminUser | null> {
@@ -121,13 +122,17 @@ export async function probeAdmin(): Promise<AdminUser | null> {
 }
 
 // authHeaders returns the headers every /api/kids/* request should carry.
-// DeviceId is always sent. The kid key is sent when present; admin sessions
-// rely on the cookie (browser sends automatically) instead.
+// DeviceId is always sent. When signed in we add Authorization (bearer
+// token) plus X-Jellyfin-User-Id; otherwise we rely on the admin cookie
+// (browser sends automatically) for the preview path.
 export function authHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
         "X-Jellybean-DeviceId": getDeviceId(),
     };
-    const k = getActiveKey();
-    if (k) headers["X-Jellybean-Key"] = k;
+    const session = getSession();
+    if (session) {
+        headers["Authorization"] = `Bearer ${session.token}`;
+        headers["X-Jellyfin-User-Id"] = session.userId;
+    }
     return headers;
 }

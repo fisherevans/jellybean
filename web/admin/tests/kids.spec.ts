@@ -1,9 +1,17 @@
 import { test, expect } from "@playwright/test";
 
-// End-to-end checks for the kids client's profile picker + deviceId
-// scaffolding (#19). Reuses the admin storageState (which authenticates
-// kids endpoints too) and runs each test in a fresh context so localStorage
-// state from one test doesn't bleed into another.
+// End-to-end checks for the kids client. The auth model is now
+// "Jellyfin username + password on the device" (see docs/auth-pivot-plan.md);
+// the old API-key picker / setup flow is gone. These tests:
+//
+//   - Cover the new login screen happy path.
+//   - Reuse the admin-preview path (?profileId=N + admin cookie) for the
+//     library + playback checks, since that path doesn't depend on a kid
+//     mapping existing for the test fixture's admin user.
+//
+// All tests run with the admin storageState so admin-cookie-authed kids
+// endpoints work. We clear kids localStorage between tests so login state
+// doesn't bleed across cases.
 
 const KIDS_BASE = "/kids/";
 
@@ -11,123 +19,65 @@ async function clearKidsLocalStorage(page: import("@playwright/test").Page) {
     // Visit the kids origin first so localStorage is scoped right.
     await page.goto(KIDS_BASE);
     await page.evaluate(() => {
-        localStorage.removeItem("jellybean.kids.profiles");
-        localStorage.removeItem("jellybean.kids.activeKey");
-        localStorage.removeItem("jellybean.kids.deviceId");
-        localStorage.removeItem("jellybean.kids.key");
+        for (const k of Object.keys(localStorage)) {
+            if (k.startsWith("jellybean.kids.")) localStorage.removeItem(k);
+        }
     });
 }
 
-test.describe("kids picker", () => {
-    test("zero profiles + admin: shows admin preview with profiles list", async ({ page }) => {
+test.describe("kids login", () => {
+    test("/kids redirects to /kids/login when not signed in", async ({ page }) => {
         await clearKidsLocalStorage(page);
         await page.goto(KIDS_BASE);
-        await expect(
-            page.getByRole("heading", { name: /Kids client preview/ }),
-        ).toBeVisible();
-        // Server-side Default profile is the test invariant.
-        await expect(page.getByRole("link", { name: /Default/ })).toBeVisible();
+        await expect(page).toHaveURL(/\/kids\/login$/);
+        await expect(page.getByRole("heading", { name: /Sign in/ })).toBeVisible();
     });
 
-    test("one profile auto-selects and routes to /library", async ({ page }) => {
+    test("login form: invalid credentials show an error", async ({ page }) => {
         await clearKidsLocalStorage(page);
-        await page.evaluate(() => {
-            localStorage.setItem(
-                "jellybean.kids.profiles",
-                JSON.stringify([{ name: "TestKid", apiKey: "fake-key-only-for-routing" }]),
-            );
+        await page.goto("/kids/login");
+        await page.getByLabel("Username").fill("definitely-not-a-real-user");
+        await page.getByLabel("Password").fill("definitely-not-a-real-password");
+        await page.getByRole("button", { name: /Sign in/ }).click();
+        // Backend responds 401, login screen shows the error message.
+        await expect(page.getByText(/Wrong username or password/)).toBeVisible({
+            timeout: 10_000,
         });
-        await page.goto(KIDS_BASE);
-        // Library page renders. Even if the API rejects the fake key, the
-        // route + heading should show up. Admin cookie carries us past the
-        // 401 anyway, so we expect a real heading.
-        await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-        await expect(page).toHaveURL(/\/kids\/library/);
     });
 
-    test("two profiles: shows picker with both tiles", async ({ page }) => {
+    test("login form: valid creds either land on /library or 403 if not mapped", async ({
+        page,
+    }) => {
+        const username = process.env.JELLYFIN_USERNAME;
+        const password = process.env.JELLYFIN_PASSWORD;
+        test.skip(
+            !username || !password,
+            "JELLYFIN_USERNAME / JELLYFIN_PASSWORD env vars required",
+        );
         await clearKidsLocalStorage(page);
-        await page.evaluate(() => {
-            localStorage.setItem(
-                "jellybean.kids.profiles",
-                JSON.stringify([
-                    { name: "Dex", apiKey: "key-dex" },
-                    { name: "Zoey", apiKey: "key-zoey" },
-                ]),
-            );
-        });
-        await page.goto(KIDS_BASE);
-        await expect(page.getByRole("heading", { name: /Who's watching/ })).toBeVisible();
-        await expect(page.getByRole("button", { name: /Dex/ })).toBeVisible();
-        await expect(page.getByRole("button", { name: /Zoey/ })).toBeVisible();
-    });
+        await page.goto("/kids/login");
+        await page.getByLabel("Username").fill(username!);
+        await page.getByLabel("Password").fill(password!);
+        await page.getByRole("button", { name: /Sign in/ }).click();
 
-    test("/setup query-param shortcut appends a profile and redirects", async ({ page }) => {
-        await clearKidsLocalStorage(page);
-        await page.goto("/kids/setup?key=qp-key&name=QPKid");
-        // Single profile after redirect should auto-route to library.
-        await expect(page).toHaveURL(/\/kids\/library/);
-        const stored = await page.evaluate(() =>
-            localStorage.getItem("jellybean.kids.profiles"),
-        );
-        expect(stored).toBeTruthy();
-        const parsed = JSON.parse(stored!);
-        expect(parsed).toEqual([{ name: "QPKid", apiKey: "qp-key" }]);
-    });
-
-    test("deviceId is generated lazily and sent on /api/kids/library", async ({ page }) => {
-        await clearKidsLocalStorage(page);
-        await page.evaluate(() => {
-            localStorage.setItem(
-                "jellybean.kids.profiles",
-                JSON.stringify([{ name: "TestKid", apiKey: "test-key" }]),
-            );
-        });
-
-        const seen: string[] = [];
-        page.on("request", (req) => {
-            const id = req.headers()["x-jellybean-deviceid"];
-            if (id && req.url().includes("/api/kids/")) seen.push(id);
-        });
-
-        await page.goto(KIDS_BASE);
-        // Wait for at least one /api/kids/library call.
-        await page.waitForRequest(
-            (req) => req.url().includes("/api/kids/library"),
-            { timeout: 10_000 },
-        );
-        // Storage now has a deviceId.
-        const stored = await page.evaluate(() =>
-            localStorage.getItem("jellybean.kids.deviceId"),
-        );
-        expect(stored).toMatch(
-            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-        );
-        expect(seen.length).toBeGreaterThan(0);
-        expect(seen[0]).toBe(stored);
-    });
-
-    test("manual setup form adds a profile and updates the count", async ({ page }) => {
-        await clearKidsLocalStorage(page);
-        await page.goto("/kids/setup");
-        await page.getByRole("heading", { name: /Add kid profile/ }).waitFor();
-        // Two label inputs in order: Display name, Kid API key.
-        const inputs = page.locator(".setup label input");
-        await inputs.nth(0).fill("Manual");
-        await inputs.nth(1).fill("manual-key");
-        await page.getByRole("button", { name: "Add profile" }).click();
-        await expect(page.getByText(/1 profile configured/)).toBeVisible();
-        const stored = await page.evaluate(() =>
-            localStorage.getItem("jellybean.kids.profiles"),
-        );
-        expect(JSON.parse(stored!)).toEqual([
-            { name: "Manual", apiKey: "manual-key" },
-        ]);
+        // Two acceptable outcomes:
+        //   - The admin user is mapped to a kid: we land on /library.
+        //   - It isn't (more likely with the test fixture): the form shows
+        //     the "ask a parent" message.
+        // Wait until either condition is true.
+        await expect(async () => {
+            const url = page.url();
+            if (/\/kids\/library/.test(url)) return;
+            await expect(
+                page.getByText(/isn't set up as a kid/),
+            ).toBeVisible();
+        }).toPass({ timeout: 10_000 });
     });
 });
 
-// Library / browse grid (#20). Uses the admin preview path (?profileId=N)
-// against the test-invariant Default profile.
+// Library / browse grid. Uses the admin preview path (?profileId=N)
+// against the test-invariant Default profile so we don't need a kid
+// mapping for the admin user.
 async function gotoLibrary(page: import("@playwright/test").Page, profileId: number) {
     await clearKidsLocalStorage(page);
     await page.goto(`/kids/library?profileId=${profileId}`);
@@ -192,9 +142,32 @@ test.describe("kids library", () => {
         await expect(firstTile).toBeVisible({ timeout: 10_000 });
         await expect(firstTile.locator(".tile-badge")).toBeVisible();
     });
+
+    test("deviceId is generated lazily and sent on /api/kids/library", async ({ page }) => {
+        await clearKidsLocalStorage(page);
+        const seen: string[] = [];
+        page.on("request", (req) => {
+            const id = req.headers()["x-jellybean-deviceid"];
+            if (id && req.url().includes("/api/kids/")) seen.push(id);
+        });
+
+        await page.goto(`/kids/library?profileId=1`);
+        await page.waitForRequest(
+            (req) => req.url().includes("/api/kids/library"),
+            { timeout: 10_000 },
+        );
+        const stored = await page.evaluate(() =>
+            localStorage.getItem("jellybean.kids.deviceId"),
+        );
+        expect(stored).toMatch(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+        );
+        expect(seen.length).toBeGreaterThan(0);
+        expect(seen[0]).toBe(stored);
+    });
 });
 
-// Playback (#21). Admin path (no kid token) so the server-side report
+// Playback. Admin path (no kid token) so the server-side report
 // short-circuits and Jellyfin's session view stays clean. We're verifying
 // the client-side wiring, not real Jellyfin attribution.
 test.describe("kids playback", () => {

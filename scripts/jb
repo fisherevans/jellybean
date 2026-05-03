@@ -22,16 +22,20 @@
 #   jb auth-setup       store dev login credentials (username + password) in keychain
 #   jb auth             mint a session cookie from the stored credentials
 #   jb api METHOD PATH [body-json]  authenticated request via the cookie
-#   jb kid-set NAME KEY store a kid api key under that name in the keychain
-#                       (NAME is a label you choose, e.g. "dex"; the actual
-#                       key is read from stdin or arg-2 to avoid shell history)
-#   jb kid-list         list known kid labels (no key values)
-#   jb kid-rm NAME      delete a stored kid label
+#   jb kid-login NAME   log a kid in via /api/kids/auth/login; prompts for
+#                       Jellyfin username + password, stores them under
+#                       jellybean.KID_<NAME>_USER/_PASS, and caches the
+#                       resulting bearer token at .run/kid-token-NAME.json
+#                       (mode 600). NAME is a label you pick, e.g. "dex".
+#   jb kid-list         list known kid labels (no credentials)
+#   jb kid-rm NAME      delete stored credentials + cached token + device id
 #   jb kapi NAME METHOD PATH [body-json]
 #                       authenticated kids-API request as the named kid;
-#                       sends X-Jellybean-Key + X-Jellybean-DeviceId
-#                       (DeviceId persisted at .run/kid-device-NAME so calls
-#                       from the same label show up as one Jellyfin session)
+#                       sends Authorization: Bearer <token>, X-Jellyfin-User-Id,
+#                       and X-Jellybean-DeviceId (DeviceId persisted at
+#                       .run/kid-device-NAME so calls from the same label
+#                       show up as one Jellyfin session). Re-auths once on
+#                       401 if stored creds are present.
 #   jb e2e [pw-args]    run the Playwright UI suite (uses keychain creds)
 #   jb help             this text
 #
@@ -105,7 +109,6 @@ REQUIRED_KEYS=(
 )
 
 OPTIONAL_KEYS=(
-    JELLYBEAN_KIDS_KEYS
     JELLYBEAN_PORT
     JELLYBEAN_DB_PATH
     JELLYBEAN_JELLYFIN_TAG_MIRROR
@@ -206,14 +209,6 @@ cmd_setup() {
     fi
 
     echo
-    printf 'JELLYBEAN_KIDS_KEYS (e.g. "k1=jellyfin_user_id"; blank to skip): '
-    read -r new
-    if [[ -n "$new" ]]; then
-        kc_set JELLYBEAN_KIDS_KEYS "$new"
-        echo "  saved."
-    fi
-
-    echo
     echo "Done. Try: jb start"
 }
 
@@ -223,7 +218,7 @@ cmd_env() {
     while IFS= read -r line; do
         k="${line%%=*}"; v="${line#*=}"
         case "$k" in
-            JELLYFIN_API_KEY|JELLYBEAN_SESSION_SECRET|JELLYBEAN_KIDS_KEYS)
+            JELLYFIN_API_KEY|JELLYBEAN_SESSION_SECRET)
                 printf '%s=<redacted, %d chars>\n' "$k" "${#v}"
                 ;;
             *)
@@ -558,9 +553,13 @@ cmd_api() {
     echo
 }
 
-# Per-kid keychain entries are namespaced under jellybean.KID_<NAME>. The
-# label NAME is whatever the user picks; we uppercase it for consistency.
-kid_kc_key() {
+# Per-kid keychain entries are namespaced under jellybean.KID_<NAME>_USER and
+# jellybean.KID_<NAME>_PASS (Jellyfin credentials, used to mint a bearer
+# token via /api/kids/auth/login). The bearer token + jellyfin user id are
+# cached at .run/kid-token-<name>.json so we don't re-auth on every call.
+# The label NAME is whatever the user picks; we uppercase it for the
+# keychain service name and lowercase it for filenames.
+kid_validate_name() {
     local name="$1"
     # Allow letters/digits/underscore/dash; reject the rest so the key
     # name can't smuggle in spaces or colons.
@@ -568,39 +567,179 @@ kid_kc_key() {
         echo "kid label must match [A-Za-z0-9_-]+ (got: $name)" >&2
         return 2
     fi
-    local upper
-    upper="$(echo "$name" | tr '[:lower:]' '[:upper:]')"
-    echo "KID_${upper}"
 }
 
-cmd_kid_set() {
-    local name="${1:-}"; shift || true
-    local key="${1:-}"
+kid_kc_user_key() {
+    local name="$1" upper
+    upper="$(echo "$name" | tr '[:lower:]' '[:upper:]')"
+    echo "KID_${upper}_USER"
+}
+
+kid_kc_pass_key() {
+    local name="$1" upper
+    upper="$(echo "$name" | tr '[:lower:]' '[:upper:]')"
+    echo "KID_${upper}_PASS"
+}
+
+kid_token_file() {
+    local name="$1" lower
+    lower="$(echo "$name" | tr '[:upper:]' '[:lower:]')"
+    echo "$RUN_DIR/kid-token-${lower}.json"
+}
+
+kid_device_file() {
+    local name="$1" lower
+    lower="$(echo "$name" | tr '[:upper:]' '[:lower:]')"
+    echo "$RUN_DIR/kid-device-${lower}.txt"
+}
+
+# Persist a per-label DeviceId so repeated calls show up as one session in
+# Jellyfin's activity view (matches how a real TV would behave). Writes the
+# file mode-600 on first creation.
+kid_get_device_id() {
+    local name="$1"
+    local dev_file
+    dev_file="$(kid_device_file "$name")"
+    if [[ -f "$dev_file" ]]; then
+        cat "$dev_file"
+        return 0
+    fi
+    local device_id
+    device_id="$(uuidgen)"
+    printf '%s\n' "$device_id" > "$dev_file"
+    chmod 600 "$dev_file"
+    printf '%s\n' "$device_id"
+}
+
+# POST to /api/kids/auth/login with $1=username $2=password. On 200, writes
+# the parsed response (token + userId + ...) to $3 (mode 600) and prints
+# the friendly summary. On non-200, prints the helpful error to stderr and
+# returns the curl http_code.
+kid_do_login() {
+    local username="$1" password="$2" out_file="$3"
+    local port body status_file body_file status
+    port="$(get_port)"
+    status_file="$(mktemp -t jb-kid-login.XXXXXX)"
+    body_file="$(mktemp -t jb-kid-login.XXXXXX)"
+    # shellcheck disable=SC2064
+    trap "rm -f '$status_file' '$body_file'" RETURN
+
+    body="$(jq -nc --arg u "$username" --arg p "$password" \
+        '{username: $u, password: $p}')"
+    status=$(curl -sS -o "$body_file" -w '%{http_code}' \
+        -H 'Content-Type: application/json' \
+        -d "$body" \
+        "http://127.0.0.1:${port}/api/kids/auth/login" || echo "000")
+    case "$status" in
+        200)
+            # Validate it's parseable JSON with the expected keys before
+            # we commit it to disk.
+            if ! jq -e '.token and .userId' "$body_file" >/dev/null 2>&1; then
+                echo "login response did not contain token + userId; got:" >&2
+                cat "$body_file" >&2
+                echo >&2
+                return 1
+            fi
+            # Atomic-ish write: install with mode 600.
+            install -m 600 /dev/null "$out_file"
+            cat "$body_file" > "$out_file"
+            return 0
+            ;;
+        401|403)
+            echo "kid login failed (status $status). check Jellyfin username/password." >&2
+            cat "$body_file" >&2
+            echo >&2
+            return 1
+            ;;
+        400)
+            echo "kid login rejected (status 400). is this Jellyfin user mapped to a kid in Jellybean?" >&2
+            cat "$body_file" >&2
+            echo >&2
+            return 1
+            ;;
+        502|503)
+            echo "kid login upstream error (status $status). is Jellyfin reachable from the daemon?" >&2
+            cat "$body_file" >&2
+            echo >&2
+            return 1
+            ;;
+        000)
+            echo "kid login could not reach the daemon. is it running? jb status" >&2
+            return 1
+            ;;
+        *)
+            echo "kid login unexpected status $status" >&2
+            cat "$body_file" >&2
+            echo >&2
+            return 1
+            ;;
+    esac
+}
+
+cmd_kid_login() {
+    local name="${1:-}"
     if [[ -z "$name" ]]; then
-        echo "usage: jb kid-set NAME [KEY]" >&2
-        echo "  if KEY is omitted, reads from stdin (silenced)" >&2
+        echo "usage: jb kid-login NAME" >&2
+        echo "  prompts for Jellyfin username + password, POSTs to" >&2
+        echo "  /api/kids/auth/login, caches the bearer token under .run/." >&2
         exit 2
     fi
-    local kc
-    kc="$(kid_kc_key "$name")" || exit $?
-    if [[ -z "$key" ]]; then
-        # Read silently so the key never echoes to the terminal.
-        printf 'paste kid api key (no echo): ' >&2
-        IFS= read -r -s key
-        echo >&2
-    fi
-    if [[ -z "$key" ]]; then
-        echo "no key provided" >&2
+    kid_validate_name "$name" || exit $?
+
+    local user_kc pass_kc
+    user_kc="$(kid_kc_user_key "$name")"
+    pass_kc="$(kid_kc_pass_key "$name")"
+
+    local username password
+    printf 'Jellyfin username for kid %q: ' "$name" >&2
+    IFS= read -r username
+    if [[ -z "$username" ]]; then
+        echo "no username provided" >&2
         exit 2
     fi
-    kc_set "$kc" "$key"
-    echo "stored kid '$name' (keychain $KC_PREFIX$kc)"
+    printf 'Jellyfin password (no echo): ' >&2
+    stty -echo
+    IFS= read -r password
+    stty echo
+    echo >&2
+    if [[ -z "$password" ]]; then
+        echo "no password provided" >&2
+        exit 2
+    fi
+
+    local token_file
+    token_file="$(kid_token_file "$name")"
+    if ! kid_do_login "$username" "$password" "$token_file"; then
+        exit 1
+    fi
+
+    # Only stash creds after a successful login so we don't keep stale ones
+    # in the keychain.
+    kc_set "$user_kc" "$username"
+    kc_set "$pass_kc" "$password"
+
+    # Pre-create the device id so the user can see its location in the
+    # success summary.
+    local device_id
+    device_id="$(kid_get_device_id "$name")"
+
+    local user_id user_name profile_name
+    user_id="$(jq -r '.userId // empty' "$token_file")"
+    user_name="$(jq -r '.userName // empty' "$token_file")"
+    profile_name="$(jq -r '.profileName // empty' "$token_file")"
+    echo "logged in kid '$name' as '${user_name:-?}' (userId ${user_id:-?}, profile ${profile_name:-?})"
+    echo "  token cached:  $token_file"
+    echo "  device id:     $(kid_device_file "$name")"
+    echo "  creds:         $KC_PREFIX$user_kc / $KC_PREFIX$pass_kc"
 }
 
 cmd_kid_list() {
-    # Just filter the existing keychain list to KID_* entries. Values are
-    # never printed.
-    cmd_keychain list | sed -n 's/^KID_/  /p' | tr '[:upper:]' '[:lower:]' | sort -u
+    # Filter the keychain list to KID_*_USER entries; strip the suffix to
+    # get the label. Values are never printed.
+    cmd_keychain list \
+        | sed -n 's/^KID_\(.*\)_USER$/  \1/p' \
+        | tr '[:upper:]' '[:lower:]' \
+        | sort -u
 }
 
 cmd_kid_rm() {
@@ -609,11 +748,29 @@ cmd_kid_rm() {
         echo "usage: jb kid-rm NAME" >&2
         exit 2
     fi
-    local kc
-    kc="$(kid_kc_key "$name")" || exit $?
-    kc_rm "$kc"
-    rm -f "$RUN_DIR/kid-device-${name}.txt"
+    kid_validate_name "$name" || exit $?
+    kc_rm "$(kid_kc_user_key "$name")"
+    kc_rm "$(kid_kc_pass_key "$name")"
+    rm -f "$(kid_token_file "$name")"
+    rm -f "$(kid_device_file "$name")"
     echo "removed kid '$name'"
+}
+
+# Re-auth using stored credentials and rewrite the cached token file.
+# Returns 0 on success, 1 if creds aren't stored or login fails.
+kid_reauth() {
+    local name="$1"
+    local user_kc pass_kc username password token_file
+    user_kc="$(kid_kc_user_key "$name")"
+    pass_kc="$(kid_kc_pass_key "$name")"
+    if ! username="$(kc_get "$user_kc")" || [[ -z "$username" ]]; then
+        return 1
+    fi
+    if ! password="$(kc_get "$pass_kc")" || [[ -z "$password" ]]; then
+        return 1
+    fi
+    token_file="$(kid_token_file "$name")"
+    kid_do_login "$username" "$password" "$token_file"
 }
 
 cmd_kapi() {
@@ -624,37 +781,64 @@ cmd_kapi() {
         echo "usage: jb kapi NAME METHOD PATH [body-json]" >&2
         exit 2
     fi
-    local kc
-    kc="$(kid_kc_key "$name")" || exit $?
-    local key
-    if ! key="$(kc_get "$kc")" || [[ -z "$key" ]]; then
-        echo "no kid key stored under '$name'; run 'jb kid-set $name' first" >&2
+    kid_validate_name "$name" || exit $?
+
+    local token_file
+    token_file="$(kid_token_file "$name")"
+    if [[ ! -f "$token_file" ]]; then
+        echo "no session for kid '$name'; run 'jb kid-login $name' first" >&2
         exit 1
     fi
 
-    # Persist a per-label DeviceId so repeated calls show up as one session
-    # in Jellyfin's activity view (matches how a real TV would behave).
-    local dev_file="$RUN_DIR/kid-device-${name}.txt"
     local device_id
-    if [[ -f "$dev_file" ]]; then
-        device_id="$(cat "$dev_file")"
-    else
-        device_id="$(uuidgen)"
-        echo "$device_id" > "$dev_file"
-        chmod 600 "$dev_file"
-    fi
+    device_id="$(kid_get_device_id "$name")"
 
-    local port; port="$(get_port)"
     local body="${1:-}"
-    local args=(-sS -X "$method"
-        -H "X-Jellybean-Key: $key"
-        -H "X-Jellybean-DeviceId: $device_id")
-    if [[ -n "$body" ]]; then
-        args+=(-H 'Content-Type: application/json' -d "$body")
-    fi
-    args+=("http://127.0.0.1:${port}${path}")
-    curl "${args[@]}"
+    local port; port="$(get_port)"
+
+    # Single-shot send; if it returns 401 and we have stored creds, re-auth
+    # and try once more.
+    local attempt status body_file token user_id
+    body_file="$(mktemp -t jb-kapi.XXXXXX)"
+    # shellcheck disable=SC2064
+    trap "rm -f '$body_file'" RETURN
+
+    for attempt in 1 2; do
+        token="$(jq -r '.token // empty' "$token_file")"
+        user_id="$(jq -r '.userId // empty' "$token_file")"
+        if [[ -z "$token" || -z "$user_id" ]]; then
+            echo "cached session for '$name' is malformed; run 'jb kid-login $name'" >&2
+            exit 1
+        fi
+
+        local args=(-sS -o "$body_file" -w '%{http_code}' -X "$method"
+            -H "Authorization: Bearer $token"
+            -H "X-Jellyfin-User-Id: $user_id"
+            -H "X-Jellybean-DeviceId: $device_id")
+        if [[ -n "$body" ]]; then
+            args+=(-H 'Content-Type: application/json' -d "$body")
+        fi
+        args+=("http://127.0.0.1:${port}${path}")
+        status=$(curl "${args[@]}" || echo "000")
+
+        if [[ "$status" == "401" && "$attempt" == "1" ]]; then
+            echo "session expired; re-authenticating..." >&2
+            if ! kid_reauth "$name"; then
+                echo "kid session expired and re-login failed; run 'jb kid-login $name'" >&2
+                exit 1
+            fi
+            continue
+        fi
+        break
+    done
+
+    cat "$body_file"
     echo
+    # Propagate non-2xx as a non-zero exit so callers can tell.
+    if [[ "$status" =~ ^2[0-9][0-9]$ ]]; then
+        return 0
+    fi
+    return 1
 }
 
 cmd_e2e() {
@@ -711,7 +895,7 @@ case "${1:-help}" in
     auth-setup)  shift; cmd_auth_setup "$@" ;;
     auth)        shift; cmd_auth "$@" ;;
     api)         shift; cmd_api "$@" ;;
-    kid-set)     shift; cmd_kid_set "$@" ;;
+    kid-login)   shift; cmd_kid_login "$@" ;;
     kid-list)    shift; cmd_kid_list "$@" ;;
     kid-rm)      shift; cmd_kid_rm "$@" ;;
     kapi)        shift; cmd_kapi "$@" ;;

@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
     authHeaders,
-    getActiveProfile,
+    clearSession,
+    getSession,
     probeAdmin,
     type AdminUser,
-    type KidProfile,
+    type Session,
 } from "./auth";
 
 // Library is the kid's main browsing screen. Layout top-to-bottom:
@@ -20,8 +21,8 @@ import {
 // into view. Enter / Space / Click on a tile navigates to playback.
 //
 // Auth paths:
-//   - Kid path: active KidProfile is set; profileId is implicit from the
-//     kid record. Active key + deviceId go in headers.
+//   - Kid path: a Session is in localStorage (token + userId + profileId).
+//     Bearer token + Jellyfin user id + deviceId go in headers.
 //   - Admin path: ?profileId=N in the URL; admin cookie auths the request.
 
 type LibraryItem = {
@@ -58,7 +59,7 @@ const PAGE_SIZE = 24;
 export default function Library() {
     const nav = useNavigate();
     const [searchParams] = useSearchParams();
-    const [profile] = useState<KidProfile | null>(() => getActiveProfile());
+    const [session] = useState<Session | null>(() => getSession());
     const [admin, setAdmin] = useState<AdminUser | null | undefined>(undefined);
     const adminProfileId = searchParams.get("profileId");
     // Preserve search params (e.g. admin's profileId) when navigating to
@@ -124,8 +125,8 @@ export default function Library() {
     // parallel to keep the page snappy.
     useEffect(() => {
         if (admin === undefined) return;
-        if (!profile && !adminProfileId) {
-            nav("/", { replace: true });
+        if (!session && !adminProfileId) {
+            nav("/login", { replace: true });
             return;
         }
         let cancelled = false;
@@ -152,7 +153,7 @@ export default function Library() {
         return () => {
             cancelled = true;
         };
-    }, [admin, profile, adminProfileId, fetchSection, nav]);
+    }, [admin, session, adminProfileId, fetchSection, nav]);
 
     // Infinite scroll for the main grid.
     useEffect(() => {
@@ -222,21 +223,40 @@ export default function Library() {
 
     if (admin === undefined) return <div className="screen">Loading...</div>;
 
+    const heading = session
+        ? (session.kidName ?? session.userName)
+        : "Library";
+
+    function signOut() {
+        clearSession();
+        nav("/login", { replace: true });
+    }
+
     return (
         <div className="library" onKeyDown={onKey}>
-            {adminProfileId && !profile && <AdminPreviewBanner />}
+            {adminProfileId && !session && <AdminPreviewBanner />}
             <header className="library-header">
                 <div>
-                    <h1>{profile ? profile.name : "Library"}</h1>
-                    {adminProfileId && !profile && (
+                    <h1>{heading}</h1>
+                    {adminProfileId && !session && (
                         <p className="library-sub">
                             Admin preview: profile id {adminProfileId}
                         </p>
                     )}
                 </div>
-                <Link to="/" className="picker-link">
-                    {profile ? "switch profile" : "back"}
-                </Link>
+                {session ? (
+                    <button
+                        type="button"
+                        className="picker-link signout-btn"
+                        onClick={signOut}
+                    >
+                        Sign out
+                    </button>
+                ) : (
+                    <Link to="/" className="picker-link">
+                        back
+                    </Link>
+                )}
             </header>
 
             <div className="filter-row" role="tablist">

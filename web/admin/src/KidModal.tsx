@@ -1,17 +1,18 @@
 import { useEffect, useState } from "react";
-import { api, HttpError, type Kid, type Profile } from "./api";
+import { api, HttpError, type JellyfinUser, type Kid, type Profile } from "./api";
 
 type Props = {
     mode: "create" | "edit";
     kid?: Kid; // required when mode === "edit"
     profiles: Profile[];
-    onSaved: (apiKey?: string) => void; // create returns the show-once API key
+    onSaved: () => void;
     onClose: () => void;
 };
 
-// KidModal handles create + edit. Create asks for Jellyfin username and
-// password so we can mint a per-kid token; edit only touches name and
-// profile (re-issuing tokens has its own "Regenerate key" path).
+// KidModal handles create + edit. Create maps a Jellyfin user (picked from
+// a dropdown of /Users) to a Jellybean profile. The kid's TV authenticates
+// directly against Jellyfin on first launch, so no passwords or tokens are
+// collected here. Edit mode only touches name + profile.
 
 export default function KidModal({
     mode,
@@ -24,8 +25,8 @@ export default function KidModal({
     const [profileId, setProfileId] = useState<number>(
         kid?.profileId ?? profiles[0]?.id ?? 0,
     );
-    const [jellyfinUsername, setJellyfinUsername] = useState("");
-    const [jellyfinPassword, setJellyfinPassword] = useState("");
+    const [jellyfinUsers, setJellyfinUsers] = useState<JellyfinUser[] | null>(null);
+    const [jellyfinUserId, setJellyfinUserId] = useState<string>("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -37,19 +38,35 @@ export default function KidModal({
         return () => window.removeEventListener("keydown", onKey);
     }, [busy, onClose]);
 
+    // Only the create flow needs the Jellyfin user dropdown.
+    useEffect(() => {
+        if (mode !== "create") return;
+        let cancelled = false;
+        api.listJellyfinUsers()
+            .then((res) => {
+                if (cancelled) return;
+                setJellyfinUsers(res.users);
+                if (res.users.length > 0) {
+                    setJellyfinUserId(res.users[0].id);
+                }
+            })
+            .catch((err) => {
+                if (cancelled) return;
+                setError(err instanceof HttpError ? err.message : String(err));
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [mode]);
+
     async function submit(e: React.FormEvent) {
         e.preventDefault();
         setError(null);
         setBusy(true);
         try {
             if (mode === "create") {
-                const res = await api.createKid(
-                    name.trim(),
-                    profileId,
-                    jellyfinUsername.trim(),
-                    jellyfinPassword,
-                );
-                onSaved(res.apiKey);
+                await api.createKid(name.trim(), profileId, jellyfinUserId);
+                onSaved();
             } else if (kid) {
                 await api.updateKid(kid.id, {
                     name: name.trim(),
@@ -62,6 +79,14 @@ export default function KidModal({
         } finally {
             setBusy(false);
         }
+    }
+
+    function jellyfinUserLabel(u: JellyfinUser): string {
+        const parts = [u.name];
+        if (u.isAdmin) parts.push("(admin)");
+        if (u.isDisabled) parts.push("(disabled)");
+        if (u.assignedTo) parts.push(`(already → ${u.assignedTo})`);
+        return parts.join(" ");
     }
 
     return (
@@ -94,30 +119,31 @@ export default function KidModal({
                     </label>
 
                     {mode === "create" && (
-                        <>
-                            <label>
-                                Jellyfin username
-                                <input
-                                    value={jellyfinUsername}
-                                    onChange={(e) => setJellyfinUsername(e.target.value)}
-                                    required
-                                    autoComplete="username"
-                                />
-                            </label>
-                            <label>
-                                Jellyfin password
-                                <input
-                                    type="password"
-                                    value={jellyfinPassword}
-                                    onChange={(e) => setJellyfinPassword(e.target.value)}
-                                    required
-                                    autoComplete="new-password"
-                                />
-                                <span className="modal-hint">
-                                    Used once to mint a per-kid Jellyfin token. Not stored.
-                                </span>
-                            </label>
-                        </>
+                        <label>
+                            Jellyfin user
+                            <select
+                                value={jellyfinUserId}
+                                onChange={(e) => setJellyfinUserId(e.target.value)}
+                                required
+                                disabled={jellyfinUsers === null}
+                            >
+                                {jellyfinUsers === null ? (
+                                    <option value="">Loading users...</option>
+                                ) : jellyfinUsers.length === 0 ? (
+                                    <option value="">No Jellyfin users found</option>
+                                ) : (
+                                    jellyfinUsers.map((u) => (
+                                        <option key={u.id} value={u.id}>
+                                            {jellyfinUserLabel(u)}
+                                        </option>
+                                    ))
+                                )}
+                            </select>
+                            <span className="modal-hint">
+                                The kid's TV signs in to Jellyfin directly on first launch.
+                                Jellybean only stores the mapping.
+                            </span>
+                        </label>
                     )}
 
                     {error && <div className="error">{error}</div>}

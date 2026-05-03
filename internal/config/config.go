@@ -5,7 +5,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -13,33 +12,30 @@ import (
 )
 
 type Config struct {
-	JellyfinURL           string
-	JellyfinAPIKey        string
-	Port                  int
-	DBPath                string
-	SessionSecret         string
-	JellyfinTagMirror     bool
-	Env                   string
-	KidsKeys              map[string]string
+	JellyfinURL       string
+	JellyfinAPIKey    string
+	Port              int
+	DBPath            string
+	SessionSecret     string
+	JellyfinTagMirror bool
+	Env               string
 }
 
 const (
-	envJellyfinURL           = "JELLYFIN_URL"
-	envJellyfinAPIKey        = "JELLYFIN_API_KEY"
-	envPort                  = "JELLYBEAN_PORT"
-	envDBPath                = "JELLYBEAN_DB_PATH"
-	envSessionSecret         = "JELLYBEAN_SESSION_SECRET"
-	envJellyfinTagMirror     = "JELLYBEAN_JELLYFIN_TAG_MIRROR"
-	envEnv                   = "JELLYBEAN_ENV"
-	envKidsKeys              = "JELLYBEAN_KIDS_KEYS"
+	envJellyfinURL       = "JELLYFIN_URL"
+	envJellyfinAPIKey    = "JELLYFIN_API_KEY"
+	envPort              = "JELLYBEAN_PORT"
+	envDBPath            = "JELLYBEAN_DB_PATH"
+	envSessionSecret     = "JELLYBEAN_SESSION_SECRET"
+	envJellyfinTagMirror = "JELLYBEAN_JELLYFIN_TAG_MIRROR"
+	envEnv               = "JELLYBEAN_ENV"
 )
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Port:     8080,
-		DBPath:   "./jellybean.db",
-		Env:      "production",
-		KidsKeys: map[string]string{},
+		Port:   8080,
+		DBPath: "./jellybean.db",
+		Env:    "production",
 	}
 
 	var missing []string
@@ -87,33 +83,7 @@ func Load() (*Config, error) {
 		cfg.Env = v
 	}
 
-	if v := os.Getenv(envKidsKeys); v != "" {
-		keys, err := parseKidsKeys(v)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", envKidsKeys, err)
-		}
-		cfg.KidsKeys = keys
-	}
-
 	return cfg, nil
-}
-
-// parseKidsKeys parses a comma-separated list of "apiKey=jellyfinUserId" pairs.
-// This is a temporary mechanism for M1; real key issuance lands in M2.
-func parseKidsKeys(s string) (map[string]string, error) {
-	out := map[string]string{}
-	for _, pair := range strings.Split(s, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		eq := strings.Index(pair, "=")
-		if eq <= 0 || eq == len(pair)-1 {
-			return nil, errors.New(`expected format "apiKey=jellyfinUserId,apiKey=jellyfinUserId"`)
-		}
-		out[pair[:eq]] = pair[eq+1:]
-	}
-	return out, nil
 }
 
 func (c *Config) IsDev() bool {

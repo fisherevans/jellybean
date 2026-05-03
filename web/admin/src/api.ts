@@ -69,8 +69,15 @@ export type Kid = {
     profileId: number;
     profileName: string;
     jellyfinUserId: string;
-    hasToken: boolean;
     createdAt: number;
+};
+
+export type JellyfinUser = {
+    id: string;
+    name: string;
+    isAdmin: boolean;
+    isDisabled: boolean;
+    assignedTo?: string; // existing kid name when this Jellyfin user is already mapped
 };
 
 export type ActivityEntry = {
@@ -180,17 +187,18 @@ export const api = {
     deleteProfile: (id: number) => request<void>("DELETE", `/api/admin/profiles/${id}`),
 
     listKids: () => request<{ kids: Kid[] }>("GET", `/api/admin/kids`),
-    createKid: (name: string, profileId: number, jellyfinUsername: string, jellyfinPassword: string) =>
-        request<{ kid: Kid; apiKey: string }>("POST", `/api/admin/kids`, {
-            name, profileId, jellyfinUsername, jellyfinPassword,
+    createKid: (name: string, profileId: number, jellyfinUserId: string) =>
+        request<{ kid: Kid }>("POST", `/api/admin/kids`, {
+            name, profileId, jellyfinUserId,
         }),
-    regenerateKidKey: (id: number) =>
-        request<{ apiKey: string }>("POST", `/api/admin/kids/${id}/regenerate`),
     updateKidProfile: (id: number, profileId: number) =>
         request<void>("PATCH", `/api/admin/kids/${id}`, { profileId }),
     updateKid: (id: number, body: { name?: string; profileId?: number }) =>
         request<void>("PATCH", `/api/admin/kids/${id}`, body),
     deleteKid: (id: number) => request<void>("DELETE", `/api/admin/kids/${id}`),
+
+    listJellyfinUsers: () =>
+        request<{ users: JellyfinUser[] }>("GET", `/api/admin/jellyfin/users`),
 };
 
 export { HttpError };

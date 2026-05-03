@@ -16,7 +16,8 @@ import (
 )
 
 const (
-	kidsKeyHeader      = "X-Jellybean-Key"
+	kidsBearerScheme   = "Bearer"
+	kidsUserIDHeader   = "X-Jellyfin-User-Id"
 	kidsDeviceIDHeader = "X-Jellybean-DeviceId"
 )
 
@@ -32,32 +33,21 @@ func kidsRequestContext(r *http.Request) (context.Context, string) {
 // kidsContext describes who is hitting a /api/kids/* endpoint and which
 // Jellyfin user their requests should be attributed to.
 type kidsContext struct {
-	// JellyfinUserID is the user the request will appear as on Jellyfin.
 	JellyfinUserID string
-	// JellyfinToken is the per-user access token for stream URLs. Empty
-	// when we don't have one (admin path or env-var fallback); callers
-	// fall back to the service-account key.
-	JellyfinToken string
-	// ProfileID is the Jellybean profile this caller is associated with.
-	// Set automatically from the kid record on key-auth; on admin auth
-	// the caller must supply it via ?profileId= since admins aren't
-	// scoped to one profile.
-	ProfileID int64
-	// Source distinguishes the auth path: "admin" (session cookie),
-	// "kid_db" (DB-backed key), or "kid_env" (deprecated env-var stub).
-	Source string
-	// Label is a short identifier for logs.
-	Label string
+	JellyfinToken  string // bearer token from the TV; empty on admin path
+	ProfileID      int64
+	Source         string // "admin" or "kid"
+	Label          string
 }
 
-// resolveKidsAuth accepts a logged-in admin session OR a kid API key. The
-// key is hashed and looked up against the DB-backed kids table first; the
-// JELLYBEAN_KIDS_KEYS env var is a deprecated fallback retained for one
-// release so M1 setups don't break instantly. Admin sessions short-circuit
-// the key flow so testing from a logged-in browser works without
-// provisioning a kid.
+// resolveKidsAuth accepts either an admin session cookie (parent testing
+// the kids client from the same browser) OR an Authorization: Bearer
+// <token> + X-Jellyfin-User-Id header pair from a kid client that has
+// already gone through /api/kids/auth/login.
 //
-// Returns nil if no acceptable auth was presented; callers should 401.
+// The bearer token is what Jellyfin's AuthenticateByName returned; we
+// trust it for downstream Jellyfin calls. The user id is used to look
+// up which profile the kid record maps to.
 func (s *Server) resolveKidsAuth(r *http.Request) *kidsContext {
 	if sess := auth.SessionFromContext(r.Context()); sess != nil {
 		return &kidsContext{
@@ -66,36 +56,50 @@ func (s *Server) resolveKidsAuth(r *http.Request) *kidsContext {
 			Label:          sess.UserName,
 		}
 	}
-	key := r.Header.Get(kidsKeyHeader)
-	if key == "" {
+	token, userID, ok := parseBearer(r)
+	if !ok {
 		return nil
 	}
-	if entry, err := s.curation.FindKidByAPIKey(r.Context(), key); err == nil {
-		return &kidsContext{
-			JellyfinUserID: entry.JellyfinUserID,
-			JellyfinToken:  entry.JellyfinToken,
-			ProfileID:      entry.ProfileID,
-			Source:         "kid_db",
-			Label:          entry.Name,
+	kid, err := s.curation.FindKidByJellyfinUser(r.Context(), userID)
+	if err != nil {
+		if !errors.Is(err, curation.ErrKidNotFound) {
+			s.logger.Error().Err(err).Msg("kid lookup")
 		}
-	} else if !errors.Is(err, curation.ErrKidNotFound) {
-		s.logger.Error().Err(err).Msg("kid db lookup")
+		return nil
 	}
-	if userID, ok := s.cfg.KidsKeys[key]; ok {
-		s.logger.Warn().Str("jellyfin_user_id", userID).Msg("using deprecated JELLYBEAN_KIDS_KEYS env var; migrate to DB-backed kids")
-		return &kidsContext{
-			JellyfinUserID: userID,
-			Source:         "kid_env",
-			Label:          userID,
-		}
+	return &kidsContext{
+		JellyfinUserID: kid.JellyfinUserID,
+		JellyfinToken:  token,
+		ProfileID:      kid.ProfileID,
+		Source:         "kid",
+		Label:          kid.Name,
 	}
-	return nil
+}
+
+// parseBearer extracts the Jellyfin access token from the Authorization
+// header and the Jellyfin user id from X-Jellyfin-User-Id. Both must be
+// present for kid auth to succeed.
+func parseBearer(r *http.Request) (token, userID string, ok bool) {
+	h := r.Header.Get("Authorization")
+	if h == "" {
+		return "", "", false
+	}
+	parts := strings.SplitN(h, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], kidsBearerScheme) {
+		return "", "", false
+	}
+	tok := strings.TrimSpace(parts[1])
+	uid := strings.TrimSpace(r.Header.Get(kidsUserIDHeader))
+	if tok == "" || uid == "" {
+		return "", "", false
+	}
+	return tok, uid, true
 }
 
 // resolveKidsProfileID returns the profile id this caller is acting under.
-// For kid-key auth the profile is implicit (the kid record carries it);
-// for admin auth it must be supplied via ?profileId= (admins aren't pinned
-// to a single profile). Returns 0 + a 4xx error message when ambiguous.
+// For kid bearer auth the profile is implicit (kid record carries it);
+// for admin auth it must be supplied via ?profileId=. Returns 0 + a 4xx
+// error message when ambiguous.
 func (s *Server) resolveKidsProfileID(r *http.Request, kc *kidsContext) (int64, string) {
 	if kc.ProfileID > 0 {
 		return kc.ProfileID, ""
@@ -110,10 +114,72 @@ func (s *Server) resolveKidsProfileID(r *http.Request, kc *kidsContext) (int64, 
 	return 0, "profileId query param required (admin path)"
 }
 
+// handleKidsLogin is the kids client's normal-app login. The TV / mobile
+// app POSTs Jellyfin credentials here; we forward to Jellyfin's
+// AuthenticateByName, look up the kid record by the resolved user id,
+// and return the bearer token plus the profile mapping the client
+// should scope itself to.
+//
+// 401 = bad Jellyfin credentials. 403 = valid Jellyfin user but not
+// mapped to a kid in Jellybean. 502 = Jellyfin is unreachable.
+func (s *Server) handleKidsLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.Username == "" || req.Password == "" {
+		http.Error(w, "username and password required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, _ := kidsRequestContext(r)
+	res, err := s.jellyfin.AuthenticateByName(ctx, req.Username, req.Password)
+	if err != nil {
+		if jellyfin.IsUnauthorized(err) {
+			http.Error(w, "wrong username or password", http.StatusUnauthorized)
+			return
+		}
+		s.logger.Error().Err(err).Msg("kids login: jellyfin auth")
+		http.Error(w, "Jellyfin auth backend error", http.StatusBadGateway)
+		return
+	}
+	kid, err := s.curation.FindKidByJellyfinUser(r.Context(), res.User.ID)
+	if err != nil {
+		if errors.Is(err, curation.ErrKidNotFound) {
+			http.Error(w,
+				"this Jellyfin user is not configured as a kid in Jellybean",
+				http.StatusForbidden)
+			return
+		}
+		s.logger.Error().Err(err).Msg("kids login: kid lookup")
+		http.Error(w, "lookup failed", http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.Info().
+		Str("kid", kid.Name).
+		Str("jellyfin_user_id", kid.JellyfinUserID).
+		Int64("profile_id", kid.ProfileID).
+		Msg("kid login")
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token":       res.AccessToken,
+		"userId":      res.User.ID,
+		"userName":    res.User.Name,
+		"kidId":       kid.ID,
+		"kidName":     kid.Name,
+		"profileId":   kid.ProfileID,
+		"profileName": kid.ProfileName,
+	})
+}
+
 // handleKidsLibrary returns the library view for the active kid: visible
 // items only, optionally filtered by type, with sub-views for "all",
-// "continue-watching", and "recent". Backed by the kid's stored Jellyfin
-// token so per-user UserData (resume, played) comes back populated.
+// "continue-watching", and "recent".
 func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 	kc := s.resolveKidsAuth(r)
 	if kc == nil {
@@ -139,7 +205,6 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Type filter (default Movie+Series).
 	rawType := q.Get("type")
 	if rawType == "" {
 		rawType = "Movie,Series"
@@ -184,13 +249,9 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		search = search[:200]
 	}
 
-	// Continue-watching: ask Jellyfin for the kid's resume list, then drop
-	// anything not visible for this profile.
 	ctx, _ := kidsRequestContext(r)
 	if section == "continue-watching" {
 		if kc.JellyfinUserID == "" || kc.JellyfinToken == "" {
-			// Admin path or env-var stub - we don't have a per-user token,
-			// so resume isn't meaningful. Return empty rather than error.
 			writeJSON(w, http.StatusOK, kidsLibraryResponse{ProfileID: profileID})
 			return
 		}
@@ -200,8 +261,7 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to load continue watching", http.StatusBadGateway)
 			return
 		}
-		visible, err := s.curation.GetStatesForItems(ctx, profileID,
-			itemIDs(res.Items))
+		visible, err := s.curation.GetStatesForItems(ctx, profileID, itemIDs(res.Items))
 		if err != nil {
 			s.logger.Error().Err(err).Msg("resume visibility lookup")
 			http.Error(w, "failed to load visibility", http.StatusInternalServerError)
@@ -220,15 +280,10 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		writeJSON(w, http.StatusOK, kidsLibraryResponse{
-			Items:     out,
-			ProfileID: profileID,
-		})
+		writeJSON(w, http.StatusOK, kidsLibraryResponse{Items: out, ProfileID: profileID})
 		return
 	}
 
-	// All / recent: fetch visible IDs from the DB, ask Jellyfin for them
-	// in pages so we can sort + filter centrally.
 	ids, err := s.curation.ListItemIDsInState(ctx, profileID, curation.StateVisible, 5000, 0)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("list visible ids")
@@ -249,7 +304,7 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 
 	res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
 		IDs:        ids,
-		Limit:      limit + startIndex + 50, // overshoot to absorb type/search filtering
+		Limit:      limit + startIndex + 50,
 		SortBy:     sortBy,
 		SortOrder:  sortOrder,
 		SearchTerm: search,
@@ -260,8 +315,6 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Local filter by type (Jellyfin honors IncludeItemTypes only when
-	// IDs is unset; with explicit IDs we filter client-side).
 	filtered := make([]jellyfin.Item, 0, len(res.Items))
 	for _, it := range res.Items {
 		if _, ok := allowedTypes[it.Type]; ok {
@@ -269,7 +322,6 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Apply pagination on the filtered slice.
 	end := startIndex + limit
 	hasMore := end < len(filtered)
 	if startIndex > len(filtered) {
@@ -308,9 +360,6 @@ func itemIDs(items []jellyfin.Item) []string {
 	return out
 }
 
-// playbackPayload is the wire shape the kid client posts. Lowercase JSON
-// because that's what the rest of /api/kids/* uses; we translate to
-// Jellyfin's PascalCase in the jellyfin client layer.
 type playbackPayload struct {
 	ItemID           string `json:"itemId"`
 	MediaSourceID    string `json:"mediaSourceId,omitempty"`
@@ -351,8 +400,6 @@ func (s *Server) handleKidsPlaybackStart(w http.ResponseWriter, r *http.Request)
 		AudioStreamIndex: p.AudioStreamIndex,
 	})
 	if err != nil {
-		// Don't fail the kid's playback over a reporting hiccup; warn and
-		// return 204 so the client moves on.
 		s.logger.Warn().Err(err).Str("kid", kc.Label).Str("item", p.ItemID).Msg("playback start report")
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -407,11 +454,7 @@ func (s *Server) handleKidsPlaybackStopped(w http.ResponseWriter, r *http.Reques
 }
 
 // handleKidsStream returns a direct-play stream URL for the requested item.
-// Auth: either an admin session cookie or a valid X-Jellybean-Key.
-//
-// Response includes the item's UserData when a kid token is present so the
-// client can seek to the resume position without a second round trip. On
-// the admin / env-var paths UserData is omitted (no per-user context).
+// Auth: either an admin session cookie or a kid bearer token.
 func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 	kc := s.resolveKidsAuth(r)
 	if kc == nil {
@@ -431,7 +474,6 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		err  error
 	)
 	if kc.JellyfinToken != "" {
-		// Per-user fetch so UserData (resume) comes back populated.
 		res, ferr := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{IDs: []string{id}}, kc.JellyfinToken)
 		if ferr == nil && len(res.Items) == 0 {
 			err = jellyfin.ErrNotFound
@@ -485,9 +527,8 @@ type kidsStreamResponse struct {
 }
 
 // handleKidsNextUp resolves the next episode to play for a series for the
-// active kid. Returns 400 when the target item isn't a series; 502 when
-// Jellyfin lookup fails. Series resolution requires a per-user token, so
-// admin / env-var paths return 400.
+// active kid. Requires kid bearer auth (per-user resume + watched-set are
+// inherently user-scoped); admin path returns 400.
 func (s *Server) handleKidsNextUp(w http.ResponseWriter, r *http.Request) {
 	kc := s.resolveKidsAuth(r)
 	if kc == nil {
@@ -500,7 +541,7 @@ func (s *Server) handleKidsNextUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if kc.JellyfinToken == "" || kc.JellyfinUserID == "" {
-		http.Error(w, "next-up requires kid auth (no admin / env-var fallback)", http.StatusBadRequest)
+		http.Error(w, "next-up requires kid auth", http.StatusBadRequest)
 		return
 	}
 

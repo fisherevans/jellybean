@@ -216,7 +216,7 @@ async function fetchStream(itemId: string): Promise<StreamResponse> {
     if (!res.ok) {
         if (res.status === 401) {
             throw new Error(
-                "Not authenticated. Pick a kid profile (/kids) or sign in as admin (/).",
+                "Not signed in. Sign in at /kids/login or sign in as admin at /.",
             );
         }
         throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);

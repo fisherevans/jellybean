@@ -100,14 +100,14 @@ func (s *Server) routes() {
 	admin.HandleFunc("/kids", s.handleListKids).Methods(http.MethodGet)
 	admin.HandleFunc("/kids", s.handleCreateKid).Methods(http.MethodPost)
 	admin.HandleFunc("/kids/{id}", s.handleUpdateKid).Methods(http.MethodPatch)
-	admin.HandleFunc("/kids/{id}/regenerate", s.handleRegenerateKidKey).Methods(http.MethodPost)
 	admin.HandleFunc("/kids/{id}", s.handleDeleteKid).Methods(http.MethodDelete)
+	admin.HandleFunc("/jellyfin/users", s.handleListJellyfinUsers).Methods(http.MethodGet)
 
-	// Kids API: dual auth. An admin session gets in (so testing the kids
-	// UI from the same browser as the admin works without provisioning a
-	// kid key); otherwise X-Jellybean-Key is required. OptionalMiddleware
-	// populates the session if present without 401-ing when missing; the
-	// handler decides which path to honor.
+	// Kids API. /auth/login is unauthenticated (it IS the auth flow); the
+	// rest accept either an admin session cookie (parent previewing) or
+	// the bearer token returned by /auth/login. OptionalMiddleware lets
+	// the admin path coexist with the bearer path.
+	api.HandleFunc("/kids/auth/login", s.handleKidsLogin).Methods(http.MethodPost)
 	kids := api.PathPrefix("/kids").Subrouter()
 	kids.Use(s.auth.OptionalMiddleware)
 	kids.HandleFunc("/library", s.handleKidsLibrary).Methods(http.MethodGet)
