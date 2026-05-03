@@ -7,6 +7,8 @@ export default function Search() {
     const [params, setParams] = useSearchParams();
     const [query, setQuery] = useState(params.get("q") ?? "");
     const [items, setItems] = useState<Item[] | null>(null);
+    const [total, setTotal] = useState<number>(0);
+    const [hasMore, setHasMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
 
@@ -15,12 +17,16 @@ export default function Search() {
         const trimmed = query.trim();
         if (!trimmed) {
             setItems(null);
+            setTotal(0);
+            setHasMore(false);
             return;
         }
         const handle = setTimeout(async () => {
             try {
                 const res = await api.listItems({ search: trimmed, limit: 100 });
                 setItems(res.Items);
+                setTotal(res.TotalRecordCount);
+                setHasMore(res.HasMore);
             } catch (err) {
                 setError(err instanceof HttpError ? err.message : String(err));
             }
@@ -78,17 +84,23 @@ export default function Search() {
             ) : items.length === 0 ? (
                 <p className="muted">No matches.</p>
             ) : (
-                <ul className="search-list">
-                    {items.map((it) => (
-                        <li key={it.Id}>
-                            <ItemCard
-                                item={it}
-                                onCategoryChange={(c) => setCategory(it.Id, c)}
-                                busy={busy === it.Id}
-                            />
-                        </li>
-                    ))}
-                </ul>
+                <>
+                    <p className="muted">
+                        Showing {items.length} of {total}
+                        {hasMore && " — refine the search to see more."}
+                    </p>
+                    <ul className="search-list">
+                        {items.map((it) => (
+                            <li key={it.Id}>
+                                <ItemCard
+                                    item={it}
+                                    onCategoryChange={(c) => setCategory(it.Id, c)}
+                                    busy={busy === it.Id}
+                                />
+                            </li>
+                        ))}
+                    </ul>
+                </>
             )}
         </div>
     );

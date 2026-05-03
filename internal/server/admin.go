@@ -244,6 +244,17 @@ type setCategoryRequest struct {
 	Category string `json:"category"`
 }
 
+// sessionUserID extracts the Jellyfin user id of the authenticated admin
+// from the request context, or empty if there is no session (which only
+// happens on routes that are deliberately not behind auth).
+func sessionUserID(r *http.Request) string {
+	sess := auth.SessionFromContext(r.Context())
+	if sess == nil {
+		return ""
+	}
+	return sess.UserID
+}
+
 func (s *Server) handleAdminSetCategory(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if id == "" {
@@ -260,12 +271,7 @@ func (s *Server) handleAdminSetCategory(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	sess := auth.SessionFromContext(r.Context())
-	setBy := ""
-	if sess != nil {
-		setBy = sess.UserID
-	}
-	if _, err := s.curation.SetCategory(r.Context(), id, cat, setBy); err != nil {
+	if _, err := s.curation.SetCategory(r.Context(), id, cat, sessionUserID(r)); err != nil {
 		s.logger.Error().Err(err).Str("id", id).Msg("set category")
 		http.Error(w, "failed to set category", http.StatusInternalServerError)
 		return
@@ -297,12 +303,7 @@ func (s *Server) handleAdminBulkCategory(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "too many items in one bulk (max 1000)", http.StatusBadRequest)
 		return
 	}
-	sess := auth.SessionFromContext(r.Context())
-	setBy := ""
-	if sess != nil {
-		setBy = sess.UserID
-	}
-	updated, err := s.curation.SetCategoryBulk(r.Context(), req.ItemIDs, cat, setBy)
+	updated, err := s.curation.SetCategoryBulk(r.Context(), req.ItemIDs, cat, sessionUserID(r))
 	if err != nil {
 		s.logger.Error().Err(err).Msg("bulk set category")
 		http.Error(w, "failed to apply bulk category", http.StatusInternalServerError)

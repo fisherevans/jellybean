@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type Kid, type Profile } from "../api";
+// useState is also used inside RevealKey below.
 
 export default function Kids() {
     const [kids, setKids] = useState<Kid[] | null>(null);
@@ -177,15 +178,21 @@ export default function Kids() {
 }
 
 function RevealKey({ name, apiKey, onClose }: { name: string; apiKey: string; onClose: () => void }) {
+    const [copied, setCopied] = useState(false);
+    const [copyFailed, setCopyFailed] = useState(false);
     async function copy() {
+        setCopyFailed(false);
         try {
             await navigator.clipboard.writeText(apiKey);
+            setCopied(true);
         } catch {
-            // best-effort
+            setCopyFailed(true);
         }
     }
+    // Backdrop click is intentionally a no-op so an accidental click
+    // doesn't lose the key. The "I saved it" button is the only way out.
     return (
-        <div className="modal-backdrop" onClick={onClose}>
+        <div className="modal-backdrop">
             <div className="modal" onClick={(e) => e.stopPropagation()}>
                 <h2>API key for {name}</h2>
                 <p>
@@ -193,6 +200,12 @@ function RevealKey({ name, apiKey, onClose }: { name: string; apiKey: string; on
                     Paste it into the kid's TV (X-Jellybean-Key).
                 </p>
                 <pre className="api-key">{apiKey}</pre>
+                {copied && <p className="muted">Copied to clipboard.</p>}
+                {copyFailed && (
+                    <p className="error">
+                        Clipboard write failed. Select the key above and copy manually.
+                    </p>
+                )}
                 <div className="modal-actions">
                     <button onClick={copy}>Copy</button>
                     <button onClick={onClose}>I saved it</button>

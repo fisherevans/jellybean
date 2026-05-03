@@ -14,13 +14,16 @@ type UndoEntry = {
 export default function Triage() {
     const [queue, setQueue] = useState<Item[]>([]);
     const [cursor, setCursor] = useState(0);
+    const [serverCursor, setServerCursor] = useState(0); // Jellyfin index for the next batch
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
     const [doneCount, setDoneCount] = useState(0);
     const [exhausted, setExhausted] = useState(false);
 
-    // Pre-fetch 50 items at a time. When we run out, fetch the next batch.
+    // Pre-fetch 50 items at a time. When the on-screen queue is running low
+    // we fetch the next batch using the server-issued NextStartIndex so we
+    // don't keep re-scanning the same beginning of the catalog.
     async function fetchBatch(startIndex: number) {
         try {
             const res = await api.listItems({
@@ -41,7 +44,8 @@ export default function Triage() {
             const res = await fetchBatch(0);
             if (!res) return;
             setQueue(res.Items);
-            if (res.Items.length === 0) setExhausted(true);
+            setServerCursor(res.NextStartIndex);
+            if (!res.HasMore && res.Items.length === 0) setExhausted(true);
         })();
     }, []);
 
@@ -49,27 +53,17 @@ export default function Triage() {
 
     const advance = useCallback(async () => {
         if (cursor + 5 >= queue.length && queue.length > 0 && !busy && !exhausted) {
-            // Refill the queue ahead of time.
-            const last = queue[queue.length - 1];
-            // We don't know last's Jellyfin position; pass 0 to refetch from
-            // the start of remaining uncategorized. The categorized items
-            // are excluded server-side, so previously-acted items don't
-            // come back. (Cursor handoff in the API is by Jellyfin index;
-            // refetching from 0 is correct since acted-on items are now
-            // categorized and excluded.)
-            const res = await fetchBatch(0);
+            const res = await fetchBatch(serverCursor);
             if (res) {
-                // Keep items we haven't acted on yet, append fresh ones we
-                // don't already have.
                 const seen = new Set(queue.map((q) => q.Id));
                 const fresh = res.Items.filter((i) => !seen.has(i.Id));
-                if (fresh.length === 0 && !res.HasMore) setExhausted(true);
                 setQueue([...queue, ...fresh]);
+                setServerCursor(res.NextStartIndex);
+                if (!res.HasMore && fresh.length === 0) setExhausted(true);
             }
-            void last;
         }
         setCursor(cursor + 1);
-    }, [cursor, queue, busy, exhausted]);
+    }, [cursor, queue, busy, exhausted, serverCursor]);
 
     const apply = useCallback(
         async (category: Item["Category"]) => {
