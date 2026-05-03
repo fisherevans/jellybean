@@ -41,14 +41,28 @@ func (s *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveIndex(w)
 		return
 	}
+	// Hashed assets under /assets/ are content-addressed and safe to cache
+	// hard. Everything else (favicon, etc.) gets a short cache so updates
+	// land within a minute without users having to hard-refresh.
+	if strings.HasPrefix(clean, "assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=60")
+	}
 	http.FileServer(http.FS(s.fsys)).ServeHTTP(w, r)
 }
 
+// serveIndex always re-serves the latest index.html with no-cache so the
+// next page load picks up new asset hashes after a deploy. Without this the
+// browser can keep serving a stale index.html that points at deleted JS.
 func (s *spaHandler) serveIndex(w http.ResponseWriter) {
 	if len(s.notFound) == 0 {
 		http.Error(w, "frontend not built; run `npm run build` in web/admin or web/kids", http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	w.Write(s.notFound)
 }

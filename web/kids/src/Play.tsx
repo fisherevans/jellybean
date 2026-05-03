@@ -55,7 +55,6 @@ export default function Play() {
                 key={stream.itemId}
                 src={stream.streamUrl}
                 controls
-                autoPlay
                 style={{ width: "100%", maxWidth: 1280 }}
             />
         </div>

@@ -68,6 +68,15 @@ export default function Dashboard({ user, onLogout }: Props) {
                                         {item.OfficialRating ? `· ${item.OfficialRating}` : ""}
                                     </span>
                                 </button>
+                                <a
+                                    className="kids-link"
+                                    href={`/kids/play/${item.Id}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title="Open in kids view (uses your admin session)"
+                                >
+                                    open in kids view ↗
+                                </a>
                             </li>
                         ))}
                     </ul>
@@ -79,13 +88,14 @@ export default function Dashboard({ user, onLogout }: Props) {
                         <video
                             key={playing.Id}
                             controls
-                            autoPlay
                             src={api.streamURL(playing.Id)}
                             style={{ width: "100%", maxWidth: 960 }}
                         />
                         <p className="muted">
-                            Direct-play only. If this hangs or fails, the file isn't
-                            direct-playable; transcoding negotiation lands later.
+                            Hit play to start (browsers mute autoplayed video; we don't
+                            autoplay so you get audio). Direct-play only - if it hangs,
+                            the file isn't direct-playable. Transcoding negotiation
+                            lands later.
                         </p>
                     </div>
                 )}

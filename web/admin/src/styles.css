@@ -164,6 +164,23 @@ button:disabled {
     font-size: 0.85rem;
 }
 
+.item-list li {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.kids-link {
+    color: var(--muted);
+    font-size: 0.75rem;
+    padding: 0 1rem 0.4rem;
+    text-decoration: none;
+}
+
+.kids-link:hover {
+    color: var(--accent);
+}
+
 .player {
     margin-top: 2rem;
     padding-top: 1rem;
