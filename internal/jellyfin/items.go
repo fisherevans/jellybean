@@ -128,6 +128,36 @@ func (c *Client) GetItem(ctx context.Context, id string) (*Item, error) {
 	return &out.Items[0], nil
 }
 
+// FirstEpisodeOfSeries returns the season-1 / episode-1 (or earliest by
+// season+episode index) of a series, using the service-account key. No
+// per-user context required, so it works on the admin preview path.
+// Returns ErrNotFound when Jellyfin reports the series has no episodes.
+func (c *Client) FirstEpisodeOfSeries(ctx context.Context, seriesID string) (*Item, error) {
+	if seriesID == "" {
+		return nil, fmt.Errorf("series id required")
+	}
+	q := url.Values{}
+	q.Set("ParentId", seriesID)
+	q.Set("IncludeItemTypes", "Episode")
+	q.Set("Recursive", "true")
+	q.Set("SortBy", "ParentIndexNumber,IndexNumber")
+	q.Set("SortOrder", "Ascending")
+	q.Set("Limit", "1")
+	q.Set("Fields", "Genres,OfficialRating,ProductionYear,RunTimeTicks")
+	req, err := c.newRequest(ctx, http.MethodGet, "/Items?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var out ItemsResult
+	if err := c.do(req, &out); err != nil {
+		return nil, fmt.Errorf("get series first episode: %w", err)
+	}
+	if len(out.Items) == 0 {
+		return nil, ErrNotFound
+	}
+	return &out.Items[0], nil
+}
+
 // GetNextUp returns the next-up episode for a series for the given user.
 // Jellyfin's behavior: a partially-watched episode counts as "next" until
 // it's marked played; otherwise the first unwatched episode (lowest season

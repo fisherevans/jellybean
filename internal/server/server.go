@@ -99,6 +99,7 @@ func (s *Server) routes() {
 	admin.HandleFunc("/profiles/{id}", s.handleDeleteProfile).Methods(http.MethodDelete)
 	admin.HandleFunc("/kids", s.handleListKids).Methods(http.MethodGet)
 	admin.HandleFunc("/kids", s.handleCreateKid).Methods(http.MethodPost)
+	admin.HandleFunc("/kids/{id}", s.handleUpdateKid).Methods(http.MethodPatch)
 	admin.HandleFunc("/kids/{id}/regenerate", s.handleRegenerateKidKey).Methods(http.MethodPost)
 	admin.HandleFunc("/kids/{id}", s.handleDeleteKid).Methods(http.MethodDelete)
 

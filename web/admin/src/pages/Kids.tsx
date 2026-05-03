@@ -73,6 +73,17 @@ export default function Kids() {
         }
     }
 
+    async function changeProfile(k: Kid, nextProfileId: number) {
+        if (nextProfileId === k.profileId) return;
+        setError(null);
+        try {
+            await api.updateKidProfile(k.id, nextProfileId);
+            await refresh();
+        } catch (err) {
+            setError(err instanceof HttpError ? err.message : String(err));
+        }
+    }
+
     async function remove(k: Kid) {
         if (!confirm(`Remove kid "${k.name}"? This deletes the API key but does not revoke the Jellyfin token.`)) {
             return;
@@ -96,8 +107,8 @@ export default function Kids() {
 
             {error && <div className="error">{error}</div>}
 
-            <form className="kid-form" onSubmit={submit}>
-                <h3>Add a kid</h3>
+            <form className="kid-form kid-form-grid" onSubmit={submit}>
+                <h3 className="kid-form-title">Add a kid</h3>
                 <label>
                     Display name
                     <input value={name} onChange={(e) => setName(e.target.value)} required />
@@ -135,9 +146,11 @@ export default function Kids() {
                         autoComplete="new-password"
                     />
                 </label>
-                <button type="submit" disabled={submitting}>
-                    {submitting ? "Adding..." : "Add kid"}
-                </button>
+                <div className="kid-form-actions">
+                    <button type="submit" disabled={submitting}>
+                        {submitting ? "Adding..." : "Add kid"}
+                    </button>
+                </div>
             </form>
 
             {kids === null ? (
@@ -152,10 +165,25 @@ export default function Kids() {
                                 <div className="kid-info">
                                     <div className="kid-name">{k.name}</div>
                                     <div className="muted">
-                                        Profile: {k.profileName} · Jellyfin user: {k.jellyfinUserId} ·{" "}
+                                        Jellyfin user: {k.jellyfinUserId} ·{" "}
                                         {k.hasToken ? "token issued" : "no token"}
                                     </div>
                                 </div>
+                                <label className="kid-profile-pick">
+                                    <span className="muted">Profile</span>
+                                    <select
+                                        value={k.profileId}
+                                        onChange={(e) =>
+                                            changeProfile(k, Number(e.target.value))
+                                        }
+                                    >
+                                        {profiles.map((p) => (
+                                            <option key={p.id} value={p.id}>
+                                                {p.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
                                 <div className="kid-actions">
                                     <a
                                         className="kid-preview"

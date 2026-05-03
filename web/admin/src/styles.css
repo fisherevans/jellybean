@@ -1100,6 +1100,35 @@ button:disabled {
     max-width: 480px;
 }
 
+.kid-form-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(140px, 1fr));
+    gap: 0.5rem 0.75rem;
+    align-items: end;
+    max-width: 100%;
+}
+
+.kid-form-title {
+    grid-column: 1 / -1;
+    margin: 0;
+    font-size: 1rem;
+}
+
+.kid-form-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: flex-end;
+}
+
+@media (max-width: 720px) {
+    .kid-form-grid {
+        grid-template-columns: 1fr;
+    }
+    .kid-form-actions {
+        justify-content: stretch;
+    }
+}
+
 .profile-form {
     flex-direction: row;
     flex-wrap: wrap;
@@ -1130,14 +1159,42 @@ button:disabled {
 }
 
 .profile-form input,
+.profile-form select,
 .kid-form input,
-.kid-form select {
+.kid-form select,
+.kid-profile-pick select {
     background: var(--bg);
     color: var(--fg);
     border: 1px solid var(--border);
     padding: 0.4rem 0.6rem;
     font-size: 0.95rem;
     border-radius: 4px;
+    /* select needs an explicit appearance reset on Webkit / Firefox so
+       it inherits the same flat dark look as the text inputs instead of
+       falling back to the OS native widget. */
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+}
+
+.profile-form select,
+.kid-form select,
+.kid-profile-pick select {
+    /* Tiny chevron so the user still knows it's a dropdown after
+       killing the native arrow. */
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+                      linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+    padding-right: 1.5rem;
+}
+
+.kid-profile-pick {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.8rem;
 }
 
 .kid-form label {

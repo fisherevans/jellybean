@@ -460,6 +460,12 @@ func (s *Server) handleAdminRecentActivity(w http.ResponseWriter, r *http.Reques
 // item as JSON. We don't 302-redirect: hls.js needs to know the URL is HLS
 // so it engages instead of letting the browser try to natively decode the
 // manifest.
+//
+// Series have no MediaSources of their own, so Jellyfin's HLS endpoint 500s
+// when handed a Series id directly. When the requested item is a Series,
+// fall back to its first episode so the admin's preview modal works on
+// shows the same way it does on movies. Series name + episode name both
+// returned so the UI can show what's actually playing.
 func (s *Server) handleAdminStream(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if id == "" {
@@ -476,9 +482,33 @@ func (s *Server) handleAdminStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to resolve item", http.StatusBadGateway)
 		return
 	}
+
+	streamID := id
+	streamName := item.Name
+	itemType := item.Type
+	seriesName := ""
+	if item.Type == "Series" {
+		ep, err := s.jellyfin.FirstEpisodeOfSeries(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, jellyfin.ErrNotFound) {
+				http.Error(w, "series has no episodes", http.StatusNotFound)
+				return
+			}
+			s.logger.Error().Err(err).Str("series_id", id).Msg("resolve series for preview")
+			http.Error(w, "failed to resolve episode for series", http.StatusBadGateway)
+			return
+		}
+		streamID = ep.ID
+		streamName = ep.Name
+		seriesName = item.Name
+		itemType = ep.Type
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{
-		"streamUrl": s.jellyfin.StreamURL(id, ""),
-		"itemId":    id,
-		"itemName":  item.Name,
+		"streamUrl":  s.jellyfin.StreamURL(streamID, ""),
+		"itemId":     streamID,
+		"itemName":   streamName,
+		"itemType":   itemType,
+		"seriesName": seriesName,
 	})
 }

@@ -198,6 +198,30 @@ func (s *Store) RegenerateAPIKey(ctx context.Context, id int64) (string, error) 
 	return rawKey, nil
 }
 
+// UpdateKidProfile moves a kid to a different profile. The kid's API key
+// and Jellyfin token stay the same; only the visibility scope shifts.
+// Returns ErrKidNotFound when the row is missing.
+func (s *Store) UpdateKidProfile(ctx context.Context, id int64, profileID int64) error {
+	if profileID <= 0 {
+		return fmt.Errorf("profileId required")
+	}
+	// Confirm the target profile exists so we surface a clean 4xx instead
+	// of a foreign-key violation later.
+	if _, err := s.GetProfile(ctx, profileID); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE kids SET profile_id = ? WHERE id = ?`, profileID, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrKidNotFound
+	}
+	return nil
+}
+
 // DeleteKid removes the row. Token revocation against Jellyfin is not
 // performed; the token will keep working at Jellyfin until it expires
 // naturally or the parent revokes it through Jellyfin's admin UI.

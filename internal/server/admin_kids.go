@@ -122,6 +122,37 @@ func (s *Server) handleRegenerateKidKey(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]string{"apiKey": rawKey})
 }
 
+// handleUpdateKid lets the admin reassign a kid to a different profile.
+// API key + Jellyfin token are preserved; only profile_id changes. Body:
+// {"profileId": <int>}.
+func (s *Server) handleUpdateKid(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		ProfileID int64 `json:"profileId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if err := s.curation.UpdateKidProfile(r.Context(), id, req.ProfileID); err != nil {
+		switch {
+		case errors.Is(err, curation.ErrKidNotFound):
+			http.Error(w, "kid not found", http.StatusNotFound)
+		case errors.Is(err, curation.ErrProfileNotFound):
+			http.Error(w, "profile not found", http.StatusBadRequest)
+		default:
+			s.logger.Error().Err(err).Int64("kid_id", id).Msg("update kid")
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleDeleteKid(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
 	if err != nil {

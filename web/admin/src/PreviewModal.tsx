@@ -12,6 +12,8 @@ type StreamResponse = {
     streamUrl: string;
     itemId: string;
     itemName: string;
+    itemType?: string;
+    seriesName?: string;
 };
 
 type Props = {
@@ -95,7 +97,16 @@ export default function PreviewModal({ itemId, itemName, onClose }: Props) {
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="preview-header">
-                    <h2>{itemName}</h2>
+                    <h2>
+                        {stream?.seriesName ? (
+                            <>
+                                {stream.seriesName}
+                                <span className="preview-episode"> — {stream.itemName}</span>
+                            </>
+                        ) : (
+                            itemName
+                        )}
+                    </h2>
                     <button onClick={onClose} aria-label="Close preview">
                         ✕
                     </button>

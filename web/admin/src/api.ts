@@ -185,6 +185,8 @@ export const api = {
         }),
     regenerateKidKey: (id: number) =>
         request<{ apiKey: string }>("POST", `/api/admin/kids/${id}/regenerate`),
+    updateKidProfile: (id: number, profileId: number) =>
+        request<void>("PATCH", `/api/admin/kids/${id}`, { profileId }),
     deleteKid: (id: number) => request<void>("DELETE", `/api/admin/kids/${id}`),
 };
 
