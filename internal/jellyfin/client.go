@@ -117,8 +117,15 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body io.Re
 // authHeader returns the Jellyfin "MediaBrowser" auth header. Token may be the
 // service-account API key or a per-user access token. Empty token is allowed
 // for endpoints that do not require auth (e.g. AuthenticateByName).
+//
+// Device and DeviceId are required by some Jellyfin configurations even on
+// the unauthenticated AuthenticateByName flow; sending them unconditionally
+// is harmless on configurations that don't require them.
 func authHeader(token string) string {
-	h := fmt.Sprintf(`MediaBrowser Client="%s", Version="%s"`, clientName, clientVersion)
+	h := fmt.Sprintf(
+		`MediaBrowser Client="%s", Device="%s", DeviceId="%s", Version="%s"`,
+		clientName, "Jellybean Server", "jellybean-server", clientVersion,
+	)
 	if token != "" {
 		h += fmt.Sprintf(`, Token="%s"`, token)
 	}

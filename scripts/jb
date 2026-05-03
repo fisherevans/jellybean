@@ -19,6 +19,9 @@
 #   jb keychain list    list keys (no values)
 #   jb keychain rm K    delete a key
 #   jb env              print the env that would be passed (values redacted)
+#   jb auth-setup       store dev login credentials (username + password) in keychain
+#   jb auth             mint a session cookie from the stored credentials
+#   jb api METHOD PATH [body-json]  authenticated request via the cookie
 #   jb help             this text
 #
 # Modes:
@@ -36,6 +39,7 @@ RUN_DIR="$ROOT_DIR/.run"
 PID_FILE="$RUN_DIR/jellybean.pid"
 LOG_FILE="$RUN_DIR/jellybean.log"
 BIN_PATH="$RUN_DIR/jellybean"
+COOKIE_FILE="$RUN_DIR/cookie.txt"
 KC_PREFIX="jellybean."
 JB_MODE="${JB_MODE:-binary}"
 
@@ -450,6 +454,90 @@ cmd_dev() {
         go run ./cmd/jellybean
 }
 
+cmd_auth_setup() {
+    echo "Stores Jellyfin login credentials in the macOS Keychain so the"
+    echo "agent can perform authenticated API calls without prompting."
+    echo "Skip this if you don't want a programmatic login path."
+    echo
+
+    local username password
+    printf 'Jellyfin username (case-sensitive): '
+    read -r username
+    printf 'Jellyfin password: '
+    stty -echo
+    read -r password
+    stty echo
+    echo
+
+    if [[ -z "$username" || -z "$password" ]]; then
+        echo "skipped (empty input)"
+        return 0
+    fi
+    kc_set JELLYFIN_USERNAME "$username"
+    kc_set JELLYFIN_PASSWORD "$password"
+    echo "saved. run 'jb auth' to mint a session cookie."
+}
+
+cmd_auth() {
+    local username password port body status
+    if ! username="$(kc_get JELLYFIN_USERNAME)" || [[ -z "$username" ]]; then
+        echo "no JELLYFIN_USERNAME in keychain; run 'jb auth-setup' first" >&2
+        exit 1
+    fi
+    if ! password="$(kc_get JELLYFIN_PASSWORD)" || [[ -z "$password" ]]; then
+        echo "no JELLYFIN_PASSWORD in keychain; run 'jb auth-setup' first" >&2
+        exit 1
+    fi
+    port="$(get_port)"
+
+    body="$(jq -nc --arg u "$username" --arg p "$password" '{username: $u, password: $p}')"
+    status=$(curl -sS -o /dev/null -w '%{http_code}' \
+        -c "$COOKIE_FILE" \
+        -H 'Content-Type: application/json' \
+        -d "$body" \
+        "http://127.0.0.1:${port}/api/auth/login" || echo "000")
+    case "$status" in
+        200)
+            chmod 600 "$COOKIE_FILE" 2>/dev/null || true
+            echo "authenticated as $username; cookie saved to $COOKIE_FILE"
+            ;;
+        401|403)
+            echo "auth failed (status $status). check JELLYFIN_USERNAME/JELLYFIN_PASSWORD in keychain." >&2
+            exit 1
+            ;;
+        429)
+            echo "rate-limited (status 429). restart the daemon to clear: jb restart" >&2
+            exit 1
+            ;;
+        *)
+            echo "unexpected status $status. is the daemon running? jb status" >&2
+            exit 1
+            ;;
+    esac
+}
+
+cmd_api() {
+    local method="${1:-GET}"; shift || true
+    local path="${1:-}"; shift || true
+    if [[ -z "$path" ]]; then
+        echo "usage: jb api METHOD PATH [body-json]" >&2
+        exit 2
+    fi
+    if [[ ! -f "$COOKIE_FILE" ]]; then
+        echo "no cookie at $COOKIE_FILE; run 'jb auth' first" >&2
+        exit 1
+    fi
+    local port; port="$(get_port)"
+    local body="${1:-}"
+    local args=(-sS -X "$method" -b "$COOKIE_FILE" -c "$COOKIE_FILE")
+    if [[ -n "$body" ]]; then
+        args+=(-H 'Content-Type: application/json' -d "$body")
+    fi
+    args+=("http://127.0.0.1:${port}${path}")
+    curl "${args[@]}"
+    echo
+}
+
 cmd_help() {
     sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
 }
@@ -457,16 +545,19 @@ cmd_help() {
 # --- dispatch ------------------------------------------------------------
 
 case "${1:-help}" in
-    setup)     shift; cmd_setup "$@" ;;
-    start)     shift; cmd_start "$@" ;;
-    stop)      shift; cmd_stop "$@" ;;
-    restart)   shift; cmd_restart "$@" ;;
-    status)    shift; cmd_status "$@" ;;
-    logs)      shift; cmd_logs "$@" ;;
-    build)     shift; cmd_build "$@" ;;
-    dev)       shift; cmd_dev "$@" ;;
-    env)       shift; cmd_env "$@" ;;
-    keychain)  shift; cmd_keychain "$@" ;;
+    setup)       shift; cmd_setup "$@" ;;
+    start)       shift; cmd_start "$@" ;;
+    stop)        shift; cmd_stop "$@" ;;
+    restart)     shift; cmd_restart "$@" ;;
+    status)      shift; cmd_status "$@" ;;
+    logs)        shift; cmd_logs "$@" ;;
+    build)       shift; cmd_build "$@" ;;
+    dev)         shift; cmd_dev "$@" ;;
+    env)         shift; cmd_env "$@" ;;
+    keychain)    shift; cmd_keychain "$@" ;;
+    auth-setup)  shift; cmd_auth_setup "$@" ;;
+    auth)        shift; cmd_auth "$@" ;;
+    api)         shift; cmd_api "$@" ;;
     help|-h|--help) cmd_help ;;
     *) echo "unknown command: $1" >&2; cmd_help; exit 2 ;;
 esac

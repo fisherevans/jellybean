@@ -22,6 +22,13 @@ func TestAuthenticateByName(t *testing.T) {
 		if auth == "" || strings.Contains(auth, "Token=") {
 			t.Errorf("auth header should not contain Token: %s", auth)
 		}
+		// Some Jellyfin configurations require Device and DeviceId even on
+		// AuthenticateByName; verify we're sending them.
+		for _, want := range []string{`Client="Jellybean"`, `Device="`, `DeviceId="`, `Version="`} {
+			if !strings.Contains(auth, want) {
+				t.Errorf("auth header missing %q: %s", want, auth)
+			}
+		}
 		body, _ := io.ReadAll(r.Body)
 		var payload map[string]string
 		_ = json.Unmarshal(body, &payload)
