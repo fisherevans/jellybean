@@ -1,0 +1,472 @@
+#!/usr/bin/env bash
+# jb - local Jellybean daemon controller.
+#
+# Reads secrets from the macOS Keychain (prefix "jellybean.<KEY>") so the
+# user doesn't fumble with env vars and Claude can drive start/stop/status
+# without ever touching plaintext secrets in the shell history.
+#
+# Usage:
+#   jb setup            interactive first-time secret entry
+#   jb start            launch as a background daemon
+#   jb stop             stop the running daemon
+#   jb restart          stop + start
+#   jb status           is it running, and is /api/health green
+#   jb logs [-f]        show recent logs (or -f to follow)
+#   jb build            build web apps + go binary
+#   jb dev              foreground go run + open both vite dev servers
+#   jb keychain set K V store a value in the keychain
+#   jb keychain get K   print a value (use sparingly; secrets in plaintext)
+#   jb keychain list    list keys (no values)
+#   jb keychain rm K    delete a key
+#   jb env              print the env that would be passed (values redacted)
+#   jb help             this text
+#
+# Modes:
+#   JB_MODE=binary  (default) - run the compiled Go binary
+#   JB_MODE=docker            - run via docker compose -f docker-compose.dev.yml
+#
+# Behavior of "start": refuses to launch if a daemon is already running.
+# Use "restart" to pick up code changes. Builds the binary on demand if it
+# is missing or older than any source file (binary mode only).
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUN_DIR="$ROOT_DIR/.run"
+PID_FILE="$RUN_DIR/jellybean.pid"
+LOG_FILE="$RUN_DIR/jellybean.log"
+BIN_PATH="$RUN_DIR/jellybean"
+KC_PREFIX="jellybean."
+JB_MODE="${JB_MODE:-binary}"
+
+mkdir -p "$RUN_DIR"
+
+# Resolved lazily from keychain or env.
+get_port() {
+    local p
+    p="$(kc_get JELLYBEAN_PORT 2>/dev/null || true)"
+    echo "${p:-${JELLYBEAN_PORT:-8080}}"
+}
+
+# --- keychain helpers ----------------------------------------------------
+
+kc_set() {
+    local key="$1" val="$2"
+    security add-generic-password \
+        -a "$USER" -s "${KC_PREFIX}${key}" -w "$val" -U >/dev/null
+}
+
+kc_get() {
+    local key="$1"
+    security find-generic-password \
+        -a "$USER" -s "${KC_PREFIX}${key}" -w 2>/dev/null
+}
+
+kc_has() {
+    kc_get "$1" >/dev/null 2>&1
+}
+
+kc_rm() {
+    local key="$1"
+    security delete-generic-password \
+        -a "$USER" -s "${KC_PREFIX}${key}" >/dev/null 2>&1 || true
+}
+
+kc_list() {
+    # Items are dumped with their service in line order; grep on the prefix.
+    security dump-keychain 2>/dev/null \
+        | awk -F\" -v p="$KC_PREFIX" '
+            $2 == "svce" && index($4, p) == 1 { print substr($4, length(p)+1) }
+        ' \
+        | sort -u
+}
+
+# --- env assembly --------------------------------------------------------
+
+REQUIRED_KEYS=(
+    JELLYFIN_URL
+    JELLYFIN_API_KEY
+    JELLYBEAN_SESSION_SECRET
+)
+
+OPTIONAL_KEYS=(
+    JELLYBEAN_KIDS_KEYS
+    JELLYBEAN_PORT
+    JELLYBEAN_DB_PATH
+    JELLYBEAN_JELLYFIN_TAG_MIRROR
+)
+
+# Print "KEY=value" lines for everything in the keychain, plus a sane
+# default for JELLYBEAN_ENV=dev. Used by start (eval'd) and env (redacted).
+collect_env() {
+    local k v
+    for k in "${REQUIRED_KEYS[@]}" "${OPTIONAL_KEYS[@]}"; do
+        if v="$(kc_get "$k")"; then
+            printf '%s=%s\n' "$k" "$v"
+        fi
+    done
+    # Defaults for things we want set even if the user hasn't put them in
+    # the keychain.
+    if ! kc_has JELLYBEAN_ENV; then
+        printf 'JELLYBEAN_ENV=%s\n' "${JELLYBEAN_ENV:-dev}"
+    fi
+    if ! kc_has JELLYBEAN_PORT; then
+        printf 'JELLYBEAN_PORT=%s\n' "$(get_port)"
+    fi
+}
+
+assert_required() {
+    local missing=()
+    local k
+    for k in "${REQUIRED_KEYS[@]}"; do
+        kc_has "$k" || missing+=("$k")
+    done
+    if (( ${#missing[@]} > 0 )); then
+        echo "missing required keychain entries:" >&2
+        for k in "${missing[@]}"; do echo "  - ${KC_PREFIX}${k}" >&2; done
+        echo >&2
+        echo "Run 'jb setup' to enter them." >&2
+        exit 1
+    fi
+}
+
+# --- pid / process helpers ----------------------------------------------
+
+pid_is_running() {
+    local pid="$1"
+    [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+read_pid() {
+    [[ -f "$PID_FILE" ]] || { echo ""; return; }
+    cat "$PID_FILE"
+}
+
+wait_for_health() {
+    local timeout="${1:-15}"
+    local elapsed=0
+    local port
+    port="$(get_port)"
+    while (( elapsed < timeout )); do
+        if curl -fsS "http://127.0.0.1:${port}/api/health" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    return 1
+}
+
+# --- subcommand implementations ------------------------------------------
+
+cmd_setup() {
+    echo "Jellybean dev setup. Stores values in the macOS Keychain under"
+    echo "prefix '${KC_PREFIX}'. Re-run anytime to update."
+    echo
+
+    local k cur new
+    for k in JELLYFIN_URL JELLYFIN_API_KEY; do
+        cur=""
+        if kc_has "$k"; then cur=" (currently set)"; fi
+        printf '%s%s: ' "$k" "$cur"
+        if [[ "$k" == "JELLYFIN_API_KEY" ]]; then
+            stty -echo
+            read -r new
+            stty echo
+            echo
+        else
+            read -r new
+        fi
+        if [[ -n "$new" ]]; then
+            kc_set "$k" "$new"
+            echo "  saved."
+        else
+            echo "  (unchanged)"
+        fi
+    done
+
+    if ! kc_has JELLYBEAN_SESSION_SECRET; then
+        kc_set JELLYBEAN_SESSION_SECRET "$(openssl rand -hex 32)"
+        echo "Generated and stored JELLYBEAN_SESSION_SECRET."
+    fi
+
+    echo
+    printf 'JELLYBEAN_KIDS_KEYS (e.g. "k1=jellyfin_user_id"; blank to skip): '
+    read -r new
+    if [[ -n "$new" ]]; then
+        kc_set JELLYBEAN_KIDS_KEYS "$new"
+        echo "  saved."
+    fi
+
+    echo
+    echo "Done. Try: jb start"
+}
+
+cmd_env() {
+    # Redacted view: prints keys with their lengths instead of values.
+    local line k v
+    while IFS= read -r line; do
+        k="${line%%=*}"; v="${line#*=}"
+        case "$k" in
+            JELLYFIN_API_KEY|JELLYBEAN_SESSION_SECRET|JELLYBEAN_KIDS_KEYS)
+                printf '%s=<redacted, %d chars>\n' "$k" "${#v}"
+                ;;
+            *)
+                printf '%s=%s\n' "$k" "$v"
+                ;;
+        esac
+    done < <(collect_env)
+}
+
+cmd_keychain() {
+    case "${1:-}" in
+        set)
+            [[ $# -ge 3 ]] || { echo "usage: jb keychain set KEY VALUE" >&2; exit 2; }
+            kc_set "$2" "$3"
+            echo "ok"
+            ;;
+        get)
+            [[ $# -ge 2 ]] || { echo "usage: jb keychain get KEY" >&2; exit 2; }
+            kc_get "$2" || { echo "(unset)"; exit 1; }
+            ;;
+        rm)
+            [[ $# -ge 2 ]] || { echo "usage: jb keychain rm KEY" >&2; exit 2; }
+            kc_rm "$2"
+            echo "ok"
+            ;;
+        list|"")
+            kc_list
+            ;;
+        *)
+            echo "unknown keychain subcommand: $1" >&2
+            exit 2
+            ;;
+    esac
+}
+
+needs_build() {
+    [[ ! -x "$BIN_PATH" ]] && return 0
+    # Rebuild if any source file is newer than the binary.
+    local newer
+    newer=$(find . \
+        -path ./.run -prune -o \
+        -path ./node_modules -prune -o \
+        -path '*/node_modules' -prune -o \
+        -path '*/dist' -prune -o \
+        -type f \( -name '*.go' -o -name '*.sql' \) \
+        -newer "$BIN_PATH" -print 2>/dev/null | head -n1)
+    [[ -n "$newer" ]]
+}
+
+build_web() {
+    if [[ ! -d "$ROOT_DIR/web/admin/node_modules" ]]; then
+        ( cd "$ROOT_DIR/web/admin" && npm ci --no-audit --no-fund )
+    fi
+    if [[ ! -d "$ROOT_DIR/web/kids/node_modules" ]]; then
+        ( cd "$ROOT_DIR/web/kids" && npm ci --no-audit --no-fund )
+    fi
+    ( cd "$ROOT_DIR/web/admin" && npm run build )
+    ( cd "$ROOT_DIR/web/kids" && npm run build )
+}
+
+build_go() {
+    ( cd "$ROOT_DIR" && go build -o "$BIN_PATH" ./cmd/jellybean )
+}
+
+cmd_build() {
+    build_web
+    build_go
+    echo "built: $BIN_PATH"
+}
+
+cmd_start() {
+    assert_required
+
+    case "$JB_MODE" in
+        binary) start_binary ;;
+        docker) start_docker ;;
+        *) echo "unknown JB_MODE: $JB_MODE" >&2; exit 2 ;;
+    esac
+}
+
+start_binary() {
+    local pid
+    pid="$(read_pid)"
+    if pid_is_running "$pid"; then
+        echo "already running (pid $pid)"
+        return 0
+    fi
+
+    if needs_build; then
+        echo "building..."
+        build_web
+        build_go
+    fi
+
+    # Build the env via collect_env and exec the binary detached. We use
+    # "env -i" + explicit pass-through so the daemon doesn't inherit any
+    # noisy parent vars.
+    local env_args=()
+    while IFS= read -r line; do
+        env_args+=("$line")
+    done < <(collect_env)
+
+    : > "$LOG_FILE"  # truncate previous log
+    nohup env -i \
+        HOME="$HOME" \
+        PATH="$PATH" \
+        TMPDIR="${TMPDIR:-/tmp}" \
+        "${env_args[@]}" \
+        "$BIN_PATH" \
+        >>"$LOG_FILE" 2>&1 &
+    pid=$!
+    echo "$pid" > "$PID_FILE"
+
+    if wait_for_health 15; then
+        echo "started (pid $pid, port $(get_port)). logs: $LOG_FILE"
+    else
+        echo "started (pid $pid) but /api/health did not respond in 15s."
+        echo "tail of log:"
+        tail -n 20 "$LOG_FILE" >&2 || true
+        return 1
+    fi
+}
+
+start_docker() {
+    local env_args=() line
+    while IFS= read -r line; do
+        env_args+=("$line")
+    done < <(collect_env)
+    ( cd "$ROOT_DIR" && env -i HOME="$HOME" PATH="$PATH" "${env_args[@]}" \
+        docker compose -f docker-compose.dev.yml up -d --build )
+    if wait_for_health 60; then
+        echo "started (docker). logs: jb logs"
+    else
+        echo "started but /api/health did not respond in 60s; check 'jb logs'"
+        return 1
+    fi
+}
+
+cmd_stop() {
+    case "$JB_MODE" in
+        binary) stop_binary ;;
+        docker) stop_docker ;;
+        *) echo "unknown JB_MODE: $JB_MODE" >&2; exit 2 ;;
+    esac
+}
+
+stop_binary() {
+    local pid
+    pid="$(read_pid)"
+    if ! pid_is_running "$pid"; then
+        echo "not running"
+        rm -f "$PID_FILE"
+        return 0
+    fi
+    kill -TERM "$pid" 2>/dev/null || true
+    local elapsed=0
+    while pid_is_running "$pid"; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+        if (( elapsed > 15 )); then
+            echo "did not stop after 15s, sending SIGKILL"
+            kill -KILL "$pid" 2>/dev/null || true
+            break
+        fi
+    done
+    rm -f "$PID_FILE"
+    echo "stopped"
+}
+
+stop_docker() {
+    ( cd "$ROOT_DIR" && docker compose -f docker-compose.dev.yml down )
+}
+
+cmd_restart() {
+    cmd_stop || true
+    cmd_start
+}
+
+cmd_status() {
+    case "$JB_MODE" in
+        binary) status_binary ;;
+        docker) status_docker ;;
+        *) echo "unknown JB_MODE: $JB_MODE" >&2; exit 2 ;;
+    esac
+}
+
+status_binary() {
+    local pid healthy="no" port
+    pid="$(read_pid)"
+    port="$(get_port)"
+    if pid_is_running "$pid"; then
+        if curl -fsS "http://127.0.0.1:${port}/api/health" >/dev/null 2>&1; then
+            healthy="yes"
+        fi
+        echo "running"
+        echo "  pid:       $pid"
+        echo "  port:      $port"
+        echo "  healthy:   $healthy"
+        echo "  log:       $LOG_FILE"
+        return 0
+    fi
+    echo "not running"
+    if [[ -f "$PID_FILE" ]]; then rm -f "$PID_FILE"; fi
+    return 1
+}
+
+status_docker() {
+    ( cd "$ROOT_DIR" && docker compose -f docker-compose.dev.yml ps )
+}
+
+cmd_logs() {
+    case "$JB_MODE" in
+        binary)
+            if [[ "${1:-}" == "-f" ]]; then
+                tail -f "$LOG_FILE"
+            else
+                tail -n 100 "$LOG_FILE"
+            fi
+            ;;
+        docker)
+            ( cd "$ROOT_DIR" && docker compose -f docker-compose.dev.yml logs --tail 100 ${1:-} )
+            ;;
+    esac
+}
+
+cmd_dev() {
+    assert_required
+    echo "Foreground dev mode. Use ctrl-c to exit."
+    echo "Vite dev servers must be started separately:"
+    echo "  cd web/admin && npm run dev   # http://localhost:5173"
+    echo "  cd web/kids && npm run dev    # http://localhost:5174"
+    echo
+    local env_args=() line
+    while IFS= read -r line; do
+        env_args+=("$line")
+    done < <(collect_env)
+    cd "$ROOT_DIR"
+    exec env -i HOME="$HOME" PATH="$PATH" "${env_args[@]}" \
+        go run ./cmd/jellybean
+}
+
+cmd_help() {
+    sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+# --- dispatch ------------------------------------------------------------
+
+case "${1:-help}" in
+    setup)     shift; cmd_setup "$@" ;;
+    start)     shift; cmd_start "$@" ;;
+    stop)      shift; cmd_stop "$@" ;;
+    restart)   shift; cmd_restart "$@" ;;
+    status)    shift; cmd_status "$@" ;;
+    logs)      shift; cmd_logs "$@" ;;
+    build)     shift; cmd_build "$@" ;;
+    dev)       shift; cmd_dev "$@" ;;
+    env)       shift; cmd_env "$@" ;;
+    keychain)  shift; cmd_keychain "$@" ;;
+    help|-h|--help) cmd_help ;;
+    *) echo "unknown command: $1" >&2; cmd_help; exit 2 ;;
+esac

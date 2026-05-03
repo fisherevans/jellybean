@@ -55,6 +55,9 @@ local.db
 .air.toml
 __debug_bin*
 
+# scripts/jb daemon state (pid file, log, built binary)
+.run/
+
 # Tizen / TV build output
 *.wgt
 *.ipk

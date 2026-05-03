@@ -12,6 +12,49 @@ the how, not the why.
 - Docker (only needed for the Compose smoke test in the last section)
 - Access to a running Jellyfin 10.10+
 
+## TL;DR: use the `jb` daemon controller
+
+`scripts/jb` wraps everything below. It reads secrets from the macOS
+Keychain (so they aren't in your shell history or a `.env` file) and runs
+Jellybean as a background daemon you can leave up.
+
+```bash
+./scripts/jb setup            # one-time: prompts for secrets, stores in keychain
+./scripts/jb start            # builds web + go binary if needed, starts daemon
+./scripts/jb status           # is it up? port? health?
+./scripts/jb logs -f          # follow logs
+./scripts/jb restart          # pick up code changes
+./scripts/jb stop             # stop the daemon
+```
+
+What `jb setup` asks for:
+
+| Keychain key (under `jellybean.*`) | What | How to get |
+| --- | --- | --- |
+| `JELLYFIN_URL` | Base URL of your Jellyfin server | LAN IP (`http://192.168.x.y:8096`) or your tunnel hostname |
+| `JELLYFIN_API_KEY` | Service-account API key | Jellyfin admin -> Dashboard -> API Keys -> "+" |
+| `JELLYBEAN_SESSION_SECRET` | Cookie HMAC secret | Auto-generated on first setup (`openssl rand -hex 32`) |
+| `JELLYBEAN_KIDS_KEYS` (optional) | M1 kid-key map | Format: `kid1key=jellyfin_user_id_1,kid2key=jellyfin_user_id_2` |
+
+Other useful subcommands:
+
+```bash
+./scripts/jb env              # print the env that would be passed (secrets redacted)
+./scripts/jb keychain list    # what keys are currently stored
+./scripts/jb keychain set K V # set one key without going through full setup
+./scripts/jb keychain rm K    # remove a key
+./scripts/jb dev              # foreground go run (stays in terminal; ctrl-c to stop)
+./scripts/jb build            # explicit web + go build
+JB_MODE=docker ./scripts/jb start  # run via docker compose -f docker-compose.dev.yml
+```
+
+The daemon writes its PID and log to `.run/` (gitignored). Logs accumulate
+across runs only within a single start/stop cycle - `jb start` truncates
+the log to keep noise down.
+
+The rest of this doc is the long-form reference for when you need to do
+something `jb` doesn't cover.
+
 ## Environment variables
 
 | Var | Required | Default | What it does |
