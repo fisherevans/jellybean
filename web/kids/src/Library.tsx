@@ -13,6 +13,7 @@ import {
     get as cacheGet,
     set as cacheSet,
 } from "./libraryCache";
+import { useOnlineStatus } from "./onlineStatus";
 
 // Library is the kid's main browsing screen. Layout top-to-bottom:
 //
@@ -89,6 +90,15 @@ export default function Library() {
     // as a small inline string under the heading; the cached items stay
     // on screen.
     const [refreshError, setRefreshError] = useState<string | null>(null);
+    // cacheHit: did this render of the library come from IDB? Drives the
+    // offline pill - we only claim "showing cached library" when we
+    // actually have cached content on screen.
+    const [cacheHit, setCacheHit] = useState(false);
+    // Bumped when the browser reports we came back online, to force the
+    // load effect to re-run. The cache keys can't change on their own
+    // (filter / session are stable), so we need an explicit nudge.
+    const [retryNonce, setRetryNonce] = useState(0);
+    const online = useOnlineStatus();
 
     const [focus, setFocus] = useState<Focus>({ kind: "filter", index: 0 });
     const tileRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -101,6 +111,17 @@ export default function Library() {
     useEffect(() => {
         localStorage.setItem(FILTER_STORAGE, filter);
     }, [filter]);
+
+    // When the browser flips back to online, re-trigger the load effect
+    // so we revalidate against the server. The transition is what
+    // matters; we don't refetch on every render while online is true.
+    const wasOnline = useRef(online);
+    useEffect(() => {
+        if (!wasOnline.current && online) {
+            setRetryNonce((n) => n + 1);
+        }
+        wasOnline.current = online;
+    }, [online]);
 
     const buildURL = useCallback(
         (section: "all" | "continue-watching", startIndex: number) => {
@@ -176,6 +197,7 @@ export default function Library() {
         let cancelled = false;
         setError(null);
         setRefreshError(null);
+        setCacheHit(false);
         // We don't clear items eagerly any more; the cache may have data
         // we want to render before the network resolves. `loading` is
         // initialised true and only stays true until either cache or
@@ -208,6 +230,7 @@ export default function Library() {
                 allEtag = allHit.etag;
                 // Cached content is rendered: drop the spinner.
                 setLoading(false);
+                setCacheHit(true);
             } else {
                 // No cache: blank the grid so we don't show stale items
                 // from the previous filter while the network resolves.
@@ -218,6 +241,7 @@ export default function Library() {
                 setContinueItems(cached.Items ?? []);
                 cwEtag = cwHit.etag;
                 setLoading(false);
+                setCacheHit(true);
             } else {
                 setContinueItems([]);
             }
@@ -250,6 +274,10 @@ export default function Library() {
                 }
                 setLoading(false);
                 setRefreshError(null);
+                // Live data won. We're no longer "showing cached" - flip
+                // the pill off even if the browser still thinks it's
+                // offline (captive portals etc.).
+                setCacheHit(false);
             })
             .catch((err) => {
                 if (cancelled) return;
@@ -269,7 +297,8 @@ export default function Library() {
         };
         // allKey / cwKey already encode session + filter + adminProfileId;
         // depending on them keeps this effect stable across renders.
-    }, [admin, session, adminProfileId, fetchSection, nav, allKey, cwKey]);
+        // retryNonce kicks the effect when we come back online.
+    }, [admin, session, adminProfileId, fetchSection, nav, allKey, cwKey, retryNonce]);
 
     // Infinite scroll for the main grid.
     useEffect(() => {
@@ -403,7 +432,12 @@ export default function Library() {
             </div>
 
             {error && <p className="error">{error}</p>}
-            {refreshError && (
+            {!online && cacheHit && (
+                <p className="kids-offline-pill" role="status">
+                    Offline - showing cached library
+                </p>
+            )}
+            {online && refreshError && (
                 <p className="library-refresh-error" role="status">
                     {refreshError}
                 </p>

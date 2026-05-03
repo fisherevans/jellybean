@@ -310,6 +310,176 @@ test.describe("kids library cache", () => {
     });
 });
 
+// Offline fallback (issue #26). Builds on the cache test pattern: pre-seed
+// IDB and a kid session, then flip the browser context offline before
+// navigating. Cached tiles must render and the offline pill must show.
+// When we flip back online, the SPA must auto-retry the library fetch.
+test.describe("kids offline", () => {
+    test("renders cached tiles + offline pill when offline; auto-retries on reconnect", async ({
+        page,
+        context,
+    }) => {
+        await context.clearCookies();
+
+        const FAKE_USER_ID = "offline-test-user-id";
+        const FAKE_ETAG = 'W/"offline-test-etag"';
+        const CACHE_TILE_NAME = "Offline Cached Tile";
+        const CACHE_KEY_ALL = `${FAKE_USER_ID}:all:Movie,Series:24:0:`;
+        const CACHE_KEY_CW = `${FAKE_USER_ID}:continue-watching:Movie,Series:24:0:`;
+
+        await page.addInitScript(
+            ({ userId, etag, tileName, allKey, cwKey }) => {
+                if (location.pathname.startsWith("/kids")) {
+                    localStorage.setItem("jellybean.kids.token", "fake-bearer-token");
+                    localStorage.setItem("jellybean.kids.userId", userId);
+                    localStorage.setItem("jellybean.kids.userName", "offline-test");
+                    localStorage.setItem("jellybean.kids.profileId", "1");
+                    localStorage.setItem("jellybean.kids.kidName", "Offline Test Kid");
+                }
+                const seed = (key: string, page: unknown) =>
+                    new Promise<void>((resolve) => {
+                        const open = indexedDB.open("jellybean-kids", 1);
+                        open.onupgradeneeded = () => {
+                            const db = open.result;
+                            if (!db.objectStoreNames.contains("library")) {
+                                db.createObjectStore("library");
+                            }
+                        };
+                        open.onsuccess = () => {
+                            const db = open.result;
+                            const tx = db.transaction("library", "readwrite");
+                            tx.objectStore("library").put(
+                                { page, etag, savedAt: Date.now() },
+                                key,
+                            );
+                            tx.oncomplete = () => {
+                                db.close();
+                                resolve();
+                            };
+                            tx.onerror = () => {
+                                db.close();
+                                resolve();
+                            };
+                        };
+                        open.onerror = () => resolve();
+                    });
+                const allPage = {
+                    Items: [
+                        {
+                            Id: "offline-test-id-1",
+                            Name: tileName,
+                            Type: "Movie",
+                            ImageTags: {},
+                        },
+                    ],
+                    HasMore: false,
+                    NextStartIndex: 1,
+                    ProfileId: 1,
+                };
+                const cwPage = { Items: [], ProfileId: 1 };
+                (window as unknown as { __cacheSeed: Promise<void> }).__cacheSeed =
+                    Promise.all([seed(allKey, allPage), seed(cwKey, cwPage)]).then(
+                        () => undefined,
+                    );
+            },
+            {
+                userId: FAKE_USER_ID,
+                etag: FAKE_ETAG,
+                tileName: CACHE_TILE_NAME,
+                allKey: CACHE_KEY_ALL,
+                cwKey: CACHE_KEY_CW,
+            },
+        );
+
+        // Seed the cache via a first online visit. addInitScript only
+        // queues the seed; we need the page to actually mount once for
+        // the seed promise to flush to IDB.
+        await page.goto(KIDS_BASE);
+        await page.evaluate(
+            () =>
+                (window as unknown as { __cacheSeed?: Promise<void> }).__cacheSeed ??
+                Promise.resolve(),
+        );
+
+        // Simulate "API unreachable" by failing /api/kids/* requests at
+        // the network layer. We can't use context.setOffline because
+        // that also blocks the SPA's own assets and the test framework's
+        // navigation, neither of which would be blocked in production
+        // (the SPA is already loaded). page.route + abort("failed")
+        // makes fetch reject with a TypeError, which is exactly the
+        // signal the offline detection looks for.
+        await page.route("**/api/kids/**", (route) => route.abort("failed"));
+        // Tell the SPA the browser thinks we're offline so the pill
+        // renders. The hook listens to window 'offline' / 'online'.
+        await page.addInitScript(() => {
+            Object.defineProperty(navigator, "onLine", {
+                configurable: true,
+                get: () => false,
+            });
+        });
+
+        await page.goto(`${KIDS_BASE}library`);
+
+        const tile = page.locator(".tile-grid").first();
+        await tile.waitFor({ state: "visible", timeout: 5_000 });
+        await expect(tile.locator(".tile-title")).toHaveText(CACHE_TILE_NAME);
+
+        // Offline pill must be visible.
+        await expect(
+            page.getByText(/Offline - showing cached library/),
+        ).toBeVisible();
+
+        // Reconnect: stop failing API requests, flip navigator.onLine
+        // back, and dispatch the online event so the hook re-triggers
+        // the load effect.
+        await page.unroute("**/api/kids/**");
+        const retryReq = page.waitForRequest(
+            (req) =>
+                req.url().includes("/api/kids/library") &&
+                req.method() === "GET" &&
+                new URL(req.url()).searchParams.get("section") === "all",
+            { timeout: 10_000 },
+        );
+        await page.evaluate(() => {
+            Object.defineProperty(navigator, "onLine", {
+                configurable: true,
+                get: () => true,
+            });
+            window.dispatchEvent(new Event("online"));
+        });
+        await retryReq;
+    });
+
+    test("play screen shows 'can't play offline' when /stream is unreachable", async ({
+        page,
+        context,
+    }) => {
+        await context.clearCookies();
+        await page.addInitScript(() => {
+            if (location.pathname.startsWith("/kids")) {
+                localStorage.setItem("jellybean.kids.token", "fake-bearer-token");
+                localStorage.setItem("jellybean.kids.userId", "offline-play-user");
+                localStorage.setItem("jellybean.kids.userName", "offline-play");
+                localStorage.setItem("jellybean.kids.profileId", "1");
+                localStorage.setItem("jellybean.kids.kidName", "Offline Play Kid");
+            }
+        });
+        // Fail the stream endpoint at the network layer to mimic the
+        // browser being offline. Same reasoning as the cache test:
+        // context.setOffline blocks page assets too, which doesn't match
+        // production behaviour.
+        await page.route("**/api/kids/items/**", (route) => route.abort("failed"));
+
+        await page.goto(`${KIDS_BASE}play/some-fake-id`);
+
+        await expect(page.getByRole("heading", { name: /Can't play offline/ })).toBeVisible({
+            timeout: 5_000,
+        });
+        await expect(page.locator("video")).toHaveCount(0);
+        await expect(page.getByRole("link", { name: /Back to library/ })).toBeVisible();
+    });
+});
+
 // Playback. Admin path (no kid token) so the server-side report
 // short-circuits and Jellyfin's session view stays clean. We're verifying
 // the client-side wiring, not real Jellyfin attribution.

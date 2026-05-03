@@ -42,6 +42,11 @@ export default function Play() {
     const [stream, setStream] = useState<StreamResponse | null>(null);
     const [seriesLabel, setSeriesLabel] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    // offline: distinct from `error` so we can render a friendlier "can't
+    // play offline" screen instead of dumping a network error string.
+    // Set when the fetch promise rejects (network unreachable); HTTP
+    // failures still go through `error`.
+    const [offline, setOffline] = useState(false);
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const reportedStart = useRef(false);
 
@@ -60,6 +65,7 @@ export default function Play() {
         if (!itemId) return;
         let cancelled = false;
         setError(null);
+        setOffline(false);
         setStream(null);
         reportedStart.current = false;
 
@@ -83,7 +89,12 @@ export default function Play() {
                 }
                 setStream(episode);
             } catch (err) {
-                if (!cancelled) setError(String((err as Error).message ?? err));
+                if (cancelled) return;
+                if (isNetworkError(err)) {
+                    setOffline(true);
+                } else {
+                    setError(String((err as Error).message ?? err));
+                }
             }
         })();
 
@@ -160,6 +171,15 @@ export default function Play() {
         nav(libraryHref);
     }
 
+    if (offline) {
+        return (
+            <div className="screen play-error">
+                <h1>Can't play offline</h1>
+                <p>Reconnect to keep watching.</p>
+                <Link to={libraryHref}>Back to library</Link>
+            </div>
+        );
+    }
     if (error) {
         return (
             <div className="screen play-error">
@@ -206,6 +226,19 @@ export default function Play() {
             />
         </div>
     );
+}
+
+// isNetworkError discriminates "the request never reached the server"
+// from "the server replied with an HTTP error". `fetch` rejects with a
+// TypeError on DNS / connection / CORS-network-layer failure; we treat
+// any TypeError (and anything that isn't a real Error subclass) as
+// offline. `fetchStream` and `fetchNextUp` only throw a regular `Error`
+// for non-2xx responses, so server-side failures keep going through the
+// HTTP error path.
+function isNetworkError(err: unknown): boolean {
+    if (err instanceof TypeError) return true;
+    if (!(err instanceof Error)) return true;
+    return false;
 }
 
 async function fetchStream(itemId: string): Promise<StreamResponse> {
