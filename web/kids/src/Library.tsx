@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
     authHeaders,
@@ -8,108 +8,458 @@ import {
     type KidProfile,
 } from "./auth";
 
-// Library is currently a stub. The full browse grid + D-pad focus is #20.
-// Two paths reach this page:
+// Library is the kid's main browsing screen. Layout top-to-bottom:
 //
-// - Kid path: an active KidProfile is present. The kid's API key resolves
-//   profileId server-side; we omit the profileId query param.
-// - Admin path: no active profile, but the cookie auths the request. We
-//   need ?profileId=N to disambiguate. Without one we punt back to the
-//   picker (which gives admin a profile dropdown).
+//   [type filter: Both | Movies | TV]
+//   [Continue Watching row (scroll-x), hidden if empty]
+//   [main grid - infinite paginated]
+//
+// All three regions participate in a single D-pad focus model. State
+// shape: a discriminated union for what's focused, plus an index. Keys
+// move focus; on focus change, we ensure the focused element is scrolled
+// into view. Enter / Space / Click on a tile navigates to playback.
+//
+// Auth paths:
+//   - Kid path: active KidProfile is set; profileId is implicit from the
+//     kid record. Active key + deviceId go in headers.
+//   - Admin path: ?profileId=N in the URL; admin cookie auths the request.
 
 type LibraryItem = {
     Id: string;
     Name: string;
     Type: string;
+    ImageTags?: { Primary?: string };
+    UserData?: { PlaybackPositionTicks?: number; PlayedPercentage?: number };
 };
 
 type LibraryResponse = {
     Items: LibraryItem[] | null;
-    TotalAvailable?: number;
+    HasMore?: boolean;
+    NextStartIndex?: number;
+    ProfileId?: number;
 };
+
+type TypeFilter = "Both" | "Movies" | "TV";
+
+const FILTER_STORAGE = "jellybean.kids.typeFilter";
+const TYPE_FILTERS: TypeFilter[] = ["Both", "Movies", "TV"];
+
+function filterToType(t: TypeFilter): string {
+    return t === "Movies" ? "Movie" : t === "TV" ? "Series" : "Movie,Series";
+}
+
+type Focus =
+    | { kind: "filter"; index: number }
+    | { kind: "cw"; index: number }
+    | { kind: "grid"; index: number };
+
+const PAGE_SIZE = 24;
 
 export default function Library() {
     const nav = useNavigate();
     const [searchParams] = useSearchParams();
     const [profile] = useState<KidProfile | null>(() => getActiveProfile());
     const [admin, setAdmin] = useState<AdminUser | null | undefined>(undefined);
-    const [items, setItems] = useState<LibraryItem[] | null>(null);
+    const adminProfileId = searchParams.get("profileId");
+
+    const [filter, setFilter] = useState<TypeFilter>(() => {
+        const v = localStorage.getItem(FILTER_STORAGE);
+        return TYPE_FILTERS.includes(v as TypeFilter) ? (v as TypeFilter) : "Both";
+    });
+
+    const [continueItems, setContinueItems] = useState<LibraryItem[]>([]);
+    const [items, setItems] = useState<LibraryItem[]>([]);
+    const [hasMore, setHasMore] = useState(false);
+    const [nextStart, setNextStart] = useState(0);
+    const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const adminProfileId = searchParams.get("profileId");
+    const [focus, setFocus] = useState<Focus>({ kind: "filter", index: 0 });
+    const tileRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+    const sentinelRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
         probeAdmin().then(setAdmin);
     }, []);
 
     useEffect(() => {
+        localStorage.setItem(FILTER_STORAGE, filter);
+    }, [filter]);
+
+    const buildURL = useCallback(
+        (section: "all" | "continue-watching", startIndex: number) => {
+            const url = new URL("/api/kids/library", window.location.origin);
+            url.searchParams.set("section", section);
+            url.searchParams.set("type", filterToType(filter));
+            url.searchParams.set("limit", String(PAGE_SIZE));
+            if (startIndex > 0) {
+                url.searchParams.set("startIndex", String(startIndex));
+            }
+            if (adminProfileId) url.searchParams.set("profileId", adminProfileId);
+            return url.toString();
+        },
+        [filter, adminProfileId],
+    );
+
+    const fetchSection = useCallback(
+        async (section: "all" | "continue-watching", startIndex: number) => {
+            const res = await fetch(buildURL(section, startIndex), {
+                credentials: "same-origin",
+                headers: authHeaders(),
+            });
+            if (!res.ok) {
+                throw new Error(`${res.status}: ${await res.text()}`);
+            }
+            return (await res.json()) as LibraryResponse;
+        },
+        [buildURL],
+    );
+
+    // Initial load (and re-load on filter change). Both sections fire in
+    // parallel to keep the page snappy.
+    useEffect(() => {
         if (admin === undefined) return;
-        // Without a kid profile and without an admin override, send the user
-        // back to the picker (which knows how to handle both cases).
         if (!profile && !adminProfileId) {
             nav("/", { replace: true });
             return;
         }
-        const url = new URL("/api/kids/library", window.location.origin);
-        url.searchParams.set("limit", "24");
-        if (adminProfileId) url.searchParams.set("profileId", adminProfileId);
-        fetch(url.toString(), {
-            credentials: "same-origin",
-            headers: authHeaders(),
-        })
-            .then(async (res) => {
-                if (!res.ok) {
-                    throw new Error(
-                        `${res.status} ${res.statusText}: ${await res.text()}`,
-                    );
-                }
-                return (await res.json()) as LibraryResponse;
+        let cancelled = false;
+        setLoading(true);
+        setError(null);
+        setItems([]);
+        setNextStart(0);
+        setHasMore(false);
+
+        Promise.all([fetchSection("all", 0), fetchSection("continue-watching", 0)])
+            .then(([all, cw]) => {
+                if (cancelled) return;
+                setItems(all.Items ?? []);
+                setHasMore(!!all.HasMore);
+                setNextStart(all.NextStartIndex ?? (all.Items?.length ?? 0));
+                setContinueItems(cw.Items ?? []);
+                setLoading(false);
             })
-            .then((data) => setItems(data.Items ?? []))
-            .catch((err) => setError(String(err.message ?? err)));
-    }, [profile, admin, adminProfileId, nav]);
+            .catch((err) => {
+                if (cancelled) return;
+                setError(String(err.message ?? err));
+                setLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [admin, profile, adminProfileId, fetchSection, nav]);
+
+    // Infinite scroll for the main grid.
+    useEffect(() => {
+        if (!sentinelRef.current || !hasMore || loadingMore || loading) return;
+        const el = sentinelRef.current;
+        const obs = new IntersectionObserver(
+            (entries) => {
+                const visible = entries[0]?.isIntersecting ?? false;
+                if (!visible) return;
+                setLoadingMore(true);
+                fetchSection("all", nextStart)
+                    .then((page) => {
+                        setItems((cur) => [...cur, ...(page.Items ?? [])]);
+                        setNextStart(page.NextStartIndex ?? nextStart);
+                        setHasMore(!!page.HasMore);
+                    })
+                    .catch((err) => setError(String(err.message ?? err)))
+                    .finally(() => setLoadingMore(false));
+            },
+            { rootMargin: "400px" },
+        );
+        obs.observe(el);
+        return () => obs.disconnect();
+    }, [hasMore, loadingMore, loading, nextStart, fetchSection]);
+
+    // Keep focused element on screen.
+    useEffect(() => {
+        const key = focusKey(focus);
+        const el = tileRefs.current[key];
+        if (el) {
+            el.focus({ preventScroll: false });
+            el.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
+    }, [focus]);
+
+    // Calculate columns in the grid based on viewport width to drive
+    // up/down navigation. The CSS grid uses auto-fill with minmax(180px),
+    // so we approximate by measuring the grid element.
+    const gridRef = useRef<HTMLDivElement | null>(null);
+    const columns = useGridColumns(gridRef);
+
+    const onKey = useCallback(
+        (e: React.KeyboardEvent) => {
+            const key = e.key;
+            if (
+                key !== "ArrowLeft" &&
+                key !== "ArrowRight" &&
+                key !== "ArrowUp" &&
+                key !== "ArrowDown" &&
+                key !== "Enter" &&
+                key !== " "
+            ) {
+                return;
+            }
+            e.preventDefault();
+            setFocus((f) => moveFocus(f, key, {
+                filterCount: TYPE_FILTERS.length,
+                cwCount: continueItems.length,
+                gridCount: items.length,
+                columns,
+                onActivate: () => activate(f, items, continueItems, filter, setFilter, nav),
+            }));
+        },
+        [continueItems, items, columns, filter, nav],
+    );
 
     if (admin === undefined) return <div className="screen">Loading...</div>;
 
-    const heading =
-        profile?.name ??
-        (adminProfileId ? `Admin preview: profile ${adminProfileId}` : "Library");
-
     return (
-        <div className="screen">
+        <div className="library" onKeyDown={onKey}>
             <header className="library-header">
                 <div>
-                    <h1>{heading}</h1>
-                    <p className="library-sub">
-                        Library browse UI lands with #20. For now: tap any
-                        title to play.
-                    </p>
+                    <h1>{profile ? profile.name : "Library"}</h1>
+                    {adminProfileId && !profile && (
+                        <p className="library-sub">
+                            Admin preview: profile id {adminProfileId}
+                        </p>
+                    )}
                 </div>
                 <Link to="/" className="picker-link">
                     {profile ? "switch profile" : "back"}
                 </Link>
             </header>
 
+            <div className="filter-row" role="tablist">
+                {TYPE_FILTERS.map((f, i) => {
+                    const k = `filter:${i}`;
+                    const active = filter === f;
+                    return (
+                        <button
+                            key={f}
+                            ref={(el) => (tileRefs.current[k] = el)}
+                            className={`filter-pill ${active ? "active" : ""} ${
+                                isFocused(focus, "filter", i) ? "focused" : ""
+                            }`}
+                            onClick={() => {
+                                setFilter(f);
+                                setFocus({ kind: "filter", index: i });
+                            }}
+                            onFocus={() => setFocus({ kind: "filter", index: i })}
+                            tabIndex={isFocused(focus, "filter", i) ? 0 : -1}
+                            role="tab"
+                        >
+                            {f}
+                        </button>
+                    );
+                })}
+            </div>
+
             {error && <p className="error">{error}</p>}
-            {!items && !error && <p>Loading library...</p>}
-            {items && items.length === 0 && (
-                <p>
-                    No visible items for this profile. Mark some content
-                    visible in the parent web app's curation UI.
-                </p>
-            )}
-            {items && items.length > 0 && (
-                <ul className="library-list">
-                    {items.map((it) => (
-                        <li key={it.Id}>
-                            <Link to={`/play/${encodeURIComponent(it.Id)}`}>
-                                <span className="library-type">{it.Type}</span>{" "}
-                                {it.Name}
-                            </Link>
-                        </li>
-                    ))}
-                </ul>
+
+            {loading ? (
+                <p className="library-state">Loading...</p>
+            ) : (
+                <>
+                    {continueItems.length > 0 && (
+                        <section className="cw-row" aria-label="Continue watching">
+                            <h2 className="row-title">Continue Watching</h2>
+                            <div className="cw-scroll">
+                                {continueItems.map((it, i) => (
+                                    <Tile
+                                        key={`cw:${it.Id}`}
+                                        item={it}
+                                        large={false}
+                                        focused={isFocused(focus, "cw", i)}
+                                        onClick={() => {
+                                            setFocus({ kind: "cw", index: i });
+                                            nav(`/play/${encodeURIComponent(it.Id)}`);
+                                        }}
+                                        onFocus={() => setFocus({ kind: "cw", index: i })}
+                                        refCallback={(el) => (tileRefs.current[`cw:${i}`] = el)}
+                                        focusKey={`cw:${i}`}
+                                    />
+                                ))}
+                            </div>
+                        </section>
+                    )}
+
+                    <section aria-label="Library">
+                        <h2 className="row-title">All</h2>
+                        {items.length === 0 ? (
+                            <p className="library-state">
+                                Nothing here yet. Ask a parent to mark titles
+                                visible.
+                            </p>
+                        ) : (
+                            <div className="grid" ref={gridRef}>
+                                {items.map((it, i) => (
+                                    <Tile
+                                        key={`grid:${it.Id}`}
+                                        item={it}
+                                        large
+                                        focused={isFocused(focus, "grid", i)}
+                                        onClick={() => {
+                                            setFocus({ kind: "grid", index: i });
+                                            nav(`/play/${encodeURIComponent(it.Id)}`);
+                                        }}
+                                        onFocus={() => setFocus({ kind: "grid", index: i })}
+                                        refCallback={(el) =>
+                                            (tileRefs.current[`grid:${i}`] = el)
+                                        }
+                                        focusKey={`grid:${i}`}
+                                    />
+                                ))}
+                            </div>
+                        )}
+                        <div ref={sentinelRef} className="sentinel" />
+                        {loadingMore && <p className="library-state">Loading more...</p>}
+                    </section>
+                </>
             )}
         </div>
+    );
+}
+
+function focusKey(f: Focus): string {
+    return `${f.kind}:${f.index}`;
+}
+
+function isFocused(f: Focus, kind: Focus["kind"], index: number): boolean {
+    return f.kind === kind && f.index === index;
+}
+
+type MoveOpts = {
+    filterCount: number;
+    cwCount: number;
+    gridCount: number;
+    columns: number;
+    onActivate: () => void;
+};
+
+function moveFocus(f: Focus, key: string, opts: MoveOpts): Focus {
+    if (key === "Enter" || key === " ") {
+        opts.onActivate();
+        return f;
+    }
+    switch (f.kind) {
+        case "filter":
+            if (key === "ArrowLeft") return { kind: "filter", index: Math.max(0, f.index - 1) };
+            if (key === "ArrowRight")
+                return { kind: "filter", index: Math.min(opts.filterCount - 1, f.index + 1) };
+            if (key === "ArrowDown") {
+                if (opts.cwCount > 0) return { kind: "cw", index: 0 };
+                if (opts.gridCount > 0) return { kind: "grid", index: 0 };
+            }
+            return f;
+        case "cw":
+            if (key === "ArrowLeft") return { kind: "cw", index: Math.max(0, f.index - 1) };
+            if (key === "ArrowRight")
+                return { kind: "cw", index: Math.min(opts.cwCount - 1, f.index + 1) };
+            if (key === "ArrowUp") return { kind: "filter", index: 0 };
+            if (key === "ArrowDown") {
+                if (opts.gridCount > 0) return { kind: "grid", index: 0 };
+            }
+            return f;
+        case "grid": {
+            const cols = Math.max(1, opts.columns);
+            const i = f.index;
+            if (key === "ArrowLeft") return { kind: "grid", index: Math.max(0, i - 1) };
+            if (key === "ArrowRight")
+                return { kind: "grid", index: Math.min(opts.gridCount - 1, i + 1) };
+            if (key === "ArrowDown") {
+                const next = i + cols;
+                if (next < opts.gridCount) return { kind: "grid", index: next };
+                return { kind: "grid", index: opts.gridCount - 1 };
+            }
+            if (key === "ArrowUp") {
+                if (i < cols) {
+                    if (opts.cwCount > 0)
+                        return { kind: "cw", index: Math.min(opts.cwCount - 1, i) };
+                    return { kind: "filter", index: 0 };
+                }
+                return { kind: "grid", index: i - cols };
+            }
+            return f;
+        }
+    }
+}
+
+function activate(
+    f: Focus,
+    items: LibraryItem[],
+    cw: LibraryItem[],
+    filter: TypeFilter,
+    setFilter: (t: TypeFilter) => void,
+    nav: ReturnType<typeof useNavigate>,
+) {
+    if (f.kind === "filter") {
+        const next = TYPE_FILTERS[f.index];
+        if (next) setFilter(next);
+        return;
+    }
+    const target = f.kind === "cw" ? cw[f.index] : items[f.index];
+    if (target) nav(`/play/${encodeURIComponent(target.Id)}`);
+    void filter;
+}
+
+function useGridColumns(ref: React.RefObject<HTMLDivElement>): number {
+    const [cols, setCols] = useState(4);
+    useEffect(() => {
+        if (!ref.current) return;
+        const el = ref.current;
+        const update = () => {
+            const style = window.getComputedStyle(el);
+            const cs = style.getPropertyValue("grid-template-columns");
+            // "180px 180px 180px 180px" -> 4
+            const n = cs.split(" ").filter(Boolean).length;
+            if (n > 0) setCols(n);
+        };
+        update();
+        const obs = new ResizeObserver(update);
+        obs.observe(el);
+        return () => obs.disconnect();
+    }, [ref]);
+    return cols;
+}
+
+type TileProps = {
+    item: LibraryItem;
+    large: boolean;
+    focused: boolean;
+    onClick: () => void;
+    onFocus: () => void;
+    refCallback: (el: HTMLButtonElement | null) => void;
+    focusKey: string;
+};
+
+function Tile({ item, large, focused, onClick, onFocus, refCallback }: TileProps) {
+    const tag = item.ImageTags?.Primary ?? "";
+    const width = large ? 360 : 220;
+    const src = `/api/kids/items/${encodeURIComponent(item.Id)}/image?type=Primary&width=${width}${
+        tag ? `&tag=${encodeURIComponent(tag)}` : ""
+    }`;
+    const isSeries = item.Type === "Series";
+    return (
+        <button
+            ref={refCallback}
+            className={`tile ${large ? "tile-grid" : "tile-cw"} ${focused ? "focused" : ""}`}
+            onClick={onClick}
+            onFocus={onFocus}
+            tabIndex={focused ? 0 : -1}
+        >
+            <div className="tile-poster">
+                {tag ? (
+                    <img src={src} alt={item.Name} loading="lazy" />
+                ) : (
+                    <div className="tile-poster-placeholder">{item.Name}</div>
+                )}
+                {isSeries && <span className="tile-badge">TV</span>}
+            </div>
+            <div className="tile-title">{item.Name}</div>
+        </button>
     );
 }

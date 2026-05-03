@@ -125,3 +125,71 @@ test.describe("kids picker", () => {
         ]);
     });
 });
+
+// Library / browse grid (#20). Uses the admin preview path (?profileId=N)
+// against the test-invariant Default profile.
+async function gotoLibrary(page: import("@playwright/test").Page, profileId: number) {
+    await clearKidsLocalStorage(page);
+    await page.goto(`/kids/library?profileId=${profileId}`);
+    await expect(page.getByRole("tablist")).toBeVisible();
+}
+
+test.describe("kids library", () => {
+    test("renders the type filter, defaulted to Both", async ({ page }) => {
+        await gotoLibrary(page, 4);
+        const tabs = page.getByRole("tab");
+        await expect(tabs).toHaveCount(3);
+        await expect(tabs.nth(0)).toHaveText("Both");
+        await expect(tabs.nth(0)).toHaveClass(/active/);
+    });
+
+    test("clicking a filter pill swaps the type query param", async ({ page }) => {
+        await gotoLibrary(page, 4);
+        // Wait for the initial fetch to finish so a click triggers a fresh
+        // request we can observe.
+        await page.locator(".tile-grid, .library-state").first().waitFor();
+        const moviesReq = page.waitForRequest((req) => {
+            const url = req.url();
+            return url.includes("/api/kids/library") && url.includes("type=Movie") &&
+                !url.includes("type=Movie%2CSeries");
+        });
+        await page.getByRole("tab", { name: "Movies" }).click();
+        await moviesReq;
+    });
+
+    test("library tiles render and clicking one navigates to /play", async ({ page }) => {
+        await gotoLibrary(page, 4);
+        // Wait for at least one tile to render. Server returns visible items
+        // for profile 4; if empty the test data is misconfigured.
+        const firstTile = page.locator(".tile-grid").first();
+        await expect(firstTile).toBeVisible({ timeout: 10_000 });
+        await firstTile.click();
+        await expect(page).toHaveURL(/\/kids\/play\//);
+    });
+
+    test("D-pad: ArrowDown from filter focuses a tile, Enter activates it", async ({ page }) => {
+        await gotoLibrary(page, 4);
+        // Wait for the grid to load.
+        await page.locator(".tile-grid").first().waitFor({ state: "visible" });
+        // Focus the active filter pill, then ArrowDown.
+        await page.getByRole("tab", { name: "Both" }).focus();
+        await page.keyboard.press("ArrowDown");
+        // Some tile (cw or grid) should now have .focused.
+        await expect(page.locator(".tile.focused")).toHaveCount(1);
+        await page.keyboard.press("Enter");
+        await expect(page).toHaveURL(/\/kids\/play\//);
+    });
+
+    test("Series tiles get a TV badge when present", async ({ page }) => {
+        await gotoLibrary(page, 4);
+        await page.locator(".tile-grid, .library-state").first().waitFor();
+        const seriesReq = page.waitForRequest((req) =>
+            req.url().includes("/api/kids/library") && req.url().includes("type=Series"),
+        );
+        await page.getByRole("tab", { name: "TV" }).click();
+        await seriesReq;
+        const firstTile = page.locator(".tile-grid").first();
+        await expect(firstTile).toBeVisible({ timeout: 10_000 });
+        await expect(firstTile.locator(".tile-badge")).toBeVisible();
+    });
+});

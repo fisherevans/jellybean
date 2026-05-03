@@ -149,6 +149,12 @@ a,
     gap: 1.5rem;
 }
 
+.library {
+    padding: 1.5rem 2rem 4rem;
+    max-width: 1600px;
+    margin: 0 auto;
+}
+
 .library-header {
     display: flex;
     justify-content: space-between;
@@ -157,10 +163,19 @@ a,
     margin-bottom: 1rem;
 }
 
+.library-header h1 {
+    margin: 0;
+}
+
 .library-sub {
     color: #888;
     font-size: 0.9rem;
     margin: 0;
+}
+
+.library-state {
+    color: #888;
+    padding: 1rem 0;
 }
 
 .library-list {
@@ -184,4 +199,154 @@ a,
     color: #888;
     font-size: 0.8rem;
     text-transform: uppercase;
+}
+
+.filter-row {
+    display: flex;
+    gap: 0.75rem;
+    margin: 0.5rem 0 1.5rem;
+}
+
+.filter-pill {
+    background: #222;
+    color: #ddd;
+    border: 2px solid transparent;
+    border-radius: 999px;
+    padding: 0.5rem 1.25rem;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 100ms ease;
+}
+
+.filter-pill.active {
+    background: #f5c518;
+    color: #000;
+}
+
+.filter-pill.focused,
+.filter-pill:focus {
+    outline: none;
+    border-color: #fff;
+}
+
+.row-title {
+    font-size: 1.4rem;
+    margin: 1.25rem 0 0.75rem;
+}
+
+.cw-row {
+    margin-bottom: 1.5rem;
+}
+
+.cw-scroll {
+    display: flex;
+    gap: 1rem;
+    overflow-x: auto;
+    padding: 0.5rem 0;
+    scroll-snap-type: x mandatory;
+}
+
+.cw-scroll::-webkit-scrollbar {
+    height: 6px;
+}
+
+.cw-scroll::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 3px;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1.25rem;
+}
+
+.sentinel {
+    height: 1px;
+}
+
+.tile {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    transition: transform 120ms ease;
+    text-align: left;
+}
+
+.tile-cw {
+    flex: 0 0 auto;
+    width: 180px;
+    scroll-snap-align: start;
+}
+
+.tile-grid {
+    width: 100%;
+}
+
+.tile.focused,
+.tile:focus {
+    outline: none;
+    transform: scale(1.06);
+}
+
+.tile.focused .tile-poster,
+.tile:focus .tile-poster {
+    box-shadow: 0 0 0 4px #f5c518;
+}
+
+.tile-poster {
+    position: relative;
+    aspect-ratio: 2 / 3;
+    background: #1a1a1a;
+    border-radius: 6px;
+    overflow: hidden;
+    transition: box-shadow 120ms ease;
+}
+
+.tile-poster img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.tile-poster-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 1rem;
+    color: #777;
+    font-size: 0.85rem;
+    text-align: center;
+}
+
+.tile-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.75);
+    color: #f5c518;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 3px;
+    letter-spacing: 0.05em;
+}
+
+.tile-title {
+    font-size: 0.95rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
 }

@@ -20,6 +20,21 @@ import (
 // with Cache-Control: public, max-age=31536000 since Jellyfin's image data
 // is content-addressed by ImageTags hash. The browser will cache hard.
 func (s *Server) handleAdminImage(w http.ResponseWriter, r *http.Request) {
+	s.proxyJellyfinImage(w, r)
+}
+
+// handleKidsImage exposes the same proxy as the admin variant but gated by
+// the kids auth resolver. Both serve the same upstream request signed with
+// the service-account token; images aren't user-scoped in Jellyfin.
+func (s *Server) handleKidsImage(w http.ResponseWriter, r *http.Request) {
+	if s.resolveKidsAuth(r) == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	s.proxyJellyfinImage(w, r)
+}
+
+func (s *Server) proxyJellyfinImage(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if id == "" {
 		http.Error(w, "item id required", http.StatusBadRequest)
@@ -60,7 +75,6 @@ func (s *Server) handleAdminImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	// Reuse the jellyfin client's auth header builder.
 	req.Header.Set("Authorization", jellyfinAuthHeader(s.cfg.JellyfinAPIKey))
 
 	resp, err := http.DefaultClient.Do(req)
@@ -80,16 +94,12 @@ func (s *Server) handleAdminImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Forward cache + content metadata from Jellyfin so the browser caches
-	// the way Jellyfin intends.
 	for _, h := range []string{"Content-Type", "Content-Length", "Cache-Control", "ETag", "Last-Modified"} {
 		if v := resp.Header.Get(h); v != "" {
 			w.Header().Set(h, v)
 		}
 	}
 	if w.Header().Get("Cache-Control") == "" {
-		// Belt-and-suspenders: poster contents change rarely; let the
-		// browser hold them for a day if Jellyfin didn't say otherwise.
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 	}
 	w.WriteHeader(resp.StatusCode)
