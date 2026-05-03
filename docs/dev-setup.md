@@ -52,6 +52,32 @@ The daemon writes its PID and log to `.run/` (gitignored). Logs accumulate
 across runs only within a single start/stop cycle - `jb start` truncates
 the log to keep noise down.
 
+### Programmatic login (for the agent or scripted testing)
+
+The `jb auth` flow lets a script (or the agent) hit authenticated
+endpoints without anyone typing a password. It works against the
+running daemon.
+
+```bash
+./scripts/jb auth-setup       # one-time: stores Jellyfin username + password in keychain
+./scripts/jb auth             # POSTs to /api/auth/login, saves cookie -> .run/cookie.txt
+./scripts/jb api GET  /api/auth/me
+./scripts/jb api GET  /api/admin/items
+./scripts/jb api POST /api/admin/items '{"foo":"bar"}'
+```
+
+The cookie file is mode 600 and gitignored. Sessions expire after 7
+days idle (per the standard policy in `internal/auth/sessions.go`); if
+`jb api` starts returning 401, just rerun `jb auth`.
+
+Removing the credentials again:
+
+```bash
+./scripts/jb keychain rm JELLYFIN_USERNAME
+./scripts/jb keychain rm JELLYFIN_PASSWORD
+rm -f .run/cookie.txt
+```
+
 The rest of this doc is the long-form reference for when you need to do
 something `jb` doesn't cover.
 
