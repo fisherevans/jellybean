@@ -74,6 +74,13 @@ Issues for milestones beyond the current one are intentionally not yet
 defined. They get carved up after the previous milestone closes, informed
 by what we learned.
 
+When something we discover in the current milestone affects a future
+milestone's scope, append it to that milestone's description on GitHub
+(`gh api repos/fisherevans/jellybean/milestones/<N> -X PATCH -F description=@notes.txt`).
+This way the context lives where it'll be read. Milestone descriptions
+are worth a `gh api .../milestones/<N>` read before scoping the issues
+for that milestone.
+
 ## Repo layout
 
 ```
