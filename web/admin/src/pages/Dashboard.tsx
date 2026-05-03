@@ -21,6 +21,8 @@ export default function Dashboard({ user, onLogout }: Props) {
 
     useEffect(() => {
         if (!profile) return;
+        setError(null);
+        setItems(null);
         api.listItems({ profileId: profile.id, type: "Movie", limit: 6 })
             .then((res) => setItems(res.Items))
             .catch((err) => {
