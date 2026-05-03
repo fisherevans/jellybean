@@ -91,8 +91,6 @@ something `jb` doesn't cover.
 | `JELLYBEAN_PORT` | no | `8080` | Port the Go server listens on |
 | `JELLYBEAN_DB_PATH` | no | `./jellybean.db` | SQLite path. In Docker this is `/var/lib/jellybean/jellybean.db`. |
 | `JELLYBEAN_ENV` | no | `production` | Set to `dev` for human-readable logs and `Secure: false` cookies |
-| `JELLYBEAN_JELLYFIN_TAG_MIRROR` | no | `false` | **Keep `false` in dev.** See note below. |
-| `JELLYBEAN_KIDS_KEYS` | no | empty | M1 stub for kid profile mapping: `kidkey1=jellyfin_user_id_1,kidkey2=jellyfin_user_id_2`. Replaced by real key issuance in M2. |
 
 ### Generating the Jellyfin API key
 
@@ -112,15 +110,6 @@ Both work, just match where your dev machine is:
 - **Anywhere via Cloudflare tunnel:** `JELLYFIN_URL=https://jellyfin.yourdomain.tld`
 
 Same code path; it's purely a config knob.
-
-### Tag mirror MUST stay off in dev
-
-`JELLYBEAN_JELLYFIN_TAG_MIRROR=false` is the default and must stay `false`
-locally. Reason: dev points at your real Jellyfin (no fixtures), and a bug
-in the mirror code could write garbage tags or trip Jellyfin's known tag-
-write corruption bug (see Technical considerations in
-`original-product-idea.md`). The mirror only flips on in production once
-M6 lands and the mirror code has been integration-tested.
 
 ## Running locally
 

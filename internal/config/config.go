@@ -12,23 +12,21 @@ import (
 )
 
 type Config struct {
-	JellyfinURL       string
-	JellyfinAPIKey    string
-	Port              int
-	DBPath            string
-	SessionSecret     string
-	JellyfinTagMirror bool
-	Env               string
+	JellyfinURL    string
+	JellyfinAPIKey string
+	Port           int
+	DBPath         string
+	SessionSecret  string
+	Env            string
 }
 
 const (
-	envJellyfinURL       = "JELLYFIN_URL"
-	envJellyfinAPIKey    = "JELLYFIN_API_KEY"
-	envPort              = "JELLYBEAN_PORT"
-	envDBPath            = "JELLYBEAN_DB_PATH"
-	envSessionSecret     = "JELLYBEAN_SESSION_SECRET"
-	envJellyfinTagMirror = "JELLYBEAN_JELLYFIN_TAG_MIRROR"
-	envEnv               = "JELLYBEAN_ENV"
+	envJellyfinURL    = "JELLYFIN_URL"
+	envJellyfinAPIKey = "JELLYFIN_API_KEY"
+	envPort           = "JELLYBEAN_PORT"
+	envDBPath         = "JELLYBEAN_DB_PATH"
+	envSessionSecret  = "JELLYBEAN_SESSION_SECRET"
+	envEnv            = "JELLYBEAN_ENV"
 )
 
 func Load() (*Config, error) {
@@ -69,14 +67,6 @@ func Load() (*Config, error) {
 
 	if v := os.Getenv(envDBPath); v != "" {
 		cfg.DBPath = v
-	}
-
-	if v := os.Getenv(envJellyfinTagMirror); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, fmt.Errorf("%s must be a boolean, got %q", envJellyfinTagMirror, v)
-		}
-		cfg.JellyfinTagMirror = b
 	}
 
 	if v := os.Getenv(envEnv); v != "" {

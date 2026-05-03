@@ -28,8 +28,8 @@ rejected with reasoning.
 - Kids auth: per-profile API key stored on the TV, mapped server-side to a
   Jellyfin user.
 - Catalog, metadata, and actual streaming always come from Jellyfin.
-- Optional one-way tag mirror to Jellyfin (`JELLYBEAN_JELLYFIN_TAG_MIRROR`),
-  off by default. Never read tags back as authoritative.
+- Jellybean is read-only with respect to Jellyfin. We never write tags,
+  collections, or any other Jellyfin state. Curation lives in SQLite.
 
 ## Where work is tracked
 
@@ -74,8 +74,10 @@ Current milestone: **M3: Kids client UI**.
   content version etag, render-from-cache-then-refresh.
 - **M5: TV deployment** - first real-TV target (Tizen or Google TV TBD at
   milestone start), packaging, sideload script, on-device validation.
-- **M6: Optional Jellyfin tag mirror** - derived one-way tag export for
-  visibility in Jellyfin's own UI.
+
+(M6 "Optional Jellyfin tag mirror" was scrapped - the local SQLite store is
+already the source of truth and there is no benefit to mirroring it back
+to Jellyfin's tag system, which has known write-corruption issues anyway.)
 
 Issues for milestones beyond the current one are intentionally not yet
 defined. They get carved up after the previous milestone closes, informed
@@ -223,16 +225,18 @@ re-discovering them.
 
 - **Min Jellyfin version is 10.10.** Pre-10.9 has a metadata-deletion bug we
   cannot work around. Server refuses to start against older versions.
-- **`JELLYBEAN_JELLYFIN_TAG_MIRROR` defaults to false** and must stay false
-  in dev. Never enable it in dev configs, dev docker overlays, or test code
-  paths that hit a real Jellyfin. The user's production library is the dev
-  data source.
-- **Curation state lives in Jellybean's SQLite.** Jellyfin tags are an
-  optional derived export. Never query Jellyfin tags as if they were
-  authoritative.
+- **Jellybean never writes to Jellyfin.** No tags, no collections, no
+  metadata mutations. The only state-changing calls are PlaystateApi
+  reports (start / progress / stopped) on behalf of the kid TV, which
+  are not metadata writes. If a feature wants to mutate Jellyfin state,
+  we surface that decision explicitly before adding it.
+- **Curation state lives in Jellybean's SQLite.** This is the only source
+  of truth for visibility decisions. Don't read Jellyfin tags as if they
+  carried Jellybean state.
 - **Sessions don't store Jellyfin user tokens.** They store the user ID
-  only. All backend Jellyfin calls go through the service-account
-  `JELLYFIN_API_KEY`.
+  only. Admin-side Jellyfin calls go through the service-account
+  `JELLYFIN_API_KEY`; kid-side calls use the kid's bearer token (passed
+  through from the TV via /api/kids/auth/login).
 - **Don't add a Roku codepath.** Roku is intentionally deferred (M-something
   beyond v1). The codebase should not pretend to support it until that
   decision is revisited.
@@ -246,8 +250,9 @@ re-discovering them.
 - If you are about to introduce a new dependency, check whether the stdlib
   or an existing dependency already covers it. Match the stack defaults
   in the user-global CLAUDE.md.
-- If you are about to write to Jellyfin (any state-changing API call),
-  stop and confirm the `JELLYBEAN_JELLYFIN_TAG_MIRROR` flag is honored.
+- If you are about to write to Jellyfin (any state-changing API call
+  beyond the existing PlaystateApi reports), stop and confirm with the
+  user. Jellybean is read-only with respect to Jellyfin metadata.
 
 ## Useful commands
 

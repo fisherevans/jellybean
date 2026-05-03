@@ -19,7 +19,6 @@ services:
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:?set JELLYFIN_API_KEY}
       JELLYBEAN_SESSION_SECRET: ${JELLYBEAN_SESSION_SECRET:?set JELLYBEAN_SESSION_SECRET}
       JELLYBEAN_ENV: dev
-      JELLYBEAN_JELLYFIN_TAG_MIRROR: "false"
     volumes:
       - jellybean-dev-data:/var/lib/jellybean
     ports:

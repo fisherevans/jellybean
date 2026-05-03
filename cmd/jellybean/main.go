@@ -65,7 +65,6 @@ func run() error {
 		Str("env", cfg.Env).
 		Int("port", cfg.Port).
 		Str("jellyfin_url", cfg.JellyfinURL).
-		Bool("tag_mirror", cfg.JellyfinTagMirror).
 		Msg("jellybean starting")
 
 	jf := jellyfin.New(cfg.JellyfinURL, cfg.JellyfinAPIKey)

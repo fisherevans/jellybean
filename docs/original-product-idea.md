@@ -6,6 +6,15 @@ conversation. Implementation details are deliberately light - this is a "what
 and why," not a "how." Open questions are listed at the bottom; they should be
 resolved before serious build work starts.
 
+> **Post-M3 amendment (2026-05):** the "Jellyfin tag mirror" feature
+> referenced throughout this doc was scrapped. The local SQLite store is
+> the source of truth for curation; mirroring decisions back to Jellyfin
+> as tags has no real benefit (the parent never browses Jellyfin's UI to
+> see Jellybean state) and Jellyfin's tag-write code has known
+> corruption issues. Jellybean is now strictly read-only with respect to
+> Jellyfin metadata. Where this doc says "tag mirror," treat it as
+> historical context, not an active plan.
+
 ## Problem
 
 Jellyfin and Plex are great media servers but their first-party clients are not

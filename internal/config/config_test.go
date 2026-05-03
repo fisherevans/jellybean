@@ -27,9 +27,6 @@ func TestLoad(t *testing.T) {
 				if c.DBPath != "./jellybean.db" {
 					t.Errorf("DBPath = %q, want ./jellybean.db", c.DBPath)
 				}
-				if c.JellyfinTagMirror {
-					t.Error("JellyfinTagMirror should default to false")
-				}
 				if c.JellyfinURL != "http://jellyfin.local:8096" {
 					t.Errorf("JellyfinURL = %q", c.JellyfinURL)
 				}
@@ -68,17 +65,6 @@ func TestLoad(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "tag mirror enabled",
-			env: merge(required, map[string]string{
-				"JELLYBEAN_JELLYFIN_TAG_MIRROR": "true",
-			}),
-			check: func(t *testing.T, c *Config) {
-				if !c.JellyfinTagMirror {
-					t.Error("JellyfinTagMirror should be true")
-				}
-			},
-		},
-		{
 			name: "dev env detected",
 			env: merge(required, map[string]string{
 				"JELLYBEAN_ENV": "dev",
@@ -111,13 +97,12 @@ func TestLoad(t *testing.T) {
 }
 
 var allEnvKeys = map[string]struct{}{
-	"JELLYFIN_URL":                  {},
-	"JELLYFIN_API_KEY":              {},
-	"JELLYBEAN_PORT":                {},
-	"JELLYBEAN_DB_PATH":             {},
-	"JELLYBEAN_SESSION_SECRET":      {},
-	"JELLYBEAN_JELLYFIN_TAG_MIRROR": {},
-	"JELLYBEAN_ENV":                 {},
+	"JELLYFIN_URL":             {},
+	"JELLYFIN_API_KEY":         {},
+	"JELLYBEAN_PORT":           {},
+	"JELLYBEAN_DB_PATH":        {},
+	"JELLYBEAN_SESSION_SECRET": {},
+	"JELLYBEAN_ENV":            {},
 }
 
 func merge(maps ...map[string]string) map[string]string {

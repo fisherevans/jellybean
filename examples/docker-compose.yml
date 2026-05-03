@@ -29,8 +29,6 @@ services:
       JELLYBEAN_SESSION_SECRET: ${JELLYBEAN_SESSION_SECRET}  # any high-entropy string; rotate to invalidate sessions
       JELLYBEAN_PORT: 8080
       JELLYBEAN_DB_PATH: /var/lib/jellybean/jellybean.db
-      JELLYBEAN_JELLYFIN_TAG_MIRROR: "false"            # keep false unless explicitly enabling the mirror
-      # JELLYBEAN_KIDS_KEYS: "kid1key=jellyfin_user_id,kid2key=jellyfin_user_id"  # M1 stub mapping; M2 replaces this
     volumes:
       - jellybean-data:/var/lib/jellybean
     ports:
