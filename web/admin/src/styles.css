@@ -255,6 +255,22 @@ button:disabled {
     font-weight: 400;
 }
 
+.profile-pick {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+}
+
+.profile-pick select {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.85rem;
+}
+
 .content {
     padding: 1.25rem 1.5rem 3rem;
     max-width: 1200px;

@@ -1,5 +1,6 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { api, type User } from "./api";
+import { useActiveProfile } from "./activeProfile";
 
 type Props = {
     user: User;
@@ -17,6 +18,8 @@ const links = [
 ];
 
 export default function Layout({ user, onLogout }: Props) {
+    const { profile, profiles, setActive } = useActiveProfile();
+
     async function handleLogout() {
         try {
             await api.logout();
@@ -45,6 +48,21 @@ export default function Layout({ user, onLogout }: Props) {
                     ))}
                 </nav>
                 <div className="user">
+                    {profiles.length > 0 && (
+                        <label className="profile-pick">
+                            <span>Profile</span>
+                            <select
+                                value={profile?.id ?? ""}
+                                onChange={(e) => setActive(Number(e.target.value))}
+                            >
+                                {profiles.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                        {p.name} ({p.minAge}..{p.maxAge})
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
                     <span>{user.name}</span>
                     <button onClick={handleLogout}>Sign out</button>
                 </div>
