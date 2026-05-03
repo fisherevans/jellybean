@@ -52,19 +52,31 @@ func (c *Client) GetItems(ctx context.Context, f ItemsFilter) (*ItemsResult, err
 }
 
 // GetItem fetches a single item by ID.
+//
+// Implementation note: Jellyfin's `GET /Items/{id}` requires a user context
+// (returns 400 without it). We use `GET /Items?ids={id}&Recursive=true`
+// instead, which works under the service-account key, and unwrap the first
+// result. Returns ErrNotFound if no item matches.
 func (c *Client) GetItem(ctx context.Context, id string) (*Item, error) {
 	if id == "" {
 		return nil, fmt.Errorf("item id required")
 	}
-	req, err := c.newRequest(ctx, http.MethodGet, "/Items/"+url.PathEscape(id)+"?Fields=Genres,Studios,OfficialRating,ProductionYear", nil)
+	q := url.Values{}
+	q.Set("ids", id)
+	q.Set("Recursive", "true")
+	q.Set("Fields", "Genres,Studios,OfficialRating,ProductionYear")
+	req, err := c.newRequest(ctx, http.MethodGet, "/Items?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}
-	var out Item
+	var out ItemsResult
 	if err := c.do(req, &out); err != nil {
 		return nil, fmt.Errorf("get item %s: %w", id, err)
 	}
-	return &out, nil
+	if len(out.Items) == 0 {
+		return nil, ErrNotFound
+	}
+	return &out.Items[0], nil
 }
 
 // StreamURL returns a direct-play URL the client can hand to <video>. The

@@ -54,11 +54,17 @@ func TestGetItems(t *testing.T) {
 
 func TestGetItem(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/Items/abc") {
-			t.Errorf("path = %s", r.URL.Path)
+		if r.URL.Path != "/Items" {
+			t.Errorf("path = %s, want /Items", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("ids"); got != "abc" {
+			t.Errorf("ids = %q, want abc", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Item{ID: "abc", Name: "Test"})
+		json.NewEncoder(w).Encode(ItemsResult{
+			Items: []Item{{ID: "abc", Name: "Test"}},
+			TotalRecordCount: 1,
+		})
 	}))
 	defer srv.Close()
 
@@ -74,7 +80,9 @@ func TestGetItem(t *testing.T) {
 
 func TestGetItemNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
+		// Jellyfin returns an empty result rather than 404 when ids=<unknown>.
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ItemsResult{Items: []Item{}, TotalRecordCount: 0})
 	}))
 	defer srv.Close()
 
