@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 )
@@ -32,6 +33,13 @@ func (c *Client) AuthenticateByName(ctx context.Context, username, password stri
 
 	var out AuthResult
 	if err := c.do(req, &out); err != nil {
+		// Jellyfin's AuthenticateByName returns 400 (not 401) for bad
+		// credentials in some configurations; map it to ErrUnauthorized so
+		// the handler can return a consistent 401.
+		var httpErr *httpError
+		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusBadRequest {
+			return nil, ErrUnauthorized
+		}
 		return nil, fmt.Errorf("authenticate %q: %w", username, err)
 	}
 	return &out, nil

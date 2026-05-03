@@ -59,3 +59,19 @@ func TestAuthenticateByNameUnauthorized(t *testing.T) {
 		t.Errorf("expected ErrUnauthorized, got %v", err)
 	}
 }
+
+// Jellyfin can return 400 instead of 401 for bad credentials on
+// AuthenticateByName; we treat that the same as an auth failure.
+func TestAuthenticateByNameBadRequestIsUnauthorized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Error processing request."))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "")
+	_, err := c.AuthenticateByName(context.Background(), "alice", "wrong")
+	if !IsUnauthorized(err) {
+		t.Errorf("expected ErrUnauthorized for 400 response, got %v", err)
+	}
+}
