@@ -105,11 +105,21 @@ func splitOnce(s, sep string) (string, string, bool) {
 }
 
 func (c *Client) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
+	return c.newRequestWithToken(ctx, method, path, body, "")
+}
+
+// newRequestWithToken builds a request authenticated by `token` instead of
+// the configured service-account key. Empty token falls back to the service
+// account so existing callers keep working.
+func (c *Client) newRequestWithToken(ctx context.Context, method, path string, body io.Reader, token string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", authHeader(c.apiKey))
+	if token == "" {
+		token = c.apiKey
+	}
+	req.Header.Set("Authorization", authHeader(token))
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

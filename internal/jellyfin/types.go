@@ -31,6 +31,25 @@ type Item struct {
 	ProductionYear int       `json:"ProductionYear"`
 	RunTimeTicks   int64     `json:"RunTimeTicks"`
 	ImageTags      ImageTags `json:"ImageTags"`
+	// UserData is populated only when the request was made with a user
+	// token AND Fields=UserData was requested. nil otherwise.
+	UserData *ItemUserData `json:"UserData,omitempty"`
+	// SeriesId is set on Episode items so the kid client can resolve
+	// "what series did this come from" without a second round trip.
+	SeriesID   string `json:"SeriesId,omitempty"`
+	SeriesName string `json:"SeriesName,omitempty"`
+}
+
+// ItemUserData carries the per-user playback metadata: how far through
+// the user is, whether they've finished, and so on. Returned by Jellyfin
+// when the call is authenticated with a user token AND Fields=UserData
+// is requested.
+type ItemUserData struct {
+	PlaybackPositionTicks int64   `json:"PlaybackPositionTicks"`
+	PlayedPercentage      float64 `json:"PlayedPercentage"`
+	Played                bool    `json:"Played"`
+	PlayCount             int     `json:"PlayCount"`
+	IsFavorite            bool    `json:"IsFavorite"`
 }
 
 type Studio struct {

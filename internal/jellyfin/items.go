@@ -12,6 +12,18 @@ import (
 // GetItems lists items matching the filter. Service-account scoped (uses the
 // configured API key).
 func (c *Client) GetItems(ctx context.Context, f ItemsFilter) (*ItemsResult, error) {
+	return c.getItemsWith(ctx, f, "")
+}
+
+// GetItemsAsUser is the per-user variant. Authenticates with the supplied
+// user token so Jellyfin's response carries that user's UserData (resume
+// position, watched flag, play count). Pass empty userToken to get the
+// service-account behavior of GetItems.
+func (c *Client) GetItemsAsUser(ctx context.Context, f ItemsFilter, userToken string) (*ItemsResult, error) {
+	return c.getItemsWith(ctx, f, userToken)
+}
+
+func (c *Client) getItemsWith(ctx context.Context, f ItemsFilter, userToken string) (*ItemsResult, error) {
 	q := url.Values{}
 	if len(f.IncludeItemTypes) > 0 {
 		q.Set("IncludeItemTypes", strings.Join(f.IncludeItemTypes, ","))
@@ -37,19 +49,52 @@ func (c *Client) GetItems(ctx context.Context, f ItemsFilter) (*ItemsResult, err
 	if f.SearchTerm != "" {
 		q.Set("SearchTerm", f.SearchTerm)
 	}
-	q.Set("Fields", "Genres,Studios,OfficialRating,ProductionYear")
+	// Always ask for the metadata fields we use; UserData only meaningful
+	// when authenticated as a user.
+	fields := "Genres,Studios,OfficialRating,ProductionYear,RunTimeTicks"
+	if userToken != "" {
+		fields += ",UserData"
+	}
+	q.Set("Fields", fields)
 
 	path := "/Items"
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	req, err := c.newRequestWithToken(ctx, http.MethodGet, path, nil, userToken)
 	if err != nil {
 		return nil, err
 	}
 	var out ItemsResult
 	if err := c.do(req, &out); err != nil {
 		return nil, fmt.Errorf("get items: %w", err)
+	}
+	return &out, nil
+}
+
+// GetResumeItems returns items the user has started but not finished,
+// newest activity first. Used for the kid client's "Continue Watching"
+// row.
+func (c *Client) GetResumeItems(ctx context.Context, userID, userToken string, limit int) (*ItemsResult, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("userID required")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	q := url.Values{}
+	q.Set("Limit", strconv.Itoa(limit))
+	q.Set("Fields", "Genres,Studios,OfficialRating,ProductionYear,RunTimeTicks,UserData")
+	q.Set("MediaTypes", "Video")
+	path := "/Users/" + url.PathEscape(userID) + "/Items/Resume?" + q.Encode()
+
+	req, err := c.newRequestWithToken(ctx, http.MethodGet, path, nil, userToken)
+	if err != nil {
+		return nil, err
+	}
+	var out ItemsResult
+	if err := c.do(req, &out); err != nil {
+		return nil, fmt.Errorf("get resume items: %w", err)
 	}
 	return &out, nil
 }

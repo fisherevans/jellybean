@@ -109,6 +109,7 @@ func (s *Server) routes() {
 	// handler decides which path to honor.
 	kids := api.PathPrefix("/kids").Subrouter()
 	kids.Use(s.auth.OptionalMiddleware)
+	kids.HandleFunc("/library", s.handleKidsLibrary).Methods(http.MethodGet)
 	kids.HandleFunc("/items/{id}/stream", s.handleKidsStream).Methods(http.MethodGet)
 
 	// Static SPAs. Order matters: /kids prefix wins over /, so the more
