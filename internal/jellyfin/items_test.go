@@ -96,14 +96,13 @@ func TestGetItemNotFound(t *testing.T) {
 func TestStreamURL(t *testing.T) {
 	c := New("https://jellyfin.local", "service-key")
 	url := c.StreamURL("item123", "user-token")
-	if !strings.Contains(url, "/Videos/item123/stream") {
+	if !strings.Contains(url, "/Videos/item123/stream.mp4") {
 		t.Errorf("missing path: %s", url)
 	}
-	if !strings.Contains(url, "static=true") {
-		t.Errorf("missing static=true: %s", url)
-	}
-	if !strings.Contains(url, "api_key=user-token") {
-		t.Errorf("missing user token: %s", url)
+	for _, want := range []string{"VideoCodec=h264", "AudioCodec=aac", "Container=mp4", "api_key=user-token"} {
+		if !strings.Contains(url, want) {
+			t.Errorf("missing %s: %s", want, url)
+		}
 	}
 }
 

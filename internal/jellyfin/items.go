@@ -79,22 +79,26 @@ func (c *Client) GetItem(ctx context.Context, id string) (*Item, error) {
 	return &out.Items[0], nil
 }
 
-// StreamURL returns a direct-play URL the client can hand to <video>. The
-// caller's userToken is used so Jellyfin's playback tracking attributes the
-// session to the right user. Pass an empty token to use the service account
-// (only useful for tests / debug; real playback should always use a user
-// token so progress tracking works).
+// StreamURL returns a browser-playable URL the client can hand to <video>.
+// userToken is used for per-user playback attribution; pass empty to fall
+// back to the configured service-account key.
 //
-// Direct play only: this skips Jellyfin's transcoding negotiation. If a file
-// won't direct-play, the <video> element will fail to load and we surface
-// that to the user. Real transcoding negotiation is a later concern.
+// Codec strategy: request an MP4 container with H.264 + AAC. Jellyfin will
+// direct-play if the source already matches (no CPU cost) and transcode if
+// not. Without this, MKVs with DTS/AC3/EAC3 audio play silent in browsers
+// because no browser decodes those audio codecs natively. The trade-off is
+// some Jellyfin CPU when transcoding kicks in; on personal hardware that's
+// acceptable. Real adaptive bitrate / HLS lands later.
 func (c *Client) StreamURL(itemID, userToken string) string {
 	q := url.Values{}
-	q.Set("static", "true")
+	q.Set("VideoCodec", "h264")
+	q.Set("AudioCodec", "aac,mp3")
+	q.Set("Container", "mp4")
+	q.Set("MaxAudioChannels", "2")
 	if userToken != "" {
 		q.Set("api_key", userToken)
 	} else if c.apiKey != "" {
 		q.Set("api_key", c.apiKey)
 	}
-	return fmt.Sprintf("%s/Videos/%s/stream?%s", c.baseURL, url.PathEscape(itemID), q.Encode())
+	return fmt.Sprintf("%s/Videos/%s/stream.mp4?%s", c.baseURL, url.PathEscape(itemID), q.Encode())
 }

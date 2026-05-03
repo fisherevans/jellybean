@@ -32,9 +32,12 @@ type Client struct {
 
 func New(baseURL, apiKey string) *Client {
 	return &Client{
-		baseURL:    baseURL,
-		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		baseURL: baseURL,
+		apiKey:  apiKey,
+		// 30s is generous for normal API calls but covers cold-path
+		// reconnects after laptop sleep or tunnel re-establishment.
+		// Per-request contexts can shorten this where appropriate.
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
