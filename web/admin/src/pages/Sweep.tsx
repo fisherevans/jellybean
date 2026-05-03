@@ -120,8 +120,39 @@ export default function Sweep() {
         setSelected(next);
     }
 
+    function deselectAllInSection(section: Section) {
+        const next = new Set(selected);
+        for (const it of sections[section]) next.delete(it.Id);
+        setSelected(next);
+    }
+
     function clearSelection() {
         setSelected(new Set());
+    }
+
+    // Single-item state apply. Drops the item from the local sweep view
+    // afterwards so the column shrinks as the user works through it.
+    async function applyToOne(itemId: string, state: ItemState) {
+        if (!loaded || !profile) return;
+        setBusy(true);
+        setError(null);
+        try {
+            await api.setState(itemId, profile.id, state);
+            setLoaded({
+                ...loaded,
+                items: loaded.items.filter((it) => it.Id !== itemId),
+            });
+            // Drop from selection if it was selected.
+            if (selected.has(itemId)) {
+                const next = new Set(selected);
+                next.delete(itemId);
+                setSelected(next);
+            }
+        } catch (err) {
+            setError(err instanceof HttpError ? err.message : String(err));
+        } finally {
+            setBusy(false);
+        }
     }
 
     async function applyBulk(state: ItemState) {
@@ -211,12 +242,20 @@ export default function Sweep() {
                             <h2>{sectionTitles[section]}</h2>
                             <span className="muted">{sections[section].length}</span>
                             {sections[section].length > 0 && (
-                                <button
-                                    onClick={() => selectAllInSection(section)}
-                                    className="link-button"
-                                >
-                                    select all
-                                </button>
+                                <>
+                                    <button
+                                        onClick={() => selectAllInSection(section)}
+                                        className="link-button"
+                                    >
+                                        select all
+                                    </button>
+                                    <button
+                                        onClick={() => deselectAllInSection(section)}
+                                        className="link-button"
+                                    >
+                                        deselect all
+                                    </button>
+                                </>
                             )}
                         </div>
                         <ul className="sweep-list">
@@ -226,6 +265,8 @@ export default function Sweep() {
                                         item={it}
                                         selected={selected.has(it.Id)}
                                         onSelect={(e) => handleSelect(section, i, e)}
+                                        onStateChange={(s) => applyToOne(it.Id, s)}
+                                        busy={busy}
                                         showSuggestion
                                     />
                                 </li>
