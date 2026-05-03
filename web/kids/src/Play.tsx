@@ -103,39 +103,78 @@ export default function Play() {
         };
     }, [itemId]);
 
-    // Playback reporting. Start fires once when the video first plays;
-    // progress every 10s; stopped on unmount, navigation away, or the
-    // ended event.
+    // Playback reporting is write-through: heartbeats and pause / play
+    // / stop events enqueue an entry to an in-memory queue and return
+    // immediately. A separate timer drains the queue to the network in
+    // the background. The video event handlers never await fetch, so a
+    // slow or unreachable server can never stall playback.
+    //
+    // Queue is in-memory only. Crashing mid-show drops queued events;
+    // that's acceptable (Jellyfin's resume position will simply be
+    // slightly stale). If measurement on real TVs proves we need
+    // persistence, IDB-backing the queue is a separate change.
+    const queueRef = useRef<PlaybackEvent[]>([]);
+
+    const enqueueProgressEvent = useCallback((evt: PlaybackEvent) => {
+        queueRef.current.push(evt);
+    }, []);
+
     const reportStart = useCallback(() => {
         if (!stream || reportedStart.current) return;
         reportedStart.current = true;
         const v = videoRef.current;
         const ticks = v ? v.currentTime * TICKS_PER_SECOND : 0;
-        void postPlayback("start", { itemId: stream.itemId, positionTicks: ticks, isPaused: false });
-    }, [stream]);
+        enqueueProgressEvent({
+            kind: "start",
+            payload: {
+                itemId: stream.itemId,
+                positionTicks: ticks,
+                isPaused: false,
+            },
+        });
+    }, [stream, enqueueProgressEvent]);
 
     const reportProgress = useCallback(
         (paused: boolean) => {
             if (!stream || !reportedStart.current) return;
             const v = videoRef.current;
             const ticks = v ? v.currentTime * TICKS_PER_SECOND : 0;
-            void postPlayback("progress", {
-                itemId: stream.itemId,
-                positionTicks: ticks,
-                isPaused: paused,
+            enqueueProgressEvent({
+                kind: "progress",
+                payload: {
+                    itemId: stream.itemId,
+                    positionTicks: ticks,
+                    isPaused: paused,
+                },
             });
         },
-        [stream],
+        [stream, enqueueProgressEvent],
     );
 
     const reportStopped = useCallback(() => {
         if (!stream || !reportedStart.current) return;
         const v = videoRef.current;
         const ticks = v ? v.currentTime * TICKS_PER_SECOND : 0;
-        void postPlayback("stopped", { itemId: stream.itemId, positionTicks: ticks });
+        enqueueProgressEvent({
+            kind: "stopped",
+            payload: { itemId: stream.itemId, positionTicks: ticks },
+        });
+    }, [stream, enqueueProgressEvent]);
+
+    // Drainer: pop everything in the queue and fire each call
+    // fire-and-forget. Runs on the same cadence as the old direct
+    // heartbeat (PROGRESS_INTERVAL_MS) so server load is unchanged.
+    useEffect(() => {
+        if (!stream) return;
+        const id = window.setInterval(() => {
+            drainQueue(queueRef.current);
+        }, PROGRESS_INTERVAL_MS);
+        return () => window.clearInterval(id);
     }, [stream]);
 
-    // Heartbeat while the video is loaded.
+    // Heartbeat: enqueue a progress event every interval while a video
+    // is loaded. Separate from the drainer so the enqueue cadence is
+    // always honored even if the network is slow.
     useEffect(() => {
         if (!stream) return;
         const id = window.setInterval(() => {
@@ -146,10 +185,13 @@ export default function Play() {
         return () => window.clearInterval(id);
     }, [stream, reportProgress]);
 
-    // Stop on unmount.
+    // Stop on unmount, plus a best-effort flush of whatever's still
+    // queued. The component is going away, so we can't await; fire each
+    // remaining call and let the browser handle it.
     useEffect(() => {
         return () => {
             reportStopped();
+            drainQueue(queueRef.current);
         };
     }, [reportStopped]);
 
@@ -268,8 +310,29 @@ async function fetchNextUp(seriesId: string): Promise<NextUpResponse> {
     return (await res.json()) as NextUpResponse;
 }
 
+type PlaybackEventKind = "start" | "progress" | "stopped";
+
+type PlaybackEvent = {
+    kind: PlaybackEventKind;
+    payload: Record<string, unknown>;
+};
+
+// drainQueue mutates the array in place: it splices out everything
+// currently queued and fires each network call without awaiting. The
+// caller's reference still points at the (now-empty) array so newly
+// enqueued events while these are in flight are picked up on the next
+// drain. We use splice rather than reassigning the ref so the React
+// component's useRef value remains stable.
+function drainQueue(queue: PlaybackEvent[]): void {
+    if (queue.length === 0) return;
+    const events = queue.splice(0, queue.length);
+    for (const evt of events) {
+        void postPlayback(evt.kind, evt.payload);
+    }
+}
+
 async function postPlayback(
-    kind: "start" | "progress" | "stopped",
+    kind: PlaybackEventKind,
     payload: Record<string, unknown>,
 ): Promise<void> {
     try {

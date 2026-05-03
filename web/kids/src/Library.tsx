@@ -198,11 +198,12 @@ export default function Library() {
         setError(null);
         setRefreshError(null);
         setCacheHit(false);
-        // We don't clear items eagerly any more; the cache may have data
-        // we want to render before the network resolves. `loading` is
-        // initialised true and only stays true until either cache or
-        // network produces a result.
-        setLoading(true);
+        // Don't pre-flip to `loading=true`. If the cache has the new
+        // filter's tiles we'll render them on the very next tick; the
+        // current filter's tiles stay on screen in the meantime so
+        // switching filters never flashes a spinner. We only set
+        // `loading=true` below when the cache read confirms a miss
+        // *and* we're going to need to wait on the network.
         setNextStart(0);
         setHasMore(false);
 
@@ -216,7 +217,15 @@ export default function Library() {
         let cwEtag: string | undefined;
 
         const cacheReads = (async () => {
-            if (!allK && !cwK) return;
+            if (!allK && !cwK) {
+                // Admin-preview: no cache to consult. Show the spinner
+                // until the network resolves so the previous filter's
+                // tiles aren't left lingering as a fake.
+                setLoading(true);
+                setItems([]);
+                setContinueItems([]);
+                return;
+            }
             const [allHit, cwHit] = await Promise.all([
                 allK ? cacheGet(allK) : Promise.resolve(null),
                 cwK ? cacheGet(cwK) : Promise.resolve(null),
@@ -233,8 +242,10 @@ export default function Library() {
                 setCacheHit(true);
             } else {
                 // No cache: blank the grid so we don't show stale items
-                // from the previous filter while the network resolves.
+                // from the previous filter while the network resolves,
+                // and surface the spinner since we're waiting.
                 setItems([]);
+                setLoading(true);
             }
             if (cwHit) {
                 const cached = cwHit.page as LibraryResponse;

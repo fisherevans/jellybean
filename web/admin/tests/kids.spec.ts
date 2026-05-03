@@ -308,7 +308,204 @@ test.describe("kids library cache", () => {
         const req = await libraryReq;
         expect(req.headers()["if-none-match"]).toBe(FAKE_ETAG);
     });
+
+    test("filter switch with both filters cached never shows the loading state", async ({
+        page,
+        context,
+    }) => {
+        // Same harness as the cache-render test: drop the admin cookie,
+        // seed a fake kid session, and pre-populate IDB. Difference is
+        // we seed all four cache entries the Library effect can hit:
+        // (Movies, TV) x (all, continue-watching). With every filter
+        // cached, clicking between Movies and TV should swap tiles
+        // instantly without rendering ".library-state" (the spinner /
+        // empty-state text).
+        await context.clearCookies();
+
+        const FAKE_USER_ID = "filter-switch-user-id";
+        const FAKE_ETAG = 'W/"filter-switch-etag"';
+        const MOVIE_TILE = "Filter Switch Movie";
+        const TV_TILE = "Filter Switch Series";
+        const KEY_MOVIE_ALL = `${FAKE_USER_ID}:all:Movie:24:0:`;
+        const KEY_MOVIE_CW = `${FAKE_USER_ID}:continue-watching:Movie:24:0:`;
+        const KEY_TV_ALL = `${FAKE_USER_ID}:all:Series:24:0:`;
+        const KEY_TV_CW = `${FAKE_USER_ID}:continue-watching:Series:24:0:`;
+        // The library defaults to the "Both" filter on first load, so
+        // also seed those keys to keep the initial render flicker-free.
+        const KEY_BOTH_ALL = `${FAKE_USER_ID}:all:Movie,Series:24:0:`;
+        const KEY_BOTH_CW = `${FAKE_USER_ID}:continue-watching:Movie,Series:24:0:`;
+
+        await page.addInitScript(
+            ({
+                userId,
+                etag,
+                movieTile,
+                tvTile,
+                keyMovieAll,
+                keyMovieCw,
+                keyTvAll,
+                keyTvCw,
+                keyBothAll,
+                keyBothCw,
+            }) => {
+                if (location.pathname.startsWith("/kids")) {
+                    localStorage.setItem("jellybean.kids.token", "fake-bearer-token");
+                    localStorage.setItem("jellybean.kids.userId", userId);
+                    localStorage.setItem("jellybean.kids.userName", "filter-switch");
+                    localStorage.setItem("jellybean.kids.profileId", "1");
+                    localStorage.setItem("jellybean.kids.kidName", "Filter Switch Kid");
+                    // Force the default filter to "Both" so the first
+                    // render uses the Both cache; the test then clicks
+                    // Movies and TV in turn.
+                    localStorage.setItem("jellybean.kids.typeFilter", "Both");
+                }
+                const seed = (key: string, page: unknown) =>
+                    new Promise<void>((resolve) => {
+                        const open = indexedDB.open("jellybean-kids", 1);
+                        open.onupgradeneeded = () => {
+                            const db = open.result;
+                            if (!db.objectStoreNames.contains("library")) {
+                                db.createObjectStore("library");
+                            }
+                        };
+                        open.onsuccess = () => {
+                            const db = open.result;
+                            const tx = db.transaction("library", "readwrite");
+                            tx.objectStore("library").put(
+                                { page, etag, savedAt: Date.now() },
+                                key,
+                            );
+                            tx.oncomplete = () => {
+                                db.close();
+                                resolve();
+                            };
+                            tx.onerror = () => {
+                                db.close();
+                                resolve();
+                            };
+                        };
+                        open.onerror = () => resolve();
+                    });
+                const moviePage = {
+                    Items: [
+                        {
+                            Id: "filter-switch-movie-id",
+                            Name: movieTile,
+                            Type: "Movie",
+                            ImageTags: {},
+                        },
+                    ],
+                    HasMore: false,
+                    NextStartIndex: 1,
+                    ProfileId: 1,
+                };
+                const tvPage = {
+                    Items: [
+                        {
+                            Id: "filter-switch-series-id",
+                            Name: tvTile,
+                            Type: "Series",
+                            ImageTags: {},
+                        },
+                    ],
+                    HasMore: false,
+                    NextStartIndex: 1,
+                    ProfileId: 1,
+                };
+                const bothPage = {
+                    Items: [
+                        ...moviePage.Items,
+                        ...tvPage.Items,
+                    ],
+                    HasMore: false,
+                    NextStartIndex: 2,
+                    ProfileId: 1,
+                };
+                const emptyCw = { Items: [], ProfileId: 1 };
+                (window as unknown as { __cacheSeed: Promise<void> }).__cacheSeed =
+                    Promise.all([
+                        seed(keyMovieAll, moviePage),
+                        seed(keyMovieCw, emptyCw),
+                        seed(keyTvAll, tvPage),
+                        seed(keyTvCw, emptyCw),
+                        seed(keyBothAll, bothPage),
+                        seed(keyBothCw, emptyCw),
+                    ]).then(() => undefined);
+            },
+            {
+                userId: FAKE_USER_ID,
+                etag: FAKE_ETAG,
+                movieTile: MOVIE_TILE,
+                tvTile: TV_TILE,
+                keyMovieAll: KEY_MOVIE_ALL,
+                keyMovieCw: KEY_MOVIE_CW,
+                keyTvAll: KEY_TV_ALL,
+                keyTvCw: KEY_TV_CW,
+                keyBothAll: KEY_BOTH_ALL,
+                keyBothCw: KEY_BOTH_CW,
+            },
+        );
+
+        // First load primes the page so the seed promise can flush.
+        await page.goto(KIDS_BASE);
+        await page.evaluate(
+            () =>
+                (window as unknown as { __cacheSeed?: Promise<void> }).__cacheSeed ??
+                Promise.resolve(),
+        );
+
+        // Block the network for /api/kids/library so the only path that
+        // can put tiles on screen is the IDB cache. This makes the test
+        // unambiguous: any tile we see came from cache, and any
+        // ".library-state" we see is the spinner we're trying to
+        // eliminate.
+        await page.route("**/api/kids/library**", (route) => route.abort("failed"));
+
+        await page.goto(`${KIDS_BASE}library`);
+
+        // Wait for the initial "Both" render to land. The Both cache
+        // contains both tiles, so .tile-grid should be visible.
+        await expect(page.locator(".tile-grid").first()).toBeVisible({
+            timeout: 5_000,
+        });
+
+        const loadingText = page.locator(".library-state");
+
+        // Click TV. The cache hit should swap tiles synchronously; the
+        // loading text must never appear during the transition. We poll
+        // .library-state across a short window after the click and
+        // assert it stayed hidden the whole time.
+        const tvTab = page.getByRole("tab", { name: "TV" });
+        const sawLoadingDuringTv = pollVisibleEver(loadingText, 250);
+        await tvTab.click();
+        const tvFlash = await sawLoadingDuringTv;
+        expect(tvFlash).toBe(false);
+        await expect(page.locator(".tile-grid").first()).toBeVisible();
+
+        // Now click Movies, same assertion.
+        const moviesTab = page.getByRole("tab", { name: "Movies" });
+        const sawLoadingDuringMovies = pollVisibleEver(loadingText, 250);
+        await moviesTab.click();
+        const moviesFlash = await sawLoadingDuringMovies;
+        expect(moviesFlash).toBe(false);
+        await expect(page.locator(".tile-grid").first()).toBeVisible();
+    });
 });
+
+// pollVisibleEver returns true if the locator becomes visible at any
+// point during the polling window. Used to detect transient flashes
+// (e.g. a spinner that flickers for a frame between cached renders).
+async function pollVisibleEver(
+    locator: import("@playwright/test").Locator,
+    durationMs: number,
+): Promise<boolean> {
+    const deadline = Date.now() + durationMs;
+    while (Date.now() < deadline) {
+        if (await locator.isVisible().catch(() => false)) return true;
+        await new Promise((r) => setTimeout(r, 10));
+    }
+    return false;
+}
 
 // Offline fallback (issue #26). Builds on the cache test pattern: pre-seed
 // IDB and a kid session, then flip the browser context offline before

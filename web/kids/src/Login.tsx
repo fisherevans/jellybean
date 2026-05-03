@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { getSession, setSession, type Session } from "./auth";
+import { prefetchLibrary } from "./prefetch";
 
 // Login is the kid app's entry point. Same UX as Jellyfin's own clients:
 // server URL (auto-filled and read-only here, since the kid app is served
@@ -80,6 +81,9 @@ export default function Login() {
                 kidId: data.kidId,
             };
             setSession(session);
+            // Warm the library cache off the critical path so the next
+            // screen feels instant. Fire-and-forget; nav doesn't wait.
+            prefetchLibrary();
             nav("/library", { replace: true });
         } catch {
             setError("Couldn't reach the server. Try again.");
