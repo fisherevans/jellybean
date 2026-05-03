@@ -43,6 +43,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     return res.json() as Promise<T>;
 }
 
+export type StreamInfo = {
+    streamUrl: string;
+    itemId: string;
+    itemName: string;
+};
+
 export const api = {
     login: (username: string, password: string) =>
         request<User>("POST", "/api/auth/login", { username, password }),
@@ -50,7 +56,8 @@ export const api = {
     me: () => request<User>("GET", "/api/auth/me"),
     listItems: (type = "Movie", limit = 20) =>
         request<ItemsResult>("GET", `/api/admin/items?type=${type}&limit=${limit}`),
-    streamURL: (itemId: string) => `/api/admin/items/${itemId}/stream`,
+    getStream: (itemId: string) =>
+        request<StreamInfo>("GET", `/api/admin/items/${itemId}/stream`),
 };
 
 export { HttpError };

@@ -41,16 +41,18 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// handleAdminStream redirects the browser to Jellyfin's direct-play URL for
-// the requested item, signed with the Jellybean service-account API key.
-// The redirect target is what the <video> element follows.
+// handleAdminStream returns the Jellyfin HLS manifest URL for the requested
+// item as JSON. We don't 302-redirect: hls.js needs to know the URL is HLS
+// (the original /api/admin/... path doesn't end in .m3u8) so it engages
+// instead of letting the browser try to natively decode the manifest.
 func (s *Server) handleAdminStream(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if id == "" {
 		http.Error(w, "item id required", http.StatusBadRequest)
 		return
 	}
-	if _, err := s.jellyfin.GetItem(r.Context(), id); err != nil {
+	item, err := s.jellyfin.GetItem(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, jellyfin.ErrNotFound) {
 			http.Error(w, "item not found", http.StatusNotFound)
 			return
@@ -59,6 +61,9 @@ func (s *Server) handleAdminStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to resolve item", http.StatusBadGateway)
 		return
 	}
-	url := s.jellyfin.StreamURL(id, "") // "" => fall back to service-account key
-	http.Redirect(w, r, url, http.StatusFound)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"streamUrl": s.jellyfin.StreamURL(id, ""),
+		"itemId":    id,
+		"itemName":  item.Name,
+	})
 }

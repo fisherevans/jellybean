@@ -11,6 +11,7 @@ export default function Dashboard({ user, onLogout }: Props) {
     const [items, setItems] = useState<Item[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [playing, setPlaying] = useState<Item | null>(null);
+    const [streamUrl, setStreamUrl] = useState<string | null>(null);
 
     useEffect(() => {
         api.listItems("Movie", 20)
@@ -23,6 +24,25 @@ export default function Dashboard({ user, onLogout }: Props) {
                 setError(err.message || "Failed to load items.");
             });
     }, [onLogout]);
+
+    useEffect(() => {
+        if (!playing) {
+            setStreamUrl(null);
+            return;
+        }
+        let cancelled = false;
+        setStreamUrl(null);
+        api.getStream(playing.Id)
+            .then((info) => {
+                if (!cancelled) setStreamUrl(info.streamUrl);
+            })
+            .catch((err) => {
+                if (!cancelled) setError(err.message || "Failed to resolve stream.");
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [playing]);
 
     async function handleLogout() {
         try {
@@ -86,11 +106,15 @@ export default function Dashboard({ user, onLogout }: Props) {
                 {playing && (
                     <div className="player">
                         <h2>{playing.Name}</h2>
-                        <HlsVideo
-                            key={playing.Id}
-                            src={api.streamURL(playing.Id)}
-                            style={{ width: "100%", maxWidth: 960 }}
-                        />
+                        {streamUrl ? (
+                            <HlsVideo
+                                key={playing.Id}
+                                src={streamUrl}
+                                style={{ width: "100%", maxWidth: 960 }}
+                            />
+                        ) : (
+                            <div className="muted">Resolving stream...</div>
+                        )}
                         <p className="muted">
                             HLS stream. Jellyfin direct-plays when codecs match,
                             transcodes to H.264/AAC otherwise. Seek anywhere; the
