@@ -1,7 +1,25 @@
+:root {
+    --bg: #000000;
+    --fg: #f0f0f0;
+    --muted: #888888;
+    --card: #16181c;
+    --border: #2a2c30;
+    /* Brand palette (shared with admin app). Periwinkle is the primary
+       accent; pollen for warm highlights; emerald + rose for success +
+       error; lavender for soft surfaces. */
+    --accent: #8084ff; /* soft-periwinkle */
+    --accent-fg: #ffffff;
+    --accent-warm: #ffd166; /* golden-pollen */
+    --accent-warm-fg: #1a1422;
+    --success: #06d6a0; /* emerald */
+    --error: #e55381; /* blush-rose */
+    --accent-soft: #ffe4fa; /* lavender-veil */
+}
+
 body {
     margin: 0;
-    background: #000;
-    color: #f0f0f0;
+    background: var(--bg);
+    color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -33,8 +51,8 @@ body {
 .setup button,
 .screen button,
 .picker button {
-    background: #f5c518;
-    color: #000;
+    background: var(--accent);
+    color: var(--accent-fg);
     border: 0;
     padding: 0.5rem 1rem;
     border-radius: 4px;
@@ -58,24 +76,32 @@ body {
 }
 
 .error {
-    color: #ff6b6b;
+    color: var(--error);
 }
 
 a,
 .picker-link {
-    color: #f5c518;
+    color: var(--accent);
 }
 
 .picker {
     padding: 3rem 2rem;
     max-width: 1200px;
     margin: 0 auto;
+    text-align: center;
+}
+
+.picker-brand {
+    display: block;
+    margin: 0 auto 1rem;
+    width: 96px;
+    height: 96px;
 }
 
 .picker h1 {
     text-align: center;
     font-size: 2.5rem;
-    margin-bottom: 2rem;
+    margin: 0 0 2rem;
 }
 
 .picker-grid {
@@ -112,14 +138,16 @@ a,
 }
 
 .picker-tile:focus .picker-avatar {
-    box-shadow: 0 0 0 4px #f5c518;
+    box-shadow: 0 0 0 4px var(--accent);
 }
 
 .picker-avatar {
     width: 140px;
     height: 140px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #4a90e2, #9b59b6);
+    /* Periwinkle to pollen with a rose blush in the corner — matches the
+       brand palette and stays kid-friendly without going neon. */
+    background: linear-gradient(135deg, var(--accent), var(--accent-warm) 70%, var(--error));
     color: #fff;
     font-size: 4rem;
     font-weight: 700;
@@ -135,7 +163,7 @@ a,
 }
 
 .picker-remove {
-    color: #ff6b6b;
+    color: var(--error);
     font-size: 0.85rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -220,8 +248,8 @@ a,
 }
 
 .filter-pill.active {
-    background: #f5c518;
-    color: #000;
+    background: var(--accent);
+    color: var(--accent-fg);
 }
 
 .filter-pill.focused,
@@ -298,7 +326,7 @@ a,
 
 .tile.focused .tile-poster,
 .tile:focus .tile-poster {
-    box-shadow: 0 0 0 4px #f5c518;
+    box-shadow: 0 0 0 4px var(--accent);
 }
 
 .tile-poster {
@@ -333,7 +361,7 @@ a,
     top: 8px;
     right: 8px;
     background: rgba(0, 0, 0, 0.75);
-    color: #f5c518;
+    color: var(--accent);
     font-size: 0.7rem;
     font-weight: 700;
     padding: 2px 6px;
@@ -370,8 +398,8 @@ a,
     width: 48px;
     height: 48px;
     border-radius: 50%;
-    background: rgba(245, 197, 24, 0.15);
-    color: #f5c518;
+    background: rgba(128, 132, 255, 0.15);
+    color: var(--accent);
     font-size: 1.6rem;
     text-decoration: none;
     line-height: 1;
@@ -379,8 +407,8 @@ a,
 
 .play-back:focus,
 .play-back:hover {
-    background: #f5c518;
-    color: #000;
+    background: var(--accent);
+    color: var(--accent-fg);
     outline: none;
 }
 

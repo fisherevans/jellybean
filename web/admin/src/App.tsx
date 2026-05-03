@@ -64,7 +64,7 @@ export default function App() {
                     <Route path="/activity" element={<Activity />} />
                     <Route path="/search" element={<Search />} />
                     <Route path="/profiles" element={<Profiles />} />
-                    <Route path="/kids" element={<Kids />} />
+                    <Route path="/manage-kids" element={<Kids />} />
                 </Route>
             ) : (
                 <Route path="*" element={<RedirectToLogin />} />

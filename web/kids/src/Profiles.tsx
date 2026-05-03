@@ -49,6 +49,13 @@ export default function Profiles() {
 
     return (
         <div className="picker">
+            <img
+                src="/kids/jellybean-kids.png"
+                alt=""
+                className="picker-brand"
+                width={96}
+                height={96}
+            />
             <h1>Who's watching?</h1>
             <div className="picker-grid">
                 {profiles.map((p, i) => (

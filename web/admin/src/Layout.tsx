@@ -14,7 +14,7 @@ const links = [
     { to: "/activity", label: "Activity" },
     { to: "/search", label: "Search" },
     { to: "/profiles", label: "Profiles" },
-    { to: "/kids", label: "Kids" },
+    { to: "/manage-kids", label: "Kids" },
 ];
 
 export default function Layout({ user, onLogout }: Props) {
@@ -33,6 +33,13 @@ export default function Layout({ user, onLogout }: Props) {
         <div className="layout">
             <header className="topbar">
                 <Link to="/" className="brand">
+                    <img
+                        src="/jellybean-admin.png"
+                        alt=""
+                        className="brand-mark"
+                        width={32}
+                        height={32}
+                    />
                     Jellybean
                 </Link>
                 <nav className="nav">

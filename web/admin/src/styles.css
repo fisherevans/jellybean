@@ -2,10 +2,18 @@
     --bg: #0e0f12;
     --fg: #e8e8e8;
     --muted: #9aa0a6;
-    --accent: #f5c518;
+    /* Brand palette (shared with kids client). Periwinkle is the primary
+       brand accent; pollen is secondary; emerald + rose are success +
+       error; lavender is a soft surface for highlights against dark bg. */
+    --accent: #8084ff; /* soft-periwinkle */
+    --accent-fg: #ffffff;
+    --accent-warm: #ffd166; /* golden-pollen */
+    --accent-warm-fg: #1a1422;
+    --success: #06d6a0; /* emerald */
+    --error: #e55381; /* blush-rose */
+    --accent-soft: #ffe4fa; /* lavender-veil */
     --border: #2a2c30;
     --card: #16181c;
-    --error: #ff6b6b;
 }
 
 * {
@@ -68,7 +76,7 @@ body {
 
 button {
     background: var(--accent);
-    color: #000;
+    color: var(--accent-fg);
     border: 0;
     padding: 0.5rem 1rem;
     border-radius: 4px;
@@ -212,6 +220,15 @@ button:disabled {
     font-weight: 700;
     color: var(--accent);
     text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.brand-mark {
+    width: 32px;
+    height: 32px;
+    display: block;
 }
 
 .nav {
@@ -336,18 +353,18 @@ button:disabled {
 .cat-button.cat-kid:focus-visible,
 .cat-button.cat-visible.active,
 .cat-button.cat-visible:focus-visible {
-    background: #1f6f3a;
-    border-color: #2e8a4f;
-    color: #fff;
+    background: var(--success);
+    border-color: var(--success);
+    color: #062e23;
 }
 
 .cat-button.cat-adult.active,
 .cat-button.cat-adult:focus-visible,
 .cat-button.cat-hidden.active,
 .cat-button.cat-hidden:focus-visible {
-    background: #6f1f2a;
-    border-color: #8a2e3e;
-    color: #fff;
+    background: var(--error);
+    border-color: var(--error);
+    color: #ffffff;
 }
 
 .cat-button.cat-uncategorized.active,
@@ -710,9 +727,9 @@ button:disabled {
     100% { opacity: 0; }
 }
 
-.triage-flash.flash-green   { background: rgba(31, 111, 58, 0.85); }
-.triage-flash.flash-red     { background: rgba(111, 31, 42, 0.85); }
-.triage-flash.flash-yellow  { background: rgba(180, 140, 30, 0.85); }
+.triage-flash.flash-green   { background: rgba(6, 214, 160, 0.85); }
+.triage-flash.flash-red     { background: rgba(229, 83, 129, 0.85); }
+.triage-flash.flash-yellow  { background: rgba(255, 209, 102, 0.85); }
 .triage-flash.flash-neutral { background: rgba(80, 80, 80, 0.7); }
 
 .triage-flash-symbol {
@@ -951,6 +968,23 @@ button:disabled {
     border: 1px solid var(--border);
     padding: 0.3rem 0.7rem;
     font-weight: 400;
+}
+
+.kid-preview {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: none;
+    align-self: center;
+    line-height: 1.4;
+}
+
+.kid-preview:hover {
+    filter: brightness(1.08);
 }
 
 /* modal */

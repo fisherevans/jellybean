@@ -136,7 +136,7 @@ async function gotoLibrary(page: import("@playwright/test").Page, profileId: num
 
 test.describe("kids library", () => {
     test("renders the type filter, defaulted to Both", async ({ page }) => {
-        await gotoLibrary(page, 4);
+        await gotoLibrary(page, 1);
         const tabs = page.getByRole("tab");
         await expect(tabs).toHaveCount(3);
         await expect(tabs.nth(0)).toHaveText("Both");
@@ -144,7 +144,7 @@ test.describe("kids library", () => {
     });
 
     test("clicking a filter pill swaps the type query param", async ({ page }) => {
-        await gotoLibrary(page, 4);
+        await gotoLibrary(page, 1);
         // Wait for the initial fetch to finish so a click triggers a fresh
         // request we can observe.
         await page.locator(".tile-grid, .library-state").first().waitFor();
@@ -158,9 +158,9 @@ test.describe("kids library", () => {
     });
 
     test("library tiles render and clicking one navigates to /play", async ({ page }) => {
-        await gotoLibrary(page, 4);
+        await gotoLibrary(page, 1);
         // Wait for at least one tile to render. Server returns visible items
-        // for profile 4; if empty the test data is misconfigured.
+        // for the Default profile; if empty the test data is misconfigured.
         const firstTile = page.locator(".tile-grid").first();
         await expect(firstTile).toBeVisible({ timeout: 10_000 });
         await firstTile.click();
@@ -168,7 +168,7 @@ test.describe("kids library", () => {
     });
 
     test("D-pad: ArrowDown from filter focuses a tile, Enter activates it", async ({ page }) => {
-        await gotoLibrary(page, 4);
+        await gotoLibrary(page, 1);
         // Wait for the grid to load.
         await page.locator(".tile-grid").first().waitFor({ state: "visible" });
         // Focus the active filter pill, then ArrowDown.
@@ -181,7 +181,7 @@ test.describe("kids library", () => {
     });
 
     test("Series tiles get a TV badge when present", async ({ page }) => {
-        await gotoLibrary(page, 4);
+        await gotoLibrary(page, 1);
         await page.locator(".tile-grid, .library-state").first().waitFor();
         const seriesReq = page.waitForRequest((req) =>
             req.url().includes("/api/kids/library") && req.url().includes("type=Series"),
@@ -204,7 +204,7 @@ test.describe("kids playback", () => {
         // unit tests instead. Here we confirm the navigation, the stream
         // resolve call, and the video element wiring.
         await clearKidsLocalStorage(page);
-        await page.goto(`/kids/library?profileId=4`);
+        await page.goto(`/kids/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
         const movieTile = page.locator(".tile-grid").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
@@ -221,7 +221,7 @@ test.describe("kids playback", () => {
 
     test("Esc returns to library", async ({ page }) => {
         await clearKidsLocalStorage(page);
-        await page.goto(`/kids/library?profileId=4`);
+        await page.goto(`/kids/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
         const movieTile = page.locator(".tile-grid").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
@@ -233,7 +233,7 @@ test.describe("kids playback", () => {
 
     test("back button returns to library", async ({ page }) => {
         await clearKidsLocalStorage(page);
-        await page.goto(`/kids/library?profileId=4`);
+        await page.goto(`/kids/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
         const movieTile = page.locator(".tile-grid").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
