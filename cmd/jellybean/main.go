@@ -21,10 +21,37 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		if err := healthcheck(); err != nil {
+			fmt.Fprintf(os.Stderr, "healthcheck failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// healthcheck is the binary's "is this container alive?" subcommand. Called
+// by Docker's HEALTHCHECK directive; works inside distroless because it
+// reuses the same binary instead of needing a shell or wget.
+func healthcheck() error {
+	port := os.Getenv("JELLYBEAN_PORT")
+	if port == "" {
+		port = "8080"
+	}
+	cli := &http.Client{Timeout: 3 * time.Second}
+	res, err := cli.Get(fmt.Sprintf("http://127.0.0.1:%s/api/health", port))
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d", res.StatusCode)
+	}
+	return nil
 }
 
 func run() error {

@@ -1,0 +1,46 @@
+# Example Compose snippet showing how Jellybean drops into an existing
+# Jellyfin + *arr stack. Adapt service names and networks to match your
+# real setup.
+#
+# Cloudflare tunnel routing: add a hostname like jellybean.yourdomain.tld
+# pointing at http://jellybean:8080 in your cloudflared config. Auth is
+# handled by Jellybean (Jellyfin user login), so no Cloudflare Access layer
+# is needed in front.
+
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    # ... your existing Jellyfin config ...
+    networks:
+      - media
+
+  jellybean:
+    image: ghcr.io/fisherevans/jellybean:latest
+    container_name: jellybean
+    restart: unless-stopped
+    depends_on:
+      jellyfin:
+        condition: service_healthy
+    environment:
+      JELLYFIN_URL: http://jellyfin:8096
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY}            # generate one in Jellyfin admin -> API Keys
+      JELLYBEAN_SESSION_SECRET: ${JELLYBEAN_SESSION_SECRET}  # any high-entropy string; rotate to invalidate sessions
+      JELLYBEAN_PORT: 8080
+      JELLYBEAN_DB_PATH: /var/lib/jellybean/jellybean.db
+      JELLYBEAN_JELLYFIN_TAG_MIRROR: "false"            # keep false unless explicitly enabling the mirror
+      # JELLYBEAN_KIDS_KEYS: "kid1key=jellyfin_user_id,kid2key=jellyfin_user_id"  # M1 stub mapping; M2 replaces this
+    volumes:
+      - jellybean-data:/var/lib/jellybean
+    ports:
+      - "8080:8080"
+    networks:
+      - media
+
+networks:
+  media:
+    external: true     # presumed to already exist alongside your *arr stack
+
+volumes:
+  jellybean-data:

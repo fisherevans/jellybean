@@ -1,0 +1,29 @@
+# Dev-time overlay: builds Jellybean from the local source instead of
+# pulling the published image. Run with:
+#
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# This is the integration smoke test for the Dockerfile itself. For day-to-
+# day development, use `go run ./cmd/jellybean` plus `npm run dev` in each
+# web/ app, which is much faster.
+
+services:
+  jellybean:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jellybean-dev
+    container_name: jellybean-dev
+    environment:
+      JELLYFIN_URL: ${JELLYFIN_URL:?set JELLYFIN_URL}
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:?set JELLYFIN_API_KEY}
+      JELLYBEAN_SESSION_SECRET: ${JELLYBEAN_SESSION_SECRET:?set JELLYBEAN_SESSION_SECRET}
+      JELLYBEAN_ENV: dev
+      JELLYBEAN_JELLYFIN_TAG_MIRROR: "false"
+    volumes:
+      - jellybean-dev-data:/var/lib/jellybean
+    ports:
+      - "8080:8080"
+
+volumes:
+  jellybean-dev-data:
