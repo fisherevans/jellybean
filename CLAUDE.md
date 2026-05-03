@@ -104,12 +104,17 @@ docs/                   # design docs and runbooks
   user-global format.
 - Web apps: TypeScript + React + Vite, embedded into the Go binary via
   `embed.FS`. Static assets served at `/` and `/kids`.
-- SQLite driver: `modernc.org/sqlite` (pure Go, no cgo) - this matters
-  because the runtime image is `gcr.io/distroless/static-debian12` and cgo
-  would force a glibc base.
-- Logging: `log/slog`, structured.
-- HTTP routing: stdlib `http.ServeMux` (Go 1.22+ pattern matching). Don't
-  pull in chi/gorilla.
+- SQLite driver: `modernc.org/sqlite` (pure Go, no cgo). Pairs with the
+  default static base image and avoids cgo-related portability headaches
+  across architectures.
+- Logging: `github.com/rs/zerolog`, structured.
+- HTTP routing: `github.com/gorilla/mux`. Stdlib `http.ServeMux` is fine for
+  trivial cases, but Gorilla is the default for the main router so route
+  definitions stay readable as the surface grows.
+- Runtime base image: `gcr.io/distroless/static-debian12` is the default
+  for size + attack surface, but it is not a hard requirement. Swap to a
+  debuggable base (e.g. `alpine`) temporarily if you need to shell into
+  the container. Don't take dependencies that lock us to one or the other.
 - No state-management library on the web side until proven necessary
   (no Redux, no Zustand for v1).
 - Migration files live in `migrations/` with the format
