@@ -49,11 +49,63 @@ export default function Play() {
     const [offline, setOffline] = useState(false);
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const reportedStart = useRef(false);
+    // Visible "Paused" indicator. Tracks the video element's actual
+    // paused state so we render the right thing even if the user
+    // pauses through means we didn't trigger (system audio focus
+    // loss, etc).
+    const [isPaused, setIsPaused] = useState(false);
 
-    // Esc returns to the library.
+    // Remote / keyboard bindings:
+    //   Esc / BACK             -> back to library
+    //   Enter / Space / OK     -> toggle play / pause
+    //   MediaPlayPause hardkey -> toggle play / pause
+    //   ArrowLeft / Right      -> seek -/+ 15s
+    // Native <video controls> on TV is not reachable via D-pad, so we
+    // hide them and own the transport ourselves. Kid use-case is
+    // primarily "pause" and "resume"; seeking is a power-user nice-to-have.
     useEffect(() => {
+        function togglePlay() {
+            const v = videoRef.current;
+            if (!v) return;
+            if (v.paused) {
+                const p = v.play();
+                if (p && typeof p.catch === "function") p.catch(() => {});
+            } else {
+                v.pause();
+            }
+        }
+        function seek(deltaSeconds: number) {
+            const v = videoRef.current;
+            if (!v || !isFinite(v.duration)) return;
+            const next = Math.max(0, Math.min(v.duration - 1, v.currentTime + deltaSeconds));
+            v.currentTime = next;
+        }
         function onKey(e: KeyboardEvent) {
-            if (e.key === "Escape") nav(libraryHref);
+            switch (e.key) {
+                case "Escape":
+                    nav(libraryHref);
+                    break;
+                case "Enter":
+                case " ":
+                case "MediaPlayPause":
+                    e.preventDefault();
+                    togglePlay();
+                    break;
+                case "MediaPlay":
+                    videoRef.current?.play().catch(() => {});
+                    break;
+                case "MediaPause":
+                    videoRef.current?.pause();
+                    break;
+                case "ArrowLeft":
+                    e.preventDefault();
+                    seek(-15);
+                    break;
+                case "ArrowRight":
+                    e.preventDefault();
+                    seek(15);
+                    break;
+            }
         }
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
@@ -260,12 +312,26 @@ export default function Play() {
                 key={stream.itemId}
                 src={stream.streamUrl}
                 autoPlay
+                controls={false}
                 onLoadedMetadata={onLoadedMetadata}
-                onPlay={reportStart}
-                onPause={() => reportProgress(true)}
+                onPlay={() => {
+                    reportStart();
+                    setIsPaused(false);
+                }}
+                onPause={() => {
+                    reportProgress(true);
+                    setIsPaused(true);
+                }}
                 onEnded={onEnded}
                 style={{ width: "100%", height: "calc(100vh - 80px)" }}
             />
+            {isPaused && (
+                <div className="play-paused-overlay" role="status" aria-live="polite">
+                    <span className="play-paused-icon" aria-hidden>‖</span>
+                    <span className="play-paused-label">Paused</span>
+                    <span className="play-paused-hint">Press OK to resume</span>
+                </div>
+            )}
         </div>
     );
 }

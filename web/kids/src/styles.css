@@ -439,6 +439,8 @@ a,
 .play-screen {
     background: #000;
     min-height: 100vh;
+    /* Anchor for .play-paused-overlay (absolute, inset:0). */
+    position: relative;
 }
 
 .play-header {
@@ -484,4 +486,41 @@ a,
 .play-error {
     color: #888;
     padding: 2rem;
+}
+
+/* Custom transport indicator. Native <video controls> isn't reachable
+   via D-pad on Android TV WebView; we own the keyboard bindings in
+   Play.tsx and surface a kid-friendly Paused overlay only when paused.
+   Auto-unhides when the video resumes (state-driven). */
+.play-paused-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    background: rgba(0, 0, 0, 0.55);
+    pointer-events: none;
+    color: #fff;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+}
+
+.play-paused-icon {
+    font-size: 6rem;
+    line-height: 1;
+    color: var(--accent);
+    text-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
+    letter-spacing: 0.15em;
+}
+
+.play-paused-label {
+    font-size: 1.6rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+}
+
+.play-paused-hint {
+    font-size: 0.95rem;
+    color: rgba(255, 255, 255, 0.75);
 }
