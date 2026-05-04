@@ -38,6 +38,13 @@ type Item struct {
 	// "what series did this come from" without a second round trip.
 	SeriesID   string `json:"SeriesId,omitempty"`
 	SeriesName string `json:"SeriesName,omitempty"`
+	// ParentIndexNumber + IndexNumber on Episode items: the season
+	// number and the episode-within-season number. Drives "S1E2"
+	// display in the kid player. Pointers because zero is a real
+	// value (specials sometimes use 0, and we want to distinguish
+	// "0" from "missing".)
+	ParentIndexNumber *int `json:"ParentIndexNumber,omitempty"`
+	IndexNumber       *int `json:"IndexNumber,omitempty"`
 	// MediaStreams is populated when Fields=MediaStreams is requested.
 	// Used to surface the primary audio language for the curation UI.
 	MediaStreams []MediaStream `json:"MediaStreams,omitempty"`

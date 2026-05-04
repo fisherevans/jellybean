@@ -607,12 +607,14 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		Msg("kids stream resolved")
 
 	resp := kidsStreamResponse{
-		StreamURL:  streamURL,
-		ItemID:     id,
-		ItemName:   item.Name,
-		ItemType:   item.Type,
-		SeriesID:   item.SeriesID,
-		SeriesName: item.SeriesName,
+		StreamURL:         streamURL,
+		ItemID:            id,
+		ItemName:          item.Name,
+		ItemType:          item.Type,
+		SeriesID:          item.SeriesID,
+		SeriesName:        item.SeriesName,
+		ParentIndexNumber: item.ParentIndexNumber,
+		IndexNumber:       item.IndexNumber,
 	}
 	if item.UserData != nil {
 		resp.UserData = item.UserData
@@ -625,14 +627,19 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 // SeriesName are populated only on Episode items (Jellyfin includes the
 // parent series id on Episode item payloads); the client uses SeriesID
 // to call /next-up after the current episode finishes.
+// ParentIndexNumber + IndexNumber are the season + episode index for
+// Episode items, used by the kid player to display "S1E2" alongside
+// the episode title.
 type kidsStreamResponse struct {
-	StreamURL  string                 `json:"streamUrl"`
-	ItemID     string                 `json:"itemId"`
-	ItemName   string                 `json:"itemName"`
-	ItemType   string                 `json:"itemType,omitempty"`
-	SeriesID   string                 `json:"seriesId,omitempty"`
-	SeriesName string                 `json:"seriesName,omitempty"`
-	UserData   *jellyfin.ItemUserData `json:"userData,omitempty"`
+	StreamURL         string                 `json:"streamUrl"`
+	ItemID            string                 `json:"itemId"`
+	ItemName          string                 `json:"itemName"`
+	ItemType          string                 `json:"itemType,omitempty"`
+	SeriesID          string                 `json:"seriesId,omitempty"`
+	SeriesName        string                 `json:"seriesName,omitempty"`
+	ParentIndexNumber *int                   `json:"parentIndexNumber,omitempty"`
+	IndexNumber       *int                   `json:"indexNumber,omitempty"`
+	UserData          *jellyfin.ItemUserData `json:"userData,omitempty"`
 }
 
 // handleKidsNextUp resolves the next episode to play for a series for the

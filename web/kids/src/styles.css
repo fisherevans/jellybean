@@ -482,6 +482,12 @@ a,
     font-size: 0.9rem;
 }
 
+.play-episode-badge {
+    color: var(--accent);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+}
+
 .play-loading,
 .play-error {
     color: #888;

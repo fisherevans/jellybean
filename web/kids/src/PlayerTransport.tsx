@@ -33,7 +33,6 @@ type PlayerTransportProps = {
     videoRef: React.RefObject<HTMLVideoElement | null>;
     onRestart: () => void;
     onNextEpisode?: () => void;
-    onBack: () => void;
 };
 
 type FocusState =
@@ -55,7 +54,6 @@ export default function PlayerTransport({
     videoRef,
     onRestart,
     onNextEpisode,
-    onBack,
 }: PlayerTransportProps) {
     // High-level UI state. These flip on human-cadence events so they
     // can drive React renders without thrashing.
@@ -276,13 +274,24 @@ export default function PlayerTransport({
         }
 
         function onKey(e: KeyboardEvent) {
+            // TV remotes auto-repeat keydown when the OK button is held
+            // even briefly - a single user tap can fire keydown
+            // (repeat=false), keydown (repeat=true), keyup within
+            // ~50ms. Without this filter, OK toggles play -> pause ->
+            // play in rapid succession, causing the audio to stutter
+            // and leaving the parity unpredictable. We always want to
+            // act on the original keydown only.
+            if (e.repeat) return;
+
             // Escape stays Play.tsx's responsibility (back to library).
             if (e.key === "Escape") return;
-            if (e.key === "Backspace" || e.key === "GoBack") {
-                e.preventDefault();
-                onBack();
-                return;
-            }
+            // Don't intercept Backspace / GoBack here. On Android TV
+            // the BACK button is delivered to MainActivity.onKeyDown
+            // which calls webView.goBack() - the right behavior. If
+            // we ALSO call onBack here from JS, both fire and the
+            // user has to press BACK twice to actually leave a show.
+            // Letting the Activity own the BACK semantics keeps the
+            // navigation single-press.
 
             // Hardware media keys always toggle, regardless of focus.
             if (e.key === "MediaPlayPause") {
@@ -386,7 +395,7 @@ export default function PlayerTransport({
 
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [focus, buttons, showOnInput, videoRef, onBack]);
+    }, [focus, buttons, showOnInput, videoRef]);
 
     // Pointer / mouse-move: any movement reveals the transport and
     // resets the timer. A click on the video toggles visibility (the

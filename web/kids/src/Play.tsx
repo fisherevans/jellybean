@@ -24,6 +24,10 @@ type StreamResponse = {
     itemType?: string;
     seriesId?: string;
     seriesName?: string;
+    // Episode index inside the season + season index inside the series.
+    // Both are populated only when the resolved item is an Episode.
+    indexNumber?: number;
+    parentIndexNumber?: number;
     userData?: {
         PlaybackPositionTicks?: number;
         PlayedPercentage?: number;
@@ -249,10 +253,6 @@ export default function Play() {
         if (p && typeof p.catch === "function") p.catch(() => {});
     }, []);
 
-    const handleBack = useCallback(() => {
-        nav(libraryHref);
-    }, [nav, libraryHref]);
-
     const seriesIdForNext = stream?.seriesId;
     const currentEpisodeId = stream?.itemId;
     const handleNextEpisode = useCallback(() => {
@@ -319,7 +319,18 @@ export default function Play() {
                 </Link>
                 <div className="play-titles">
                     <h1>{stream.itemName}</h1>
-                    {seriesLabel && <p className="play-series">{seriesLabel}</p>}
+                    {seriesLabel && (
+                        <p className="play-series">
+                            {seriesLabel}
+                            {stream.parentIndexNumber !== undefined &&
+                                stream.indexNumber !== undefined && (
+                                <span className="play-episode-badge">
+                                    {" · "}S{stream.parentIndexNumber}E
+                                    {String(stream.indexNumber).padStart(2, "0")}
+                                </span>
+                            )}
+                        </p>
+                    )}
                 </div>
             </header>
             <HlsVideo
@@ -353,7 +364,6 @@ export default function Play() {
                 videoRef={videoRef}
                 onRestart={handleRestart}
                 onNextEpisode={showNextEpisode ? handleNextEpisode : undefined}
-                onBack={handleBack}
             />
         </div>
     );
