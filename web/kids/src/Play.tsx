@@ -250,26 +250,30 @@ export default function Play() {
     }, [nav, libraryHref]);
 
     const seriesIdForNext = stream?.seriesId;
+    const currentEpisodeId = stream?.itemId;
     const handleNextEpisode = useCallback(() => {
-        if (!seriesIdForNext) return;
+        if (!seriesIdForNext || !currentEpisodeId) return;
         // Report a stop on the current episode so Jellyfin clears its
-        // session view, then pop over to the next-up episode. We let
-        // the play screen remount under the new itemId so all the
-        // resume / report wiring re-initializes cleanly.
+        // session view, then walk to the episode AFTER this one in the
+        // series. Plain /next-up returns the resume-able episode,
+        // which is the same episode we're watching while the kid
+        // hasn't finished it - useless for advancing. ?after=<id>
+        // forces the server to walk the episode list and return the
+        // strictly-next one.
         reportStopped();
         drainQueue(queueRef.current);
         (async () => {
             try {
-                const next = await fetchNextUp(seriesIdForNext);
+                const next = await fetchNextUp(seriesIdForNext, currentEpisodeId);
                 nav(`/play/${encodeURIComponent(next.episodeId)}${location.search}`);
             } catch {
-                // If the next-up call fails, drop back to the library
-                // rather than leaving the kid stuck on a broken next
-                // button.
+                // If the next-up call fails (no episodes left, or
+                // network error), drop back to the library rather
+                // than leaving the kid stuck on a broken next button.
                 nav(libraryHref);
             }
         })();
-    }, [seriesIdForNext, nav, libraryHref, location.search, reportStopped]);
+    }, [seriesIdForNext, currentEpisodeId, nav, libraryHref, location.search, reportStopped]);
 
     if (offline) {
         return (
@@ -369,11 +373,19 @@ async function fetchStream(itemId: string): Promise<StreamResponse> {
     return (await res.json()) as StreamResponse;
 }
 
-async function fetchNextUp(seriesId: string): Promise<NextUpResponse> {
-    const res = await fetch(
+async function fetchNextUp(
+    seriesId: string,
+    after?: string,
+): Promise<NextUpResponse> {
+    const url = new URL(
         `/api/kids/items/${encodeURIComponent(seriesId)}/next-up`,
-        { credentials: "same-origin", headers: authHeaders() },
+        window.location.origin,
     );
+    if (after) url.searchParams.set("after", after);
+    const res = await fetch(url.toString(), {
+        credentials: "same-origin",
+        headers: authHeaders(),
+    });
     if (!res.ok) {
         throw new Error(`next-up: ${res.status}: ${await res.text()}`);
     }

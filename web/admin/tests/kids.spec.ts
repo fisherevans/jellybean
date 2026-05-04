@@ -726,10 +726,12 @@ test.describe("kids playback", () => {
         await expect(page).toHaveURL(/\/kids\/library/);
     });
 
-    test("custom transport mounts with scrubber + button row", async ({ page }) => {
+    test("custom transport mounts and reveals on keypress", async ({ page }) => {
         // Issue #33: replace native <video controls> with a kid-friendly
-        // custom transport. Verify it mounts with a scrubber and at least
-        // the restart + play/pause buttons.
+        // custom transport. Transport stays hidden during the initial
+        // buffer state to avoid showing a "Play" button while the video
+        // is loading; first user keypress reveals it. Verify it mounts
+        // with a scrubber and at least the restart + play/pause buttons.
         await clearKidsLocalStorage(page);
         await page.goto(`/kids/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
@@ -737,8 +739,11 @@ test.describe("kids playback", () => {
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
         await movieTile.click();
         await expect(page).toHaveURL(/\/kids\/play\//);
-        // Transport renders bottom-anchored, visible by default.
+        // Transport mounts hidden during the buffer state. Send a key
+        // to wake it up.
         const transport = page.locator(".player-transport");
+        await expect(transport).toHaveClass(/hidden/);
+        await page.keyboard.press("Enter");
         await expect(transport).toHaveClass(/visible/);
         // Scrubber rail exists and is keyboard-focusable.
         await expect(page.locator(".pt-rail")).toBeVisible();

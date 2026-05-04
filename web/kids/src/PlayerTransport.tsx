@@ -59,9 +59,17 @@ export default function PlayerTransport({
 }: PlayerTransportProps) {
     // High-level UI state. These flip on human-cadence events so they
     // can drive React renders without thrashing.
-    const [visible, setVisible] = useState(true);
+    //
+    // Initial visible=false because at mount the video is "paused" only
+    // because it hasn't started yet (buffering). Showing the transport
+    // during that period puts a "Play" icon on screen and confuses the
+    // kid into thinking they need to press it. Once the first play
+    // event fires (hasStarted), the transport behaves normally:
+    // visible while paused, auto-hides 3s after resume.
+    const [visible, setVisible] = useState(false);
     const [paused, setPaused] = useState(false);
     const [duration, setDuration] = useState(0);
+    const hasStartedRef = useRef(false);
     const [focus, setFocus] = useState<FocusState>({
         kind: "button",
         index: 1, // play/pause is the middle button when all 3 exist.
@@ -76,9 +84,7 @@ export default function PlayerTransport({
     const timeLabelRef = useRef<HTMLSpanElement | null>(null);
     const railRef = useRef<HTMLDivElement | null>(null);
 
-    // Hide timer + a "consume next press" flag for first-press-shows-only.
     const hideTimerRef = useRef<number | null>(null);
-    const consumeNextPressRef = useRef(false);
 
     // Drag state for pointer-driven scrubbing. While dragging the time
     // tick should not overwrite the user's draft position; the rAF /
@@ -106,12 +112,12 @@ export default function PlayerTransport({
     }, [videoRef]);
 
     // Show the transport in response to user input. Returns true when
-    // this call is consuming the press (i.e. the transport was hidden;
-    // the caller should NOT act on the input).
+    // this call is revealing the transport (i.e. it was hidden; the
+    // caller should NOT also act on the input - it was a "wake up"
+    // press, not an "activate the focused button" press).
     const showOnInput = useCallback((): boolean => {
         if (!visible) {
             setVisible(true);
-            consumeNextPressRef.current = true;
             armHideTimer();
             return true;
         }
@@ -126,16 +132,24 @@ export default function PlayerTransport({
         const v = videoRef.current;
         if (!v) return;
         const onPlay = () => {
+            // First play event after mount marks the buffering period
+            // as over; after this, paused-state -> transport-visible.
+            hasStartedRef.current = true;
             setPaused(false);
             armHideTimer();
         };
         const onPause = () => {
             setPaused(true);
-            // Force visible while paused.
-            setVisible(true);
-            if (hideTimerRef.current !== null) {
-                window.clearTimeout(hideTimerRef.current);
-                hideTimerRef.current = null;
+            // Don't reveal the transport during the initial buffering
+            // period, which fires a pause-like state before play() ever
+            // succeeds. Only auto-show on a real user-pause after first
+            // playback has begun.
+            if (hasStartedRef.current) {
+                setVisible(true);
+                if (hideTimerRef.current !== null) {
+                    window.clearTimeout(hideTimerRef.current);
+                    hideTimerRef.current = null;
+                }
             }
         };
         const onDurationChange = () => {
@@ -176,18 +190,15 @@ export default function PlayerTransport({
         };
     }, [videoRef, duration]);
 
-    // Initial arm: when we mount, we're visible; if the video is
-    // already playing (autoplay flow), schedule the hide.
+    // Cleanup the hide timer on unmount. We don't auto-arm at mount
+    // anymore because the transport starts hidden; reveals come from
+    // input handlers + the post-firstplay onPause subscription above.
     useEffect(() => {
-        armHideTimer();
         return () => {
             if (hideTimerRef.current !== null) {
                 window.clearTimeout(hideTimerRef.current);
             }
         };
-        // We only want this on mount; subsequent arms come from input
-        // handlers and the play/pause subscription above.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Build the action list. "next" is conditional on series context;
@@ -303,16 +314,15 @@ export default function PlayerTransport({
             if (!isHandledKey) return;
 
             // First-press-shows-only: if the transport is hidden, this
-            // press just reveals it.
+            // press just reveals it. Don't also gate on
+            // consumeNextPressRef here - that flag exists for the
+            // pointer path (a tap that reveals shouldn't also fire a
+            // button click). For keyboard, the keydown is atomic;
+            // returning early on `consumed` is enough. Reading the
+            // flag in the keyboard path caused every press AFTER a
+            // reveal to be eaten too, breaking play/pause.
             const consumed = showOnInput();
             if (consumed) {
-                // Keep the page from scrolling on arrow keys while we
-                // consume the reveal press.
-                if (e.key.startsWith("Arrow")) e.preventDefault();
-                return;
-            }
-            if (consumeNextPressRef.current) {
-                consumeNextPressRef.current = false;
                 if (e.key.startsWith("Arrow")) e.preventDefault();
                 return;
             }
@@ -416,7 +426,6 @@ export default function PlayerTransport({
                 }
             } else {
                 setVisible(true);
-                consumeNextPressRef.current = true;
                 armHideTimer();
             }
         }

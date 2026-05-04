@@ -655,7 +655,20 @@ func (s *Server) handleKidsNextUp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx, _ := kidsRequestContext(r)
-	episode, err := s.jellyfin.GetNextUp(ctx, id, kc.JellyfinUserID, kc.JellyfinToken)
+	// ?after=<episodeId> drives the kid player's "Next" button: the
+	// resume-aware /Shows/NextUp returns the currently-playing episode
+	// while the kid hasn't finished it, so we can't use it to advance.
+	// EpisodeAfter walks the series's episode list and returns the one
+	// strictly after afterEpisodeID.
+	var (
+		episode *jellyfin.Item
+		err     error
+	)
+	if after := strings.TrimSpace(r.URL.Query().Get("after")); after != "" {
+		episode, err = s.jellyfin.EpisodeAfter(ctx, id, after, kc.JellyfinUserID, kc.JellyfinToken)
+	} else {
+		episode, err = s.jellyfin.GetNextUp(ctx, id, kc.JellyfinUserID, kc.JellyfinToken)
+	}
 	if err != nil {
 		if errors.Is(err, jellyfin.ErrNotFound) {
 			http.Error(w, "no episodes for this series", http.StatusNotFound)

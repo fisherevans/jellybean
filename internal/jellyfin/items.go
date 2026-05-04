@@ -158,6 +158,57 @@ func (c *Client) FirstEpisodeOfSeries(ctx context.Context, seriesID string) (*It
 	return &out.Items[0], nil
 }
 
+// EpisodeAfter returns the next episode in season+episode order after
+// the named afterEpisodeID within seriesID. Used for the "Next" button
+// in the kid player: Jellyfin's resume-aware NextUp returns the
+// currently-playing episode while the kid hasn't watched enough of it
+// for Jellyfin to mark it watched, so it can't drive an "advance to
+// next" affordance. This call walks the series's episode list and
+// returns the one strictly after afterEpisodeID. Returns ErrNotFound
+// when afterEpisodeID is the last episode.
+func (c *Client) EpisodeAfter(ctx context.Context, seriesID, afterEpisodeID, userID, userToken string) (*Item, error) {
+	if seriesID == "" {
+		return nil, fmt.Errorf("series id required")
+	}
+	if afterEpisodeID == "" {
+		return nil, fmt.Errorf("after episode id required")
+	}
+	q := url.Values{}
+	q.Set("ParentId", seriesID)
+	if userID != "" {
+		q.Set("UserId", userID)
+	}
+	q.Set("IncludeItemTypes", "Episode")
+	q.Set("Recursive", "true")
+	q.Set("SortBy", "ParentIndexNumber,IndexNumber")
+	q.Set("SortOrder", "Ascending")
+	// Don't paginate; series rarely have more than a few hundred
+	// episodes. Limit=10000 is well above any realistic cap.
+	q.Set("Limit", "10000")
+	q.Set("Fields", "Genres,OfficialRating,ProductionYear,RunTimeTicks,UserData")
+	req, err := c.newRequestWithToken(ctx, http.MethodGet, "/Items?"+q.Encode(), nil, userToken)
+	if err != nil {
+		return nil, err
+	}
+	var out ItemsResult
+	if err := c.do(req, &out); err != nil {
+		return nil, fmt.Errorf("list series episodes: %w", err)
+	}
+	for i, ep := range out.Items {
+		if ep.ID != afterEpisodeID {
+			continue
+		}
+		if i+1 < len(out.Items) {
+			next := out.Items[i+1]
+			return &next, nil
+		}
+		// afterEpisodeID is the last episode in the series.
+		return nil, ErrNotFound
+	}
+	// afterEpisodeID isn't in the series's episode list.
+	return nil, ErrNotFound
+}
+
 // GetNextUp returns the next-up episode for a series for the given user.
 // Jellyfin's behavior: a partially-watched episode counts as "next" until
 // it's marked played; otherwise the first unwatched episode (lowest season
