@@ -230,6 +230,11 @@ export default function PlayerTransport({
         onActivate: () => {
             const v = videoRef.current;
             if (!v) return;
+            console.log(
+                `[player] playpause.activate -> v.paused=${v.paused} -> ${
+                    v.paused ? "calling play()" : "calling pause()"
+                }`,
+            );
             if (v.paused) {
                 attemptPlay(v);
             } else {
@@ -285,6 +290,23 @@ export default function PlayerTransport({
         }
 
         function onKey(e: KeyboardEvent) {
+            // Trace every keydown that reaches us so chrome://inspect
+            // shows exactly what we saw on each press. Drop these
+            // logs once the play/pause regression is closed; they
+            // generate one line per keypress.
+            const v = videoRef.current;
+            const visState = visible ? "visible" : "hidden";
+            const focusState = focus.kind === "scrubber"
+                ? "scrubber"
+                : `button:${focus.index}`;
+            const vState = v
+                ? `paused=${v.paused} ct=${v.currentTime.toFixed(2)} rs=${v.readyState}`
+                : "novideo";
+            console.log(
+                `[player] key="${e.key}" repeat=${e.repeat} ` +
+                `visible=${visState} focus=${focusState} ${vState}`,
+            );
+
             // TV remotes auto-repeat keydown when the OK button is held
             // even briefly - a single user tap can fire keydown
             // (repeat=false), keydown (repeat=true), keyup within
@@ -292,7 +314,10 @@ export default function PlayerTransport({
             // play in rapid succession, causing the audio to stutter
             // and leaving the parity unpredictable. We always want to
             // act on the original keydown only.
-            if (e.repeat) return;
+            if (e.repeat) {
+                console.log("[player]   skipped: repeat");
+                return;
+            }
 
             // Escape stays Play.tsx's responsibility (back to library).
             if (e.key === "Escape") return;
@@ -341,6 +366,7 @@ export default function PlayerTransport({
             // reveal to be eaten too, breaking play/pause.
             const consumed = showOnInput();
             if (consumed) {
+                console.log("[player]   action: reveal-only (consumed)");
                 // preventDefault unconditionally on the reveal press.
                 // Without this, Enter on a focused button would still
                 // fire the browser's synthesized onClick AFTER our
@@ -414,6 +440,7 @@ export default function PlayerTransport({
             }
             if (e.key === "Enter" || e.key === " ") {
                 const btn = buttons[focus.index];
+                console.log(`[player]   action: activate button=${btn?.id ?? "?"}`);
                 btn?.onActivate();
                 return;
             }
@@ -582,6 +609,7 @@ export default function PlayerTransport({
                             focus.kind === "button" && focus.index === i ? 0 : -1
                         }
                         onClick={() => {
+                            console.log(`[player]   onClick button=${b.id}`);
                             setFocus({ kind: "button", index: i });
                             b.onActivate();
                         }}

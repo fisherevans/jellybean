@@ -224,6 +224,7 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 			"ProductionYear": it.ProductionYear,
 			"ImageTags":      it.ImageTags,
 			"AudioLanguage":  it.PrimaryAudioLanguage(),
+			"AudioLanguages": it.AudioLanguages(),
 		}
 		if st, ok := states[it.ID]; ok {
 			row["State"] = string(st)
@@ -528,6 +529,7 @@ func (s *Server) handleAdminStream(w http.ResponseWriter, r *http.Request) {
 	streamName := item.Name
 	itemType := item.Type
 	seriesName := ""
+	streamItem := item
 	if item.Type == "Series" {
 		ep, err := s.jellyfin.FirstEpisodeOfSeries(r.Context(), id)
 		if err != nil {
@@ -543,13 +545,41 @@ func (s *Server) handleAdminStream(w http.ResponseWriter, r *http.Request) {
 		streamName = ep.Name
 		seriesName = item.Name
 		itemType = ep.Type
+		streamItem = ep
 	}
 
+	audioIdx := s.preferredAudioStreamIndex(r.Context(), streamItem, r.URL.Query().Get("profileId"))
+
 	writeJSON(w, http.StatusOK, map[string]string{
-		"streamUrl":  s.jellyfin.StreamURL(streamID, ""),
+		"streamUrl":  s.jellyfin.StreamURLWithAudio(streamID, "", audioIdx),
 		"itemId":     streamID,
 		"itemName":   streamName,
 		"itemType":   itemType,
 		"seriesName": seriesName,
 	})
+}
+
+// preferredAudioStreamIndex picks the audio stream that best matches the
+// profile's default language. Returns 0 when no profileId is supplied,
+// the profile has no language preference, or the preferred language has
+// no track in the item; in those cases callers should use Jellyfin's
+// default-track selection. profileIDStr is the raw query value to keep
+// the call sites tidy; bad values are silently treated as "no profile".
+func (s *Server) preferredAudioStreamIndex(ctx context.Context, item *jellyfin.Item, profileIDStr string) int {
+	if profileIDStr == "" || item == nil {
+		return 0
+	}
+	profileID, err := strconv.ParseInt(profileIDStr, 10, 64)
+	if err != nil || profileID <= 0 {
+		return 0
+	}
+	prof, err := s.curation.GetProfile(ctx, profileID)
+	if err != nil || prof.DefaultLanguage == "" {
+		return 0
+	}
+	idx, ok := item.AudioStreamIndexForLanguage(prof.DefaultLanguage)
+	if !ok {
+		return 0
+	}
+	return idx
 }

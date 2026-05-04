@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
+import { useActiveProfile } from "./activeProfile";
 
 // PreviewModal is a throwaway viewer used from the sweep / triage cards.
 // Not meant to be a real player - it just streams the item, seeks to ~1/3
@@ -26,10 +27,16 @@ export default function PreviewModal({ itemId, itemName, onClose }: Props) {
     const [stream, setStream] = useState<StreamResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
+    const { profile } = useActiveProfile();
 
     useEffect(() => {
         let cancelled = false;
-        fetch(`/api/admin/items/${encodeURIComponent(itemId)}/stream`, {
+        const url = new URL(
+            `/api/admin/items/${encodeURIComponent(itemId)}/stream`,
+            window.location.origin,
+        );
+        if (profile?.id) url.searchParams.set("profileId", String(profile.id));
+        fetch(url.toString(), {
             credentials: "same-origin",
         })
             .then(async (res) => {
@@ -45,7 +52,7 @@ export default function PreviewModal({ itemId, itemName, onClose }: Props) {
         return () => {
             cancelled = true;
         };
-    }, [itemId]);
+    }, [itemId, profile?.id]);
 
     useEffect(() => {
         function onKey(e: KeyboardEvent) {

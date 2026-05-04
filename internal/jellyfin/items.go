@@ -113,7 +113,7 @@ func (c *Client) GetItem(ctx context.Context, id string) (*Item, error) {
 	q := url.Values{}
 	q.Set("ids", id)
 	q.Set("Recursive", "true")
-	q.Set("Fields", "Genres,Studios,OfficialRating,ProductionYear")
+	q.Set("Fields", "Genres,Studios,OfficialRating,ProductionYear,MediaStreams")
 	req, err := c.newRequest(ctx, http.MethodGet, "/Items?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err
@@ -143,7 +143,7 @@ func (c *Client) FirstEpisodeOfSeries(ctx context.Context, seriesID string) (*It
 	q.Set("SortBy", "ParentIndexNumber,IndexNumber")
 	q.Set("SortOrder", "Ascending")
 	q.Set("Limit", "1")
-	q.Set("Fields", "Genres,OfficialRating,ProductionYear,RunTimeTicks")
+	q.Set("Fields", "Genres,OfficialRating,ProductionYear,RunTimeTicks,MediaStreams")
 	req, err := c.newRequest(ctx, http.MethodGet, "/Items?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err
@@ -280,6 +280,14 @@ func (c *Client) GetNextUp(ctx context.Context, seriesID, userID, userToken stri
 // browser-friendly. Jellyfin direct-plays when the source already
 // satisfies them and transcodes otherwise.
 func (c *Client) StreamURL(itemID, userToken string) string {
+	return c.StreamURLWithAudio(itemID, userToken, 0)
+}
+
+// StreamURLWithAudio is StreamURL with an explicit AudioStreamIndex so
+// callers can force playback of a specific audio track (e.g. the kid
+// profile's preferred language when the item has multiple audio tracks).
+// audioStreamIndex <= 0 falls back to Jellyfin's default-track selection.
+func (c *Client) StreamURLWithAudio(itemID, userToken string, audioStreamIndex int) string {
 	q := url.Values{}
 	// Jellyfin requires MediaSourceId on the HLS endpoint. For single-file
 	// items it matches the item ID; multi-source items would need a
@@ -289,6 +297,9 @@ func (c *Client) StreamURL(itemID, userToken string) string {
 	q.Set("VideoCodec", "h264")
 	q.Set("AudioCodec", "aac,mp3")
 	q.Set("MaxAudioChannels", "2")
+	if audioStreamIndex > 0 {
+		q.Set("AudioStreamIndex", strconv.Itoa(audioStreamIndex))
+	}
 	if userToken != "" {
 		q.Set("api_key", userToken)
 	} else if c.apiKey != "" {

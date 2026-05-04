@@ -595,7 +595,8 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	streamURL := s.jellyfin.StreamURL(id, kc.JellyfinToken)
+	audioIdx := s.kidsPreferredAudioStreamIndex(ctx, item, kc, r)
+	streamURL := s.jellyfin.StreamURLWithAudio(id, kc.JellyfinToken, audioIdx)
 
 	s.logger.Info().
 		Str("auth_source", kc.Source).
@@ -604,6 +605,7 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		Bool("user_token_used", kc.JellyfinToken != "").
 		Str("item_id", id).
 		Str("item_name", item.Name).
+		Int("audio_stream_index", audioIdx).
 		Msg("kids stream resolved")
 
 	resp := kidsStreamResponse{
@@ -620,6 +622,42 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		resp.UserData = item.UserData
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// kidsPreferredAudioStreamIndex returns the audio-stream index that
+// matches the active profile's default language, when such a track
+// exists on the item. Returns 0 (= use Jellyfin's default selection)
+// when there's no profile resolved, the profile has no language set,
+// or the preferred language isn't available on this item.
+//
+// On the kid bearer path the profile id is implicit (kc.ProfileID).
+// On the admin path it must come from ?profileId=, mirroring how
+// resolveKidsProfileID handles ambiguity.
+func (s *Server) kidsPreferredAudioStreamIndex(ctx context.Context, item *jellyfin.Item, kc *kidsContext, r *http.Request) int {
+	if item == nil {
+		return 0
+	}
+	profileID := kc.ProfileID
+	if profileID == 0 {
+		if v := r.URL.Query().Get("profileId"); v != "" {
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err == nil && n > 0 {
+				profileID = n
+			}
+		}
+	}
+	if profileID == 0 {
+		return 0
+	}
+	prof, err := s.curation.GetProfile(ctx, profileID)
+	if err != nil || prof.DefaultLanguage == "" {
+		return 0
+	}
+	idx, ok := item.AudioStreamIndexForLanguage(prof.DefaultLanguage)
+	if !ok {
+		return 0
+	}
+	return idx
 }
 
 // kidsStreamResponse carries the resolved direct-play URL plus enough

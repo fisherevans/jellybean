@@ -41,9 +41,21 @@ export default function ItemCard({
     if (item.OfficialRating) meta.push(item.OfficialRating);
     const studios = (item.Studios ?? []).map((s) => s.Name).join(", ");
     const hasPoster = !!item.ImageTags?.Primary;
-    const lang = (item.AudioLanguage ?? "").toLowerCase();
     const expected = (expectedLanguage ?? "").toLowerCase();
-    const langMismatch = !!lang && !!expected && lang !== expected;
+    const available = (item.AudioLanguages ?? [])
+        .map((l) => l.toLowerCase())
+        .filter(Boolean);
+    const primary = (item.AudioLanguage ?? "").toLowerCase();
+    // Mismatch only when the profile expects a language and the item has
+    // *no* track in it. Multi-track items with the preferred language
+    // available are not a mismatch even if it isn't the primary track,
+    // since playback will switch to the matching audio.
+    const langMismatch =
+        !!expected && available.length > 0 && !available.includes(expected);
+    // Badge shows what will actually play for this profile: the expected
+    // language if available, otherwise the file's primary track.
+    const lang =
+        expected && available.includes(expected) ? expected : primary;
 
     const classes = [
         "item-card",

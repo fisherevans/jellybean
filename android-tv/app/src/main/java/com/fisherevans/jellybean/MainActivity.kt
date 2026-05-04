@@ -37,6 +37,14 @@ class MainActivity : AppCompatActivity() {
         // something to hide.
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
+        // Expose this WebView to chrome://inspect for remote debugging.
+        // Required for `adb forward tcp:9222 localabstract:chrome_devtools_remote`
+        // to actually find a target. Gate on the debug build flag so
+        // release APKs (when we cut one) don't expose internals.
+        if (BuildConfig.DEBUG) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
+
         webView = WebView(this).apply {
             setBackgroundColor(Color.BLACK)
             // Required for the SPA to receive D-pad keydowns. WebView is

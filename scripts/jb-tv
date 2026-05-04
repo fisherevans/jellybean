@@ -42,6 +42,8 @@ Commands:
   install        assemble + install on the connected device
   launch         start the Jellybean Activity on the connected device
   logs           tail logcat filtered to the Jellybean package
+  inspect        forward localhost:9222 to the WebView's devtools socket
+                 (then open Chrome -> chrome://inspect/#devices)
   uninstall      remove the debug build
   help           this message
 
@@ -130,6 +132,32 @@ cmd_logs() {
     adb logcat | grep --line-buffered -E "$PACKAGE_ID|chromium|WebView" || true
 }
 
+cmd_inspect() {
+    require_device
+    # Find the running app's pid. The Android System WebView exposes
+    # its devtools socket as @webview_devtools_remote_<pid> (NOT the
+    # @chrome_devtools_remote name in older docs). Forward localhost
+    # 9222 to it so chrome://inspect can find the page.
+    local pkg
+    if adb shell pm list packages | grep -q "package:$DEBUG_PACKAGE_ID\$"; then
+        pkg="$DEBUG_PACKAGE_ID"
+    else
+        pkg="$PACKAGE_ID"
+    fi
+    local pid
+    pid="$(adb shell pidof "$pkg" | tr -d '\r')"
+    if [[ -z "$pid" ]]; then
+        echo "$pkg is not running. Launch it first with: jb-tv launch" >&2
+        return 1
+    fi
+    local socket="webview_devtools_remote_$pid"
+    color_yel "[inspect] adb forward tcp:9222 localabstract:$socket"
+    adb forward tcp:9222 "localabstract:$socket"
+    color_grn "[inspect] now open Chrome -> chrome://inspect/#devices"
+    color_grn "[inspect] target should appear under \"Remote Target\"; click \"inspect\""
+    color_grn "[inspect] tear down later: adb forward --remove tcp:9222"
+}
+
 cmd_uninstall() {
     require_device
     for pkg in "$DEBUG_PACKAGE_ID" "$PACKAGE_ID"; do
@@ -150,6 +178,7 @@ main() {
         install)    cmd_install ;;
         launch)     cmd_launch ;;
         logs)       cmd_logs ;;
+        inspect)    cmd_inspect ;;
         uninstall)  cmd_uninstall ;;
         help|-h|--help) usage ;;
         *) usage; exit 2 ;;

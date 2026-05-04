@@ -80,6 +80,42 @@ func (i Item) PrimaryAudioLanguage() string {
 	return first
 }
 
+// AudioLanguages returns every distinct non-empty audio language code on
+// the item, in the order Jellyfin returns them. Used by the admin UI to
+// decide whether a profile's preferred language is actually present, and
+// by stream-URL construction to pick a matching track.
+func (i Item) AudioLanguages() []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, s := range i.MediaStreams {
+		if s.Type != "Audio" || s.Language == "" {
+			continue
+		}
+		if seen[s.Language] {
+			continue
+		}
+		seen[s.Language] = true
+		out = append(out, s.Language)
+	}
+	return out
+}
+
+// AudioStreamIndexForLanguage returns the absolute MediaStream index of
+// the first audio stream whose Language matches lang. The bool is false
+// when no such stream exists. The returned index is what Jellyfin's
+// AudioStreamIndex query param expects.
+func (i Item) AudioStreamIndexForLanguage(lang string) (int, bool) {
+	if lang == "" {
+		return 0, false
+	}
+	for _, s := range i.MediaStreams {
+		if s.Type == "Audio" && s.Language == lang {
+			return s.Index, true
+		}
+	}
+	return 0, false
+}
+
 // ItemUserData carries the per-user playback metadata: how far through
 // the user is, whether they've finished, and so on. Returned by Jellyfin
 // when the call is authenticated with a user token AND Fields=UserData

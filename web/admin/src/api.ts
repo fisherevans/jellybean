@@ -27,6 +27,8 @@ export type Item = {
     Studios?: { Name: string; Id?: string }[];
     ImageTags?: { Primary?: string };
     AudioLanguage?: string; // ISO 639-3 of primary audio track ("" if unknown)
+    AudioLanguages?: string[]; // every distinct audio language on the item; primary is always present when AudioLanguage is set
+
     State: ItemState; // visibility for the active profile (null = unset)
     Suggestion?: Suggestion;
 };

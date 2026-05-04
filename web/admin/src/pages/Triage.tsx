@@ -432,9 +432,15 @@ function Card({
         ? `/api/admin/items/${item.Id}/image?type=Primary&width=400`
         : null;
     const backdropURL = `/api/admin/items/${item.Id}/image?type=Backdrop&width=1280`;
-    const lang = (item.AudioLanguage ?? "").toLowerCase();
     const expected = (expectedLanguage ?? "").toLowerCase();
-    const langMismatch = !!lang && !!expected && lang !== expected;
+    const available = (item.AudioLanguages ?? [])
+        .map((l) => l.toLowerCase())
+        .filter(Boolean);
+    const primary = (item.AudioLanguage ?? "").toLowerCase();
+    const langMismatch =
+        !!expected && available.length > 0 && !available.includes(expected);
+    const lang =
+        expected && available.includes(expected) ? expected : primary;
     const cardClass = langMismatch ? `${className} lang-mismatch` : className;
 
     // Confidence-scaled gradient hint: red bleeding from the left for a
