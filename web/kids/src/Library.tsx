@@ -69,25 +69,20 @@ export default function Library() {
     const [admin, setAdmin] = useState<AdminUser | null | undefined>(undefined);
     const adminProfileId = searchParams.get("profileId");
 
-    // Save scroll position on unmount + restore on mount so a kid
-    // returning from a movie lands where they were instead of at the
-    // top. Works cleanly when M4's IDB cache is warm (tiles render
-    // synchronously); on cache miss the scroll target may exceed the
-    // momentarily-empty content but the browser clamps it.
+    // Save scroll position on unmount so a kid returning from /play
+    // lands where they were. Restore happens in a second effect below
+    // that waits for content to render - on mount the items are still
+    // loading from IDB (Promise-resolved), so scrolling to Y here would
+    // be clamped to 0 because the grid has no height yet.
     useEffect(() => {
-        const KEY = "jellybean.kids.library.scrollY";
-        const saved = sessionStorage.getItem(KEY);
-        if (saved) {
-            const y = Number(saved);
-            if (Number.isFinite(y)) {
-                requestAnimationFrame(() => window.scrollTo(0, y));
-            }
-            sessionStorage.removeItem(KEY);
-        }
         return () => {
-            sessionStorage.setItem(KEY, String(window.scrollY));
+            sessionStorage.setItem(
+                "jellybean.kids.library.scrollY",
+                String(window.scrollY),
+            );
         };
     }, []);
+    const restoredScrollRef = useRef(false);
     // Preserve search params (e.g. admin's profileId) when navigating to
     // /play so the back link can return to the same filtered library
     // view. Real kid users have no search params; this is a no-op for them.
@@ -356,6 +351,38 @@ export default function Library() {
         obs.observe(el);
         return () => obs.disconnect();
     }, [hasMore, loadingMore, loading, nextStart, fetchSection]);
+
+    // Restore scroll once content has actually rendered. Fires once
+    // (restoredScrollRef gates) after `loading` flips false and at
+    // least one tile is on screen so the document body has the height
+    // to accept the scroll. Cleared from sessionStorage at the same
+    // time so a refresh-with-no-prior-navigation doesn't snap.
+    //
+    // Important: this runs *before* the focus effect below by virtue
+    // of declaration order, so the focus effect's scrollIntoView (which
+    // would otherwise jump to the focused filter pill at the top) is
+    // overridden by the page-level scrollTo.
+    useEffect(() => {
+        if (restoredScrollRef.current) return;
+        if (loading) return;
+        if (items.length === 0 && continueItems.length === 0) return;
+        const KEY = "jellybean.kids.library.scrollY";
+        const saved = sessionStorage.getItem(KEY);
+        sessionStorage.removeItem(KEY);
+        restoredScrollRef.current = true;
+        if (!saved) return;
+        const y = Number(saved);
+        if (!Number.isFinite(y) || y <= 0) return;
+        // Two rAFs: first lets React commit the new tiles, second lets
+        // the browser actually compute their layout. scrollTo before
+        // either would clamp to whatever height the body had at commit
+        // time.
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                window.scrollTo(0, y);
+            });
+        });
+    }, [loading, items.length, continueItems.length]);
 
     // Keep focused element on screen.
     useEffect(() => {

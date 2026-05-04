@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft } from "@phosphor-icons/react";
 import { authHeaders } from "./auth";
 import HlsVideo from "./HlsVideo";
 import PlayerTransport from "./PlayerTransport";
@@ -28,6 +29,7 @@ type StreamResponse = {
     // Both are populated only when the resolved item is an Episode.
     indexNumber?: number;
     parentIndexNumber?: number;
+    productionYear?: number;
     userData?: {
         PlaybackPositionTicks?: number;
         PlayedPercentage?: number;
@@ -63,6 +65,10 @@ export default function Play() {
     // failures still go through `error`.
     const [offline, setOffline] = useState(false);
     const videoRef = useRef<HTMLVideoElement | null>(null);
+    // Ref to the back arrow so PlayerTransport can move D-pad focus
+    // onto it from the scrubber row. Typed as HTMLAnchorElement
+    // because we render it as a react-router <Link>.
+    const backRef = useRef<HTMLAnchorElement | null>(null);
     const reportedStart = useRef(false);
     // hasStarted flips on the first 'play' event. While false the
     // initial loading overlay covers the WebView's default grey play
@@ -71,10 +77,44 @@ export default function Play() {
     // isBuffering flips true on the video's `waiting` event (stalled
     // for data) and false on `playing`. We show the loading overlay
     // any time the video can't progress, not just at first launch.
+    // `waiting` fires aggressively for sub-second stutters mid-playback;
+    // we debounce the true-transition so only stalls that last long
+    // enough to be noticeable surface the spinner. The false-transition
+    // is immediate so the overlay disappears the moment data flows again.
     const [isBuffering, setIsBuffering] = useState(false);
+    const bufferingTimerRef = useRef<number | null>(null);
+    const BUFFERING_DELAY_MS = 800;
+    const handleWaiting = useCallback(() => {
+        if (bufferingTimerRef.current !== null) return;
+        bufferingTimerRef.current = window.setTimeout(() => {
+            bufferingTimerRef.current = null;
+            setIsBuffering(true);
+        }, BUFFERING_DELAY_MS);
+    }, []);
+    const handlePlaying = useCallback(() => {
+        if (bufferingTimerRef.current !== null) {
+            window.clearTimeout(bufferingTimerRef.current);
+            bufferingTimerRef.current = null;
+        }
+        setIsBuffering(false);
+    }, []);
+    useEffect(() => {
+        return () => {
+            if (bufferingTimerRef.current !== null) {
+                window.clearTimeout(bufferingTimerRef.current);
+                bufferingTimerRef.current = null;
+            }
+        };
+    }, []);
     // Mirror of PlayerTransport's internal visibility. Used to
     // overlay the title header in sync with the bottom controls.
     const [transportVisible, setTransportVisible] = useState(false);
+    // navigatingNext flips true when the user hits the "next episode"
+    // button. The next-up resolve takes a few seconds on real
+    // hardware; without an explicit flag the user just sees the old
+    // episode keep playing. Surfaces the same loading overlay until
+    // the route change unmounts this component.
+    const [navigatingNext, setNavigatingNext] = useState(false);
 
     // Esc remains the back-out shortcut; the transport doesn't own it.
     useEffect(() => {
@@ -273,6 +313,13 @@ export default function Play() {
         // strictly-next one.
         reportStopped();
         drainQueue(queueRef.current);
+        setNavigatingNext(true);
+        // Pause the current episode immediately so audio doesn't keep
+        // playing under the loading overlay while next-up resolves.
+        const v = videoRef.current;
+        if (v && !v.paused) {
+            try { v.pause(); } catch { /* ignore */ }
+        }
         (async () => {
             try {
                 const next = await fetchNextUp(seriesIdForNext, currentEpisodeId);
@@ -335,20 +382,25 @@ export default function Play() {
                 onLoadedMetadata={onLoadedMetadata}
                 onPlay={() => {
                     setHasStarted(true);
-                    setIsBuffering(false);
+                    handlePlaying();
                     reportStart();
                 }}
                 onPause={() => {
                     reportProgress(true);
                 }}
-                onWaiting={() => setIsBuffering(true)}
-                onPlaying={() => setIsBuffering(false)}
+                onWaiting={handleWaiting}
+                onPlaying={handlePlaying}
                 onEnded={onEnded}
                 style={{ width: "100%", height: "100vh" }}
             />
             <header className={`play-header ${headerVisible ? "visible" : "hidden"}`}>
-                <Link to={libraryHref} className="play-back" aria-label="Back to library">
-                    <span aria-hidden>{"←"}</span>
+                <Link
+                    to={libraryHref}
+                    ref={backRef}
+                    className="play-back"
+                    aria-label="Back to library"
+                >
+                    <ArrowLeft weight="fill" size={32} aria-hidden />
                 </Link>
                 <div className="play-titles">
                     <h1>{stream.itemName}</h1>
@@ -364,9 +416,12 @@ export default function Play() {
                             )}
                         </p>
                     )}
+                    {stream.productionYear ? (
+                        <p className="play-year">{stream.productionYear}</p>
+                    ) : null}
                 </div>
             </header>
-            {(!hasStarted || isBuffering) && (
+            {(!hasStarted || isBuffering || navigatingNext) && (
                 <div className="play-loading-overlay" aria-hidden>
                     <img
                         src="/kids/jellybean-kids.png"
@@ -381,6 +436,8 @@ export default function Play() {
                 onRestart={handleRestart}
                 onNextEpisode={showNextEpisode ? handleNextEpisode : undefined}
                 onVisibleChange={setTransportVisible}
+                onBack={() => nav(libraryHref)}
+                backRef={backRef}
             />
         </div>
     );

@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+    ArrowCounterClockwise,
+    Pause,
+    Play,
+    SkipForward,
+} from "@phosphor-icons/react";
 
 // PlayerTransport is the kid-friendly video transport. Modeled on
 // Netflix's player but stripped down to the actions a kid on a TV remote
@@ -37,11 +43,19 @@ type PlayerTransportProps = {
     // parent uses this to slide the title header in/out alongside the
     // bottom transport so they share one show/hide motion.
     onVisibleChange?: (visible: boolean) => void;
+    // The back arrow lives in the title header (rendered by Play.tsx)
+    // but is part of this transport's focus rail: D-pad up from the
+    // scrubber lands on it, OK on it triggers onBack. We accept a ref
+    // to the rendered DOM element so useLayoutEffect can move focus
+    // there, plus the activation callback.
+    onBack?: () => void;
+    backRef?: React.RefObject<HTMLElement | null>;
 };
 
 type FocusState =
     | { kind: "scrubber" }
-    | { kind: "button"; index: number };
+    | { kind: "button"; index: number }
+    | { kind: "back" };
 
 const HIDE_TIMEOUT_MS = 3000;
 const SEEK_STEP_SECONDS = 15;
@@ -50,15 +64,19 @@ const TIME_TICK_MS = 250;
 type ButtonDef = {
     id: "restart" | "playpause" | "next";
     label: string;
-    icon: string; // dynamic for play/pause
+    icon: React.ReactNode; // dynamic for play/pause
     onActivate: () => void;
 };
+
+const ICON_SIZE = 48;
 
 export default function PlayerTransport({
     videoRef,
     onRestart,
     onNextEpisode,
     onVisibleChange,
+    onBack,
+    backRef,
 }: PlayerTransportProps) {
     // High-level UI state. These flip on human-cadence events so they
     // can drive React renders without thrashing.
@@ -217,7 +235,7 @@ export default function PlayerTransport({
     buttons.push({
         id: "restart",
         label: "Restart",
-        icon: "⟲", // anticlockwise open circle arrow
+        icon: <ArrowCounterClockwise weight="fill" size={ICON_SIZE} />,
         onActivate: () => {
             onRestart();
             armHideTimer();
@@ -226,7 +244,11 @@ export default function PlayerTransport({
     buttons.push({
         id: "playpause",
         label: paused ? "Play" : "Pause",
-        icon: paused ? "▶" : "⏸", // play / pause
+        icon: paused ? (
+            <Play weight="fill" size={ICON_SIZE} />
+        ) : (
+            <Pause weight="fill" size={ICON_SIZE} />
+        ),
         onActivate: () => {
             const v = videoRef.current;
             if (!v) return;
@@ -247,7 +269,7 @@ export default function PlayerTransport({
         buttons.push({
             id: "next",
             label: "Next",
-            icon: "⏭", // skip forward
+            icon: <SkipForward weight="fill" size={ICON_SIZE} />,
             onActivate: () => {
                 onNextEpisode();
                 armHideTimer();
@@ -296,9 +318,12 @@ export default function PlayerTransport({
             // generate one line per keypress.
             const v = videoRef.current;
             const visState = visible ? "visible" : "hidden";
-            const focusState = focus.kind === "scrubber"
-                ? "scrubber"
-                : `button:${focus.index}`;
+            const focusState =
+                focus.kind === "scrubber"
+                    ? "scrubber"
+                    : focus.kind === "back"
+                    ? "back"
+                    : `button:${focus.index}`;
             const vState = v
                 ? `paused=${v.paused} ct=${v.currentTime.toFixed(2)} rs=${v.readyState}`
                 : "novideo";
@@ -405,7 +430,8 @@ export default function PlayerTransport({
                     return;
                 }
                 if (e.key === "ArrowUp") {
-                    // No region above; ignore.
+                    // Scrubber -> back arrow (header) when wired.
+                    if (onBack) setFocus({ kind: "back" });
                     return;
                 }
                 if (e.key === "Enter" || e.key === " ") {
@@ -413,6 +439,18 @@ export default function PlayerTransport({
                     // commit live, so OK has nothing left to do).
                     return;
                 }
+                return;
+            }
+            if (focus.kind === "back") {
+                if (e.key === "ArrowDown") {
+                    setFocus({ kind: "scrubber" });
+                    return;
+                }
+                if (e.key === "Enter" || e.key === " ") {
+                    onBack?.();
+                    return;
+                }
+                // ArrowLeft / ArrowRight / ArrowUp: no neighbors.
                 return;
             }
             // focus.kind === "button"
@@ -448,7 +486,7 @@ export default function PlayerTransport({
 
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [focus, buttons, showOnInput, videoRef]);
+    }, [focus, buttons, showOnInput, videoRef, onBack]);
 
     // Pointer / mouse-move: any movement reveals the transport and
     // resets the timer. A click on the video toggles visibility (the
@@ -552,10 +590,12 @@ export default function PlayerTransport({
         if (!visible) return;
         if (focus.kind === "scrubber") {
             scrubberRef.current?.focus({ preventScroll: true });
+        } else if (focus.kind === "back") {
+            backRef?.current?.focus({ preventScroll: true });
         } else {
             buttonRefs.current[focus.index]?.focus({ preventScroll: true });
         }
-    }, [focus, visible]);
+    }, [focus, visible, backRef]);
 
     return (
         <div
