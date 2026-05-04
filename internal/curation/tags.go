@@ -712,6 +712,69 @@ func (s *Store) EffectiveItemVisibilityBulk(ctx context.Context, profileID int64
 	return out, nil
 }
 
+// ListEffectivelyVisibleItemIDs returns every item id that resolves
+// to StateVisible for the profile under the EffectiveItemVisibility
+// rules (categorization + profile_tag_filter overrides). This is the
+// data source for the kid library listing - it MUST be used instead
+// of ListItemIDsInState(StateVisible) so profile_tag_filters actually
+// drive what the kid sees.
+//
+// The set is the union of:
+//   - items with categorizations.state='visible' for the profile,
+//     EXCEPT those carrying a tag with profile_tag_filters.mode=
+//     'always_hidden' for this profile (always_hidden wins);
+//   - items carrying a tag with profile_tag_filters.mode=
+//     'always_visible' for this profile, EXCEPT those also carrying
+//     a tag with always_hidden (always_hidden still wins).
+//
+// Order is unspecified - the kid library handler asks Jellyfin to
+// re-sort by SortName anyway, so curation-side ordering is wasted
+// work for that path.
+func (s *Store) ListEffectivelyVisibleItemIDs(ctx context.Context, profileID int64) ([]string, error) {
+	if profileID <= 0 {
+		return nil, errors.New("profileID required")
+	}
+	q := `
+		WITH hidden_by_tag AS (
+		    SELECT DISTINCT it.jellyfin_item_id
+		    FROM item_tags it
+		    JOIN profile_tag_filters ptf
+		      ON ptf.tag_id = it.tag_id
+		    WHERE ptf.profile_id = ? AND ptf.mode = 'always_hidden'
+		),
+		visible_by_cat AS (
+		    SELECT jellyfin_item_id
+		    FROM categorizations
+		    WHERE profile_id = ? AND state = 'visible' AND orphan_at IS NULL
+		),
+		visible_by_tag AS (
+		    SELECT DISTINCT it.jellyfin_item_id
+		    FROM item_tags it
+		    JOIN profile_tag_filters ptf
+		      ON ptf.tag_id = it.tag_id
+		    WHERE ptf.profile_id = ? AND ptf.mode = 'always_visible'
+		)
+		SELECT jellyfin_item_id FROM visible_by_cat
+		UNION
+		SELECT jellyfin_item_id FROM visible_by_tag
+		EXCEPT
+		SELECT jellyfin_item_id FROM hidden_by_tag`
+	rows, err := s.db.QueryContext(ctx, q, profileID, profileID, profileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // IsItemVisibleForAnyProfile reports whether at least one profile has
 // the item categorized as visible (not hidden, not unset, not
 // orphan-tombstoned). Used by the M6 tag-assignment guard so admins

@@ -302,7 +302,12 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to load continue watching", http.StatusBadGateway)
 			return
 		}
-		visible, err := s.curation.GetStatesForItems(ctx, profileID, itemIDs(res.Items))
+		// EffectiveItemVisibilityBulk applies the M6 resolution
+		// rules: profile_tag_filters override per-profile
+		// categorization (always_hidden > always_visible >
+		// categorization). Using GetStatesForItems here would
+		// silently bypass tag filters - explicit fail-closed.
+		visible, err := s.curation.EffectiveItemVisibilityBulk(ctx, profileID, itemIDs(res.Items))
 		if err != nil {
 			s.logger.Error().Err(err).Msg("resume visibility lookup")
 			http.Error(w, "failed to load visibility", http.StatusInternalServerError)
@@ -325,7 +330,11 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ids, err := s.curation.ListItemIDsInState(ctx, profileID, curation.StateVisible, 5000, 0)
+	// ListEffectivelyVisibleItemIDs honors profile_tag_filters - items
+	// can become visible via an always_visible filter even without an
+	// explicit visible categorization, and visible-categorized items
+	// can be hidden by an always_hidden filter on any of their tags.
+	ids, err := s.curation.ListEffectivelyVisibleItemIDs(ctx, profileID)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("list visible ids")
 		http.Error(w, "failed to load library", http.StatusInternalServerError)

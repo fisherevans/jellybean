@@ -109,6 +109,12 @@ func (s *Server) routes() {
 	admin.HandleFunc("/tags", s.handleCreateTag).Methods(http.MethodPost)
 	admin.HandleFunc("/tags/{id}", s.handleUpdateTag).Methods(http.MethodPatch)
 	admin.HandleFunc("/tags/{id}", s.handleDeleteTag).Methods(http.MethodDelete)
+	admin.HandleFunc("/kids/{id}/favorites", s.handleAdminListKidFavorites).Methods(http.MethodGet)
+	admin.HandleFunc("/kids/{id}/favorites/{itemId}", s.handleAdminAddKidFavorite).Methods(http.MethodPut)
+	admin.HandleFunc("/kids/{id}/favorites/{itemId}", s.handleAdminRemoveKidFavorite).Methods(http.MethodDelete)
+	admin.HandleFunc("/profiles/{id}/tag-filters", s.handleAdminListProfileTagFilters).Methods(http.MethodGet)
+	admin.HandleFunc("/profiles/{id}/tag-filters", s.handleAdminPutProfileTagFilters).Methods(http.MethodPut)
+	admin.HandleFunc("/profiles/{id}/tag-filters/{tagId}", s.handleAdminDeleteProfileTagFilter).Methods(http.MethodDelete)
 
 	// Kids API. /auth/login is unauthenticated (it IS the auth flow); the
 	// rest accept either an admin session cookie (parent previewing) or
