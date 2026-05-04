@@ -78,11 +78,15 @@ Current milestone: **M5: TV deployment**.
   (manual trigger via POST /api/admin/maintenance/reconcile), and an
   offline fallback that renders cached library + a "can't play offline"
   message when the network drops. 5 issues.
-- **M5: TV deployment** (current) - first real-TV target (Tizen or
-  Google TV TBD at milestone start), packaging, sideload script,
-  on-device validation. Verify M4's IDB cache + navigator.onLine
-  behavior on the chosen TV runtime; consider scheduling the
-  reconciler instead of leaving it manual-only.
+- **M5: TV deployment** (closed) - sideloaded onto Skyworth Android
+  TV 11 via APK. End-to-end auth, browse, watch, custom Netflix-
+  style player transport, chrome://inspect tooling all working.
+  6 issues closed (3 implemented, 3 deferred as won't-fix-for-now
+  pending real perf metrics from M8). One known limitation
+  documented as the M-AT canonical repro: files with non-AAC audio
+  in heavy containers (e.g. Big Hero 6 with DTS 5.1 + MKV) hang the
+  WebView decoder mid-transcode. Pragmatic 4 Mbps bitrate cap
+  shipped as a partial mitigation.
 - **M6: Tags, Favorites, and Profile Tag Filters** (defined, not
   started) - global tags (name + description) assigned manually to
   visible items, per-kid favorites, per-profile tag filters
@@ -121,13 +125,14 @@ Current milestone: **M5: TV deployment**.
   cross-cutting global settings (PIN, public URL, future M10/M11
   knobs). 6 issues; design in `docs/adult-override.md` (to be
   written as part of the milestone).
-- **M-AT: Device-aware transcode negotiation** (defined, not
-  started, micro-milestone) - replaces direct Master.m3u8 streaming
-  with Jellyfin's PostPlaybackInfo flow + a per-device capability
+- **M-AT: Device-aware transcode negotiation** (current,
+  micro-milestone) - replaces direct Master.m3u8 streaming with
+  Jellyfin's PostPlaybackInfo flow + a per-device capability
   profile catalog. Stutter detection on the kid client falls back
-  to a lower bitrate on repeated waiting events. Slots in early
-  because the M5 hardware (Skyworth Android TV) currently stutters
-  on direct-played 4K content. 4 issues; design in
+  to a lower bitrate on repeated waiting events. Slotted next
+  because M5 closed with a documented codec-hang on files needing
+  heavy server-side transcoding (Big Hero 6 with DTS 5.1 + MKV is
+  the canonical repro). 4 issues; design in
   `docs/device-profiles.md` (to be written as part of the
   milestone).
 - **M10: Time limits** (defined, not started) - per-kid daily
