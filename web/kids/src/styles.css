@@ -439,7 +439,7 @@ a,
 .play-screen {
     background: #000;
     min-height: 100vh;
-    /* Anchor for .play-paused-overlay (absolute, inset:0). */
+    /* Anchor for the bottom-anchored .player-transport (absolute). */
     position: relative;
 }
 
@@ -488,39 +488,145 @@ a,
     padding: 2rem;
 }
 
-/* Custom transport indicator. Native <video controls> isn't reachable
-   via D-pad on Android TV WebView; we own the keyboard bindings in
-   Play.tsx and surface a kid-friendly Paused overlay only when paused.
-   Auto-unhides when the video resumes (state-driven). */
-.play-paused-overlay {
+/* player transport
+ *
+ * Custom kid-friendly video transport (issue #33). Replaces native
+ * <video controls> + the old "Paused" overlay with a Netflix-shaped
+ * bottom panel: a focusable scrubber on top, a row of big buttons
+ * (restart, play/pause, optional next episode) below. Auto-hides
+ * during playback and stays pinned during pause. The play / pause
+ * button glyph itself signals the playback state, so no separate
+ * paused overlay is needed.
+ *
+ * Visibility transition uses transform + opacity so the bottom panel
+ * slides off-screen rather than vanishing in place. 200ms easing matches
+ * the rest of the kids client.
+ */
+.player-transport {
     position: absolute;
-    inset: 0;
+    inset: auto 0 0 0;
+    padding: 1.5rem 2rem 2rem 2rem;
+    background: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 0) 0%,
+        rgba(0, 0, 0, 0.4) 40%,
+        rgba(0, 0, 0, 0.7) 100%
+    );
+    color: #fff;
+    transition: transform 200ms ease-out, opacity 200ms ease-out;
+    transform: translateY(0);
+    opacity: 1;
+    z-index: 5;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.player-transport.hidden {
+    transform: translateY(100%);
+    opacity: 0;
+    pointer-events: none;
+}
+
+.pt-scrubber {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+.pt-rail {
+    position: relative;
+    flex: 1;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.25);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: height 150ms ease-out;
+    outline: none;
+}
+
+.pt-scrubber.focused .pt-rail {
+    height: 10px;
+}
+
+.pt-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: var(--accent);
+    border-radius: inherit;
+    width: 0%;
+    pointer-events: none;
+}
+
+.pt-thumb {
+    position: absolute;
+    top: 50%;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--accent);
+    transform: translate(-50%, -50%);
+    left: 0%;
+    transition: width 150ms ease-out, height 150ms ease-out;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+}
+
+.pt-scrubber.focused .pt-thumb {
+    width: 28px;
+    height: 28px;
+}
+
+.pt-time {
+    font-variant-numeric: tabular-nums;
+    font-size: 1rem;
+    color: rgba(255, 255, 255, 0.85);
+    min-width: 9ch;
+    text-align: right;
+}
+
+.pt-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+}
+
+.pt-button {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 0.6rem;
-    background: rgba(0, 0, 0, 0.55);
-    pointer-events: none;
+    gap: 0.4rem;
+    width: 80px;
+    height: 80px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 0;
+    border-radius: 12px;
     color: #fff;
-    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 150ms ease-out, transform 150ms ease-out;
+    outline: none;
 }
 
-.play-paused-icon {
-    font-size: 6rem;
+.pt-button:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.pt-button.focused {
+    box-shadow: 0 0 0 4px var(--accent);
+    background: rgba(128, 132, 255, 0.2);
+}
+
+.pt-button-icon {
+    font-size: 2rem;
     line-height: 1;
-    color: var(--accent);
-    text-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
-    letter-spacing: 0.15em;
 }
 
-.play-paused-label {
-    font-size: 1.6rem;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-}
-
-.play-paused-hint {
-    font-size: 0.95rem;
-    color: rgba(255, 255, 255, 0.75);
+.pt-button-label {
+    font-size: 0.8rem;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.9);
 }

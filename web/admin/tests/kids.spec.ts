@@ -725,4 +725,24 @@ test.describe("kids playback", () => {
         await page.getByRole("link", { name: /Back to library/ }).click();
         await expect(page).toHaveURL(/\/kids\/library/);
     });
+
+    test("custom transport mounts with scrubber + button row", async ({ page }) => {
+        // Issue #33: replace native <video controls> with a kid-friendly
+        // custom transport. Verify it mounts with a scrubber and at least
+        // the restart + play/pause buttons.
+        await clearKidsLocalStorage(page);
+        await page.goto(`/kids/library?profileId=1`);
+        await page.getByRole("tab", { name: "Movies" }).click();
+        const movieTile = page.locator(".tile-grid").first();
+        await expect(movieTile).toBeVisible({ timeout: 10_000 });
+        await movieTile.click();
+        await expect(page).toHaveURL(/\/kids\/play\//);
+        // Transport renders bottom-anchored, visible by default.
+        const transport = page.locator(".player-transport");
+        await expect(transport).toHaveClass(/visible/);
+        // Scrubber rail exists and is keyboard-focusable.
+        await expect(page.locator(".pt-rail")).toBeVisible();
+        // At least restart + play/pause buttons exist (movies path).
+        await expect(page.locator(".pt-button")).toHaveCount(2, { timeout: 5_000 });
+    });
 });

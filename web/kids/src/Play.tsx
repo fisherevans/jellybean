@@ -2,18 +2,28 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { authHeaders } from "./auth";
 import HlsVideo from "./HlsVideo";
+import PlayerTransport from "./PlayerTransport";
 
 // Play is the kid playback screen. Movies stream the requested item id;
 // series resolve next-up first and stream that episode. In both cases we
 // seek to the resume position from Jellyfin's UserData on
 // `loadedmetadata`, then report start / progress / pause / stop back to
 // Jellyfin so Continue Watching stays current.
+//
+// The custom transport (PlayerTransport.tsx) owns all in-player input
+// (D-pad, keyboard shortcuts, scrubber, button row). Play.tsx keeps:
+//   - The Esc -> back-to-library handler (outside the transport's scope).
+//   - Resume on loadedmetadata.
+//   - Playback reporting (write-through queue).
+//   - The next-episode resolver wired into PlayerTransport.
 
 type StreamResponse = {
     streamUrl: string;
     itemId: string;
     itemName: string;
     itemType?: string;
+    seriesId?: string;
+    seriesName?: string;
     userData?: {
         PlaybackPositionTicks?: number;
         PlayedPercentage?: number;
@@ -24,6 +34,7 @@ type StreamResponse = {
 type NextUpResponse = {
     episodeId: string;
     name: string;
+    seriesId?: string;
     seriesName?: string;
     userData?: StreamResponse["userData"];
 };
@@ -49,63 +60,11 @@ export default function Play() {
     const [offline, setOffline] = useState(false);
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const reportedStart = useRef(false);
-    // Visible "Paused" indicator. Tracks the video element's actual
-    // paused state so we render the right thing even if the user
-    // pauses through means we didn't trigger (system audio focus
-    // loss, etc).
-    const [isPaused, setIsPaused] = useState(false);
 
-    // Remote / keyboard bindings:
-    //   Esc / BACK             -> back to library
-    //   Enter / Space / OK     -> toggle play / pause
-    //   MediaPlayPause hardkey -> toggle play / pause
-    //   ArrowLeft / Right      -> seek -/+ 15s
-    // Native <video controls> on TV is not reachable via D-pad, so we
-    // hide them and own the transport ourselves. Kid use-case is
-    // primarily "pause" and "resume"; seeking is a power-user nice-to-have.
+    // Esc remains the back-out shortcut; the transport doesn't own it.
     useEffect(() => {
-        function togglePlay() {
-            const v = videoRef.current;
-            if (!v) return;
-            if (v.paused) {
-                const p = v.play();
-                if (p && typeof p.catch === "function") p.catch(() => {});
-            } else {
-                v.pause();
-            }
-        }
-        function seek(deltaSeconds: number) {
-            const v = videoRef.current;
-            if (!v || !isFinite(v.duration)) return;
-            const next = Math.max(0, Math.min(v.duration - 1, v.currentTime + deltaSeconds));
-            v.currentTime = next;
-        }
         function onKey(e: KeyboardEvent) {
-            switch (e.key) {
-                case "Escape":
-                    nav(libraryHref);
-                    break;
-                case "Enter":
-                case " ":
-                case "MediaPlayPause":
-                    e.preventDefault();
-                    togglePlay();
-                    break;
-                case "MediaPlay":
-                    videoRef.current?.play().catch(() => {});
-                    break;
-                case "MediaPause":
-                    videoRef.current?.pause();
-                    break;
-                case "ArrowLeft":
-                    e.preventDefault();
-                    seek(-15);
-                    break;
-                case "ArrowRight":
-                    e.preventDefault();
-                    seek(15);
-                    break;
-            }
+            if (e.key === "Escape") nav(libraryHref);
         }
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
@@ -127,6 +86,7 @@ export default function Play() {
                 if (cancelled) return;
                 if (first.itemType !== "Series") {
                     setStream(first);
+                    if (first.seriesName) setSeriesLabel(first.seriesName);
                     return;
                 }
                 const next = await fetchNextUp(itemId);
@@ -138,6 +98,14 @@ export default function Play() {
                 // whatever next-up returned.
                 if (!episode.userData && next.userData) {
                     episode.userData = next.userData;
+                }
+                // Make sure the episode response carries the parent series
+                // id so the next-episode button can resolve "what's after
+                // this one" via /next-up. fetchStream returns it from the
+                // server, but if the server didn't, fall back to next-up's
+                // value.
+                if (!episode.seriesId && next.seriesId) {
+                    episode.seriesId = next.seriesId;
                 }
                 setStream(episode);
             } catch (err) {
@@ -265,6 +233,44 @@ export default function Play() {
         nav(libraryHref);
     }
 
+    // Transport callbacks. onRestart rewinds to 0 and resumes playback.
+    // onNextEpisode is wired only when we have a parent seriesId (i.e.
+    // we resolved an episode through /next-up). It fetches the *next*
+    // next-up after the currently-playing episode and navigates to play it.
+    const handleRestart = useCallback(() => {
+        const v = videoRef.current;
+        if (!v) return;
+        v.currentTime = 0;
+        const p = v.play();
+        if (p && typeof p.catch === "function") p.catch(() => {});
+    }, []);
+
+    const handleBack = useCallback(() => {
+        nav(libraryHref);
+    }, [nav, libraryHref]);
+
+    const seriesIdForNext = stream?.seriesId;
+    const handleNextEpisode = useCallback(() => {
+        if (!seriesIdForNext) return;
+        // Report a stop on the current episode so Jellyfin clears its
+        // session view, then pop over to the next-up episode. We let
+        // the play screen remount under the new itemId so all the
+        // resume / report wiring re-initializes cleanly.
+        reportStopped();
+        drainQueue(queueRef.current);
+        (async () => {
+            try {
+                const next = await fetchNextUp(seriesIdForNext);
+                nav(`/play/${encodeURIComponent(next.episodeId)}${location.search}`);
+            } catch {
+                // If the next-up call fails, drop back to the library
+                // rather than leaving the kid stuck on a broken next
+                // button.
+                nav(libraryHref);
+            }
+        })();
+    }, [seriesIdForNext, nav, libraryHref, location.search, reportStopped]);
+
     if (offline) {
         return (
             <div className="screen play-error">
@@ -287,6 +293,7 @@ export default function Play() {
     }
 
     const isAdminPreview = new URLSearchParams(location.search).has("profileId");
+    const showNextEpisode = !!stream.seriesId;
 
     return (
         <div className="play-screen">
@@ -316,22 +323,19 @@ export default function Play() {
                 onLoadedMetadata={onLoadedMetadata}
                 onPlay={() => {
                     reportStart();
-                    setIsPaused(false);
                 }}
                 onPause={() => {
                     reportProgress(true);
-                    setIsPaused(true);
                 }}
                 onEnded={onEnded}
                 style={{ width: "100%", height: "calc(100vh - 80px)" }}
             />
-            {isPaused && (
-                <div className="play-paused-overlay" role="status" aria-live="polite">
-                    <span className="play-paused-icon" aria-hidden>‖</span>
-                    <span className="play-paused-label">Paused</span>
-                    <span className="play-paused-hint">Press OK to resume</span>
-                </div>
-            )}
+            <PlayerTransport
+                videoRef={videoRef}
+                onRestart={handleRestart}
+                onNextEpisode={showNextEpisode ? handleNextEpisode : undefined}
+                onBack={handleBack}
+            />
         </div>
     );
 }

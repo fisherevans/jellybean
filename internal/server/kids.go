@@ -607,10 +607,12 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		Msg("kids stream resolved")
 
 	resp := kidsStreamResponse{
-		StreamURL: streamURL,
-		ItemID:    id,
-		ItemName:  item.Name,
-		ItemType:  item.Type,
+		StreamURL:  streamURL,
+		ItemID:     id,
+		ItemName:   item.Name,
+		ItemType:   item.Type,
+		SeriesID:   item.SeriesID,
+		SeriesName: item.SeriesName,
 	}
 	if item.UserData != nil {
 		resp.UserData = item.UserData
@@ -618,12 +620,19 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// kidsStreamResponse carries the resolved direct-play URL plus enough
+// context for the kid client to decide what to do next. SeriesID and
+// SeriesName are populated only on Episode items (Jellyfin includes the
+// parent series id on Episode item payloads); the client uses SeriesID
+// to call /next-up after the current episode finishes.
 type kidsStreamResponse struct {
-	StreamURL string                 `json:"streamUrl"`
-	ItemID    string                 `json:"itemId"`
-	ItemName  string                 `json:"itemName"`
-	ItemType  string                 `json:"itemType,omitempty"`
-	UserData  *jellyfin.ItemUserData `json:"userData,omitempty"`
+	StreamURL  string                 `json:"streamUrl"`
+	ItemID     string                 `json:"itemId"`
+	ItemName   string                 `json:"itemName"`
+	ItemType   string                 `json:"itemType,omitempty"`
+	SeriesID   string                 `json:"seriesId,omitempty"`
+	SeriesName string                 `json:"seriesName,omitempty"`
+	UserData   *jellyfin.ItemUserData `json:"userData,omitempty"`
 }
 
 // handleKidsNextUp resolves the next episode to play for a series for the
