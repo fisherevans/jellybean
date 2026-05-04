@@ -118,6 +118,7 @@ func (s *Server) routes() {
 	kids.HandleFunc("/playback/start", s.handleKidsPlaybackStart).Methods(http.MethodPost)
 	kids.HandleFunc("/playback/progress", s.handleKidsPlaybackProgress).Methods(http.MethodPost)
 	kids.HandleFunc("/playback/stopped", s.handleKidsPlaybackStopped).Methods(http.MethodPost)
+	kids.HandleFunc("/playback/stop-encoding", s.handleKidsStopEncoding).Methods(http.MethodPost)
 
 	// Static SPAs. Order matters: /kids prefix wins over /, so the more
 	// specific one is registered first.

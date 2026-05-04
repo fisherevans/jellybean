@@ -127,14 +127,16 @@ Current milestone: **M5: TV deployment**.
   written as part of the milestone).
 - **M-AT: Device-aware transcode negotiation** (current,
   micro-milestone) - replaces direct Master.m3u8 streaming with
-  Jellyfin's PostPlaybackInfo flow + a per-device capability
-  profile catalog. Stutter detection on the kid client falls back
-  to a lower bitrate on repeated waiting events. Slotted next
-  because M5 closed with a documented codec-hang on files needing
-  heavy server-side transcoding (Big Hero 6 with DTS 5.1 + MKV is
-  the canonical repro). 4 issues; design in
-  `docs/device-profiles.md` (to be written as part of the
-  milestone).
+  Jellyfin's PostPlaybackInfo flow + a hardcoded Conservative
+  DeviceProfile (in `internal/server/kids.go`). Stutter detection
+  on the kid client falls back to a lower bitrate on repeated
+  waiting events; the learned ceiling lives in localStorage on
+  the device, not the server (deliberate - see
+  `docs/device-profiles.md`). Slotted next because M5 closed with
+  a documented codec-hang on files needing heavy server-side
+  transcoding (Big Hero 6 with DTS 5.1 + MKV is the canonical
+  repro). Originally scoped 4 issues; collapsed once we dropped
+  the `device_profiles` catalog in favor of client-only state.
 - **M10: Time limits** (defined, not started) - per-kid daily
   bucket with admin-tunable refill cadence (1h / 4h / 12h / 24h)
   and day-start anchor. Optional per-show daily cap (default

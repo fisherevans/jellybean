@@ -14,20 +14,27 @@ import (
 // missing kid token; the caller logs and continues).
 
 // PlaybackStartInfo is the body of POST /Sessions/Playing.
+//
+// PlaySessionID is required when the playback was negotiated through
+// PostPlaybackInfo (M-AT flow). Jellyfin uses it to match the report
+// to the active transcode session; reports without it can be rejected
+// (often as 401, confusingly) when an active session exists.
 type PlaybackStartInfo struct {
-	ItemID            string `json:"ItemId"`
-	MediaSourceID     string `json:"MediaSourceId,omitempty"`
-	PlayMethod        string `json:"PlayMethod,omitempty"`
-	PositionTicks     int64  `json:"PositionTicks"`
-	IsPaused          bool   `json:"IsPaused"`
-	CanSeek           bool   `json:"CanSeek"`
-	AudioStreamIndex  int    `json:"AudioStreamIndex,omitempty"`
+	ItemID           string `json:"ItemId"`
+	MediaSourceID    string `json:"MediaSourceId,omitempty"`
+	PlaySessionID    string `json:"PlaySessionId,omitempty"`
+	PlayMethod       string `json:"PlayMethod,omitempty"`
+	PositionTicks    int64  `json:"PositionTicks"`
+	IsPaused         bool   `json:"IsPaused"`
+	CanSeek          bool   `json:"CanSeek"`
+	AudioStreamIndex int    `json:"AudioStreamIndex,omitempty"`
 }
 
 // PlaybackProgressInfo is the body of POST /Sessions/Playing/Progress.
 type PlaybackProgressInfo struct {
 	ItemID           string `json:"ItemId"`
 	MediaSourceID    string `json:"MediaSourceId,omitempty"`
+	PlaySessionID    string `json:"PlaySessionId,omitempty"`
 	PlayMethod       string `json:"PlayMethod,omitempty"`
 	PositionTicks    int64  `json:"PositionTicks"`
 	IsPaused         bool   `json:"IsPaused"`
@@ -38,6 +45,7 @@ type PlaybackProgressInfo struct {
 type PlaybackStopInfo struct {
 	ItemID        string `json:"ItemId"`
 	MediaSourceID string `json:"MediaSourceId,omitempty"`
+	PlaySessionID string `json:"PlaySessionId,omitempty"`
 	PositionTicks int64  `json:"PositionTicks"`
 }
 

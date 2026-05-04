@@ -83,6 +83,30 @@ func kidsLibraryFakeJellyfinFull(
 			Items: nextUp, TotalRecordCount: len(nextUp),
 		})
 	})
+	// PostPlaybackInfo: just claim DirectStream is available so the
+	// kids-stream handler can negotiate. URL building is exercised
+	// in the jellyfin package's own tests.
+	mux.HandleFunc("/Items/", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/PlaybackInfo") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		// /Items/{id}/PlaybackInfo
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) < 3 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		itemID := parts[1]
+		json.NewEncoder(w).Encode(jellyfin.PlaybackInfoResponse{
+			PlaySessionID: "test-session",
+			MediaSources: []jellyfin.MediaSourceInfo{{
+				ID:                   itemID,
+				Container:            "mp4",
+				SupportsDirectStream: true,
+			}},
+		})
+	})
 	mux.HandleFunc("/Users/", func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/Items/Resume") {
 			w.WriteHeader(http.StatusNotFound)

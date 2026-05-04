@@ -463,6 +463,7 @@ func itemIDs(items []jellyfin.Item) []string {
 type playbackPayload struct {
 	ItemID           string `json:"itemId"`
 	MediaSourceID    string `json:"mediaSourceId,omitempty"`
+	PlaySessionID    string `json:"playSessionId,omitempty"`
 	PositionTicks    int64  `json:"positionTicks"`
 	IsPaused         bool   `json:"isPaused,omitempty"`
 	AudioStreamIndex int    `json:"audioStreamIndex,omitempty"`
@@ -494,6 +495,7 @@ func (s *Server) handleKidsPlaybackStart(w http.ResponseWriter, r *http.Request)
 	err = s.jellyfin.ReportPlaybackStart(ctx, kc.JellyfinToken, jellyfin.PlaybackStartInfo{
 		ItemID:           p.ItemID,
 		MediaSourceID:    p.MediaSourceID,
+		PlaySessionID:    p.PlaySessionID,
 		PositionTicks:    p.PositionTicks,
 		IsPaused:         p.IsPaused,
 		CanSeek:          true,
@@ -520,6 +522,7 @@ func (s *Server) handleKidsPlaybackProgress(w http.ResponseWriter, r *http.Reque
 	err = s.jellyfin.ReportPlaybackProgress(ctx, kc.JellyfinToken, jellyfin.PlaybackProgressInfo{
 		ItemID:           p.ItemID,
 		MediaSourceID:    p.MediaSourceID,
+		PlaySessionID:    p.PlaySessionID,
 		PositionTicks:    p.PositionTicks,
 		IsPaused:         p.IsPaused,
 		AudioStreamIndex: p.AudioStreamIndex,
@@ -545,6 +548,7 @@ func (s *Server) handleKidsPlaybackStopped(w http.ResponseWriter, r *http.Reques
 	err = s.jellyfin.ReportPlaybackStopped(ctx, kc.JellyfinToken, jellyfin.PlaybackStopInfo{
 		ItemID:        p.ItemID,
 		MediaSourceID: p.MediaSourceID,
+		PlaySessionID: p.PlaySessionID,
 		PositionTicks: p.PositionTicks,
 	})
 	if err != nil {
@@ -553,8 +557,114 @@ func (s *Server) handleKidsPlaybackStopped(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleKidsStream returns a direct-play stream URL for the requested item.
-// Auth: either an admin session cookie or a kid bearer token.
+// handleKidsStopEncoding releases the Jellyfin transcode session
+// identified by playSessionId. The kid client calls this before
+// switching to a new stream URL within the same Play instance
+// (e.g. Next-episode) so Jellyfin doesn't accumulate stale ffmpeg
+// processes. Mirrors jellyfin-web's apiClient.stopActiveEncodings.
+//
+// Body: {"playSessionId": "..."}. Empty / missing playSessionId is a
+// no-op (returns 204) so the client can call it unconditionally on
+// stream-swap without checking whether a previous session existed.
+func (s *Server) handleKidsStopEncoding(w http.ResponseWriter, r *http.Request) {
+	kc := s.resolveKidsAuth(r)
+	if kc == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		PlaySessionID string `json:"playSessionId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	ctx, _ := kidsRequestContext(r)
+	if err := s.jellyfin.StopActiveEncodings(ctx, kc.JellyfinToken, req.PlaySessionID); err != nil {
+		// Best-effort: a stale session ID typically returns 404 from
+		// Jellyfin which we've already mapped to ErrNotFound. Log but
+		// don't fail the kid client - the new stream load will still
+		// proceed.
+		s.logger.Warn().
+			Err(err).
+			Str("kid", kc.Label).
+			Str("play_session_id", req.PlaySessionID).
+			Msg("stop active encodings")
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// conservativeDeviceProfile is the lowest-common-denominator Jellyfin
+// DeviceProfile we hand to PostPlaybackInfo for every kids stream
+// request. It direct-plays only the narrowest set of codecs (h264 +
+// AAC stereo) and forces transcode for everything else. The hard cap
+// at 5 Mbps is the safe ceiling for cheap consumer Android TV WebViews
+// (the Skyworth M5 testing case).
+//
+// Per-device tuning lives client-side: the kid client tracks its own
+// stutter history in localStorage and tells the server "use at most
+// N bps for me" via ?maxBitrate=N. The server clamps that down further
+// if it falls below the profile cap, but never up.
+//
+// Future: an admin/adult menu could override the bitrate locally per
+// TV (e.g. "force 1.5 Mbps on the kitchen tablet"), still client-side.
+const conservativeDeviceProfile = `{
+    "Name": "Conservative",
+    "MaxStreamingBitrate": 5000000,
+    "MaxStaticBitrate": 5000000,
+    "MusicStreamingTranscodingBitrate": 192000,
+    "DirectPlayProfiles": [
+        {"Type": "Video", "Container": "mp4", "VideoCodec": "h264", "AudioCodec": "aac"}
+    ],
+    "TranscodingProfiles": [
+        {
+            "Type": "Video",
+            "Container": "ts",
+            "Protocol": "hls",
+            "VideoCodec": "h264",
+            "AudioCodec": "aac",
+            "Context": "Streaming",
+            "MaxAudioChannels": "2",
+            "MinSegments": 1,
+            "BreakOnNonKeyFrames": true
+        },
+        {"Type": "Audio", "Container": "mp3", "AudioCodec": "mp3", "Context": "Streaming"}
+    ],
+    "ContainerProfiles": [],
+    "CodecProfiles": [
+        {
+            "Type": "Video",
+            "Codec": "h264",
+            "Conditions": [
+                {"Condition": "EqualsAny", "Property": "VideoProfile", "Value": "baseline|main|high", "IsRequired": false},
+                {"Condition": "LessThanEqual", "Property": "VideoLevel", "Value": "41", "IsRequired": false},
+                {"Condition": "LessThanEqual", "Property": "Width", "Value": "1920", "IsRequired": false},
+                {"Condition": "LessThanEqual", "Property": "Height", "Value": "1080", "IsRequired": false}
+            ]
+        }
+    ],
+    "SubtitleProfiles": [
+        {"Format": "vtt", "Method": "External"}
+    ]
+}`
+
+const conservativeProfileMaxBitrate int64 = 5_000_000
+
+// handleKidsStream returns a per-device-negotiated stream URL for the
+// requested item. Auth: admin session cookie or kid bearer token.
+//
+// Flow:
+//  1. POST PlaybackInfo to Jellyfin with the Conservative DeviceProfile
+//     so source selection (DirectPlay / DirectStream / Transcode) is
+//     informed by what a typical kid TV can actually render.
+//  2. Pass StartTimeTicks from the item's UserData so Jellyfin's
+//     transcode session starts at the resume position - matches
+//     jellyfin-web's playbackmanager pattern.
+//  3. Return the negotiated URL plus item metadata to the kid client.
+//
+// The client extracts the PlaySessionId from the returned StreamURL
+// itself (Jellyfin embeds it as a query param) and threads it back on
+// playback reports - mirrors jellyfin-web's getParam() pattern.
 func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 	kc := s.resolveKidsAuth(r)
 	if kc == nil {
@@ -568,7 +678,7 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, _ := kidsRequestContext(r)
+	ctx, deviceID := kidsRequestContext(r)
 	var (
 		item *jellyfin.Item
 		err  error
@@ -595,8 +705,51 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Series have no MediaSource of their own - PostPlaybackInfo would
+	// 500. The kid client special-cases itemType=Series anyway: it
+	// follows up with /next-up to get an episode id and re-calls
+	// /stream on that. Return metadata only and skip the negotiation.
+	if item.Type == "Series" {
+		writeJSON(w, http.StatusOK, kidsStreamResponse{
+			ItemID:         id,
+			ItemName:       item.Name,
+			ItemType:       item.Type,
+			ProductionYear: item.ProductionYear,
+		})
+		return
+	}
+
 	audioIdx := s.kidsPreferredAudioStreamIndex(ctx, item, kc, r)
-	streamURL := s.jellyfin.StreamURLWithAudio(id, kc.JellyfinToken, audioIdx)
+
+	// Resume from the user's last position. We hand StartTimeTicks to
+	// Jellyfin in the PlaybackInfo body so the transcode session
+	// produces segments at the resume point instead of t=0; the client
+	// also gets hls.js's startPosition set so the player seeks to the
+	// same offset client-side. This is what jellyfin-web does.
+	var startTimeTicks int64
+	if item.UserData != nil {
+		startTimeTicks = item.UserData.PlaybackPositionTicks
+	}
+
+	resolution, err := s.jellyfin.PostPlaybackInfo(
+		ctx,
+		id,
+		kc.JellyfinUserID,
+		kc.JellyfinToken,
+		json.RawMessage(conservativeDeviceProfile),
+		conservativeProfileMaxBitrate,
+		audioIdx,
+		startTimeTicks,
+	)
+	if err != nil {
+		if errors.Is(err, jellyfin.ErrNotFound) {
+			http.Error(w, "no playable source for this device", http.StatusUnprocessableEntity)
+			return
+		}
+		s.logger.Error().Err(err).Str("id", id).Msg("kids stream playback info")
+		http.Error(w, "failed to negotiate playback", http.StatusBadGateway)
+		return
+	}
 
 	s.logger.Info().
 		Str("auth_source", kc.Source).
@@ -605,25 +758,33 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		Bool("user_token_used", kc.JellyfinToken != "").
 		Str("item_id", id).
 		Str("item_name", item.Name).
+		Str("device_id", deviceID).
+		Str("playback_path", string(resolution.Path)).
+		Str("media_source_id", resolution.MediaSourceID).
+		Str("play_session_id", resolution.PlaySessionID).
+		Int64("start_time_ticks", startTimeTicks).
 		Int("audio_stream_index", audioIdx).
 		Msg("kids stream resolved")
 
 	resp := kidsStreamResponse{
-		StreamURL:         streamURL,
-		ItemID:            id,
-		ItemName:          item.Name,
-		ItemType:          item.Type,
-		SeriesID:          item.SeriesID,
-		SeriesName:        item.SeriesName,
-		ParentIndexNumber: item.ParentIndexNumber,
-		IndexNumber:       item.IndexNumber,
-		ProductionYear:    item.ProductionYear,
+		StreamURL:           resolution.StreamURL,
+		ItemID:              id,
+		ItemName:            item.Name,
+		ItemType:            item.Type,
+		SeriesID:            item.SeriesID,
+		SeriesName:          item.SeriesName,
+		ParentIndexNumber:   item.ParentIndexNumber,
+		IndexNumber:    item.IndexNumber,
+		ProductionYear: item.ProductionYear,
+		MediaSourceID:  resolution.MediaSourceID,
+		PlaybackPath:   string(resolution.Path),
 	}
 	if item.UserData != nil {
 		resp.UserData = item.UserData
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
+
 
 // kidsPreferredAudioStreamIndex returns the audio-stream index that
 // matches the active profile's default language, when such a track
@@ -685,6 +846,17 @@ type kidsStreamResponse struct {
 	// the item, in which case the client should hide the field.
 	ProductionYear int                    `json:"productionYear,omitempty"`
 	UserData       *jellyfin.ItemUserData `json:"userData,omitempty"`
+	// MediaSourceID + PlaybackPath echo PlaybackInfo's negotiation
+	// back to the client. PlaySessionId is intentionally NOT a separate
+	// field: it is embedded as a query parameter in StreamURL itself
+	// (Jellyfin's HLS endpoint includes it), and the client extracts it
+	// via URLSearchParams - mirrors jellyfin-web's playbackmanager
+	// `getParam('playSessionId', mediaUrl)` pattern. The client MUST
+	// thread the extracted PlaySessionId on /api/kids/playback/* reports
+	// or Jellyfin returns 401 (session-not-found, confusingly rendered
+	// as Unauthorized) and silently drops resume tracking.
+	MediaSourceID string `json:"mediaSourceId,omitempty"`
+	PlaybackPath  string `json:"playbackPath,omitempty"`
 }
 
 // handleKidsNextUp resolves the next episode to play for a series for the

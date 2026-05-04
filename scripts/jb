@@ -256,17 +256,32 @@ cmd_keychain() {
 
 needs_build() {
     [[ ! -x "$BIN_PATH" ]] && return 0
-    # Rebuild if any source file OR embedded web bundle is newer than the
-    # binary. The Go binary embeds web/{admin,kids}/dist via go:embed, so
-    # a fresh `npm run build` requires a fresh `go build` to ship the new
-    # JS hash. Skip web/*/src so Vite-only edits don't force a Go rebuild.
+    # Rebuild if any source file (Go, SQL, web src, web build config) OR
+    # an already-built dist file is newer than the binary. The Go binary
+    # embeds web/{admin,kids}/dist via go:embed, so a web src edit needs
+    # `npm run build` followed by `go build`; cmd_start runs both via
+    # build_web + build_go when this returns true.
+    #
+    # We intentionally include web/*/src files: when the kid client is
+    # being tested on a real TV (sideloaded APK pointed at this daemon),
+    # vite dev-server HMR isn't in play - the WebView fetches the
+    # embedded bundle from the Go binary.
     local newer
     newer=$(find . \
         -path ./.run -prune -o \
         -path ./node_modules -prune -o \
         -path '*/node_modules' -prune -o \
-        -path '*/src' -prune -o \
-        -type f \( -name '*.go' -o -name '*.sql' -o -path '*/dist/*' \) \
+        -type f \( \
+            -name '*.go' -o \
+            -name '*.sql' -o \
+            -name '*.tsx' -o \
+            -name '*.ts' -o \
+            -name '*.css' -o \
+            -name '*.html' -o \
+            -name 'package.json' -o \
+            -name 'vite.config.*' -o \
+            -path '*/dist/*' \
+        \) \
         -newer "$BIN_PATH" -print 2>/dev/null | head -n1)
     [[ -n "$newer" ]]
 }

@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.WindowManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -97,6 +98,33 @@ class MainActivity : AppCompatActivity() {
         // default WebChromeClient handles enter/exit fullscreen well enough
         // for video playback inside the WebView.
         wv.webChromeClient = WebChromeClient()
+
+        // Expose a tiny JS bridge for the kid client's "Reset Player"
+        // recovery action. The web side calls
+        // `window.JellybeanShell.recreateActivity()` from the player's
+        // error screen when hls.js's recovery ladder has been exhausted
+        // and the underlying WebView decoder is wedged. recreate() tears
+        // down the Activity (and the WebView with it) and brings up a
+        // fresh one - the cleanest way to reset the OS-level decoder
+        // pool on cheap Android TVs that don't recover otherwise.
+        wv.addJavascriptInterface(JellybeanShell(), "JellybeanShell")
+    }
+
+    /**
+     * JS bridge surface. Methods here run on a background thread (the
+     * WebView's JS thread); marshal back to the UI thread for anything
+     * Activity-related.
+     *
+     * Annotated `@JavascriptInterface` per Android's API 17+ contract;
+     * any new method needs the annotation or it won't be callable from
+     * JS. Keep this surface as small as possible and document each
+     * method - random methods on `this` would otherwise be reachable.
+     */
+    private inner class JellybeanShell {
+        @JavascriptInterface
+        fun recreateActivity() {
+            runOnUiThread { recreate() }
+        }
     }
 
     private fun enterImmersiveMode() {

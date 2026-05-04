@@ -287,23 +287,20 @@ func (c *Client) StreamURL(itemID, userToken string) string {
 // callers can force playback of a specific audio track (e.g. the kid
 // profile's preferred language when the item has multiple audio tracks).
 // audioStreamIndex <= 0 falls back to Jellyfin's default-track selection.
+//
+// Used by the admin-preview path where we don't bother with PlaybackInfo
+// negotiation - the parent's browser is well-behaved. The kids path goes
+// through PostPlaybackInfo (see playback_info.go) so per-device device
+// profiles drive transcode decisions.
 func (c *Client) StreamURLWithAudio(itemID, userToken string, audioStreamIndex int) string {
 	q := url.Values{}
 	// Jellyfin requires MediaSourceId on the HLS endpoint. For single-file
 	// items it matches the item ID; multi-source items would need a
-	// PlaybackInfo round-trip first. M2 will revisit that when curation
-	// surfaces multi-version items.
+	// PlaybackInfo round-trip first.
 	q.Set("MediaSourceId", itemID)
 	q.Set("VideoCodec", "h264")
 	q.Set("AudioCodec", "aac,mp3")
 	q.Set("MaxAudioChannels", "2")
-	// Cap output bitrate so cheap TV WebView decoders can keep up.
-	// Without this, Jellyfin will transcode to a high-bitrate H.264
-	// stream that some cheap Android TV WebViews (notably the Skyworth
-	// running M5 testing) accept buffered data for but never produce
-	// frames. 4 Mbps is the sweet spot for 1080p H.264 on consumer
-	// hardware. M-AT will replace this with a per-device profile.
-	q.Set("MaxStreamingBitrate", "4000000")
 	if audioStreamIndex > 0 {
 		q.Set("AudioStreamIndex", strconv.Itoa(audioStreamIndex))
 	}

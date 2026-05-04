@@ -523,10 +523,92 @@ a,
     letter-spacing: 0.05em;
 }
 
-.play-loading,
-.play-error {
+/* M-AT debug pill: shows the negotiated playback path + bitrate cap
+   for the active stream. Anchored top-right of the header. Tied to
+   header visibility (hidden during normal playback, visible when the
+   transport is up) so it doesn't clutter the screen. */
+.play-quality {
+    margin-left: auto;
+    padding: 0.3rem 0.7rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #cfd0e8;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    align-self: flex-start;
+}
+
+.play-loading {
     color: #888;
     padding: 2rem;
+}
+
+/* The player's terminal error state: hls.js exhausted recovery, the
+   transcode session 4xx'd, or the WebView decoder genuinely won't
+   decode this. Big "Reset Player" CTA wires through to the Android
+   shell's recreateActivity bridge (or location.reload on browsers)
+   so the kid can recover without using the system Force Stop. */
+.play-error {
+    color: #cfd0e8;
+    padding: 3rem 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.25rem;
+    text-align: center;
+    min-height: 100vh;
+}
+
+.play-error h1 {
+    margin: 0;
+    font-size: 1.6rem;
+    color: #fff;
+}
+
+.play-error p {
+    margin: 0;
+    max-width: 32rem;
+    font-size: 1rem;
+    line-height: 1.4;
+}
+
+.play-error-actions {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-top: 1rem;
+}
+
+.play-error-primary {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: none;
+    padding: 0.9rem 1.6rem;
+    font-size: 1.05rem;
+    font-weight: 600;
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.play-error-primary:focus,
+.play-error-primary:hover {
+    outline: 3px solid #fff;
+    outline-offset: 3px;
+}
+
+.play-error-secondary {
+    color: #cfd0e8;
+    text-decoration: underline;
+    padding: 0.5rem 1rem;
+}
+
+.play-error-secondary:focus,
+.play-error-secondary:hover {
+    color: #fff;
 }
 
 /* Loading splash shown on /play while the first 'play' event hasn't
