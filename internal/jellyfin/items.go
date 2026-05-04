@@ -297,6 +297,13 @@ func (c *Client) StreamURLWithAudio(itemID, userToken string, audioStreamIndex i
 	q.Set("VideoCodec", "h264")
 	q.Set("AudioCodec", "aac,mp3")
 	q.Set("MaxAudioChannels", "2")
+	// Cap output bitrate so cheap TV WebView decoders can keep up.
+	// Without this, Jellyfin will transcode to a high-bitrate H.264
+	// stream that some cheap Android TV WebViews (notably the Skyworth
+	// running M5 testing) accept buffered data for but never produce
+	// frames. 4 Mbps is the sweet spot for 1080p H.264 on consumer
+	// hardware. M-AT will replace this with a per-device profile.
+	q.Set("MaxStreamingBitrate", "4000000")
 	if audioStreamIndex > 0 {
 		q.Set("AudioStreamIndex", strconv.Itoa(audioStreamIndex))
 	}

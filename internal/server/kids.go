@@ -617,6 +617,7 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		SeriesName:        item.SeriesName,
 		ParentIndexNumber: item.ParentIndexNumber,
 		IndexNumber:       item.IndexNumber,
+		ProductionYear:    item.ProductionYear,
 	}
 	if item.UserData != nil {
 		resp.UserData = item.UserData
@@ -677,7 +678,13 @@ type kidsStreamResponse struct {
 	SeriesName        string                 `json:"seriesName,omitempty"`
 	ParentIndexNumber *int                   `json:"parentIndexNumber,omitempty"`
 	IndexNumber       *int                   `json:"indexNumber,omitempty"`
-	UserData          *jellyfin.ItemUserData `json:"userData,omitempty"`
+	// ProductionYear is the release / air year for the resolved item.
+	// Movies: release year. Episodes: episode air year (Jellyfin
+	// populates ProductionYear on episode items as the episode's own
+	// year, not the parent series'). Zero when Jellyfin has no year on
+	// the item, in which case the client should hide the field.
+	ProductionYear int                    `json:"productionYear,omitempty"`
+	UserData       *jellyfin.ItemUserData `json:"userData,omitempty"`
 }
 
 // handleKidsNextUp resolves the next episode to play for a series for the
