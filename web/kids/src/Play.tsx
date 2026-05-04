@@ -60,6 +60,10 @@ export default function Play() {
     const [offline, setOffline] = useState(false);
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const reportedStart = useRef(false);
+    // hasStarted flips on the first 'play' event. While false the
+    // initial loading overlay covers the WebView's default grey play
+    // poster so the kid sees a clean brand splash instead.
+    const [hasStarted, setHasStarted] = useState(false);
 
     // Esc remains the back-out shortcut; the transport doesn't own it.
     useEffect(() => {
@@ -326,6 +330,7 @@ export default function Play() {
                 controls={false}
                 onLoadedMetadata={onLoadedMetadata}
                 onPlay={() => {
+                    setHasStarted(true);
                     reportStart();
                 }}
                 onPause={() => {
@@ -334,6 +339,16 @@ export default function Play() {
                 onEnded={onEnded}
                 style={{ width: "100%", height: "calc(100vh - 80px)" }}
             />
+            {!hasStarted && (
+                <div className="play-loading-overlay" aria-hidden>
+                    <img
+                        src="/kids/jellybean-kids.png"
+                        alt=""
+                        className="play-loading-bean"
+                    />
+                    <p className="play-loading-label">Loading…</p>
+                </div>
+            )}
             <PlayerTransport
                 videoRef={videoRef}
                 onRestart={handleRestart}

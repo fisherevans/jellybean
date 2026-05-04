@@ -222,8 +222,7 @@ export default function PlayerTransport({
             const v = videoRef.current;
             if (!v) return;
             if (v.paused) {
-                const p = v.play();
-                if (p && typeof p.catch === "function") p.catch(() => {});
+                attemptPlay(v);
             } else {
                 v.pause();
             }
@@ -270,8 +269,7 @@ export default function PlayerTransport({
             const v = videoRef.current;
             if (!v) return;
             if (v.paused) {
-                const p = v.play();
-                if (p && typeof p.catch === "function") p.catch(() => {});
+                attemptPlay(v);
             } else {
                 v.pause();
             }
@@ -563,6 +561,42 @@ export default function PlayerTransport({
                 ))}
             </div>
         </div>
+    );
+}
+
+// attemptPlay calls video.play() and surfaces failure modes to the
+// console so we can diagnose the "stuck on pause / can't resume" bug
+// from chrome://inspect on the actual TV. Three things can happen:
+//   1. play() resolves and the video starts (the happy path).
+//   2. play() rejects with a DOMException - autoplay policy, audio
+//      focus loss, MediaSession state machine confused.
+//   3. play() resolves but video.paused stays true (the unhappy
+//      Android path - audio focus held by another app, decoder pool
+//      stuck).
+// We log all three so future bug reports include actionable signal.
+function attemptPlay(v: HTMLVideoElement): void {
+    const p = v.play();
+    if (!p || typeof p.then !== "function") return;
+    p.then(
+        () => {
+            // Verify the video actually started (case 3 above). If it
+            // didn't, surface it. The 250ms timeout matches our scrub
+            // tick, well past the moment any honest play() would have
+            // resumed playback.
+            window.setTimeout(() => {
+                if (v.paused) {
+                    console.warn(
+                        "[player] play() resolved but video is still paused " +
+                        "(audio focus / decoder issue?). currentTime=" +
+                        v.currentTime + " readyState=" + v.readyState +
+                        " networkState=" + v.networkState,
+                    );
+                }
+            }, 250);
+        },
+        (err) => {
+            console.warn("[player] play() rejected:", err);
+        },
     );
 }
 

@@ -488,6 +488,50 @@ a,
     padding: 2rem;
 }
 
+/* Loading splash shown on /play while the first 'play' event hasn't
+   fired yet. Covers the WebView's default grey poster + play-icon
+   placeholder which on Android TV looks bad and stretches with the
+   video element's aspect ratio. The video keeps loading underneath
+   (poster set to a 1x1 black PNG so nothing leaks through). */
+.play-loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.25rem;
+    z-index: 5;
+    pointer-events: none;
+}
+
+.play-loading-bean {
+    width: 120px;
+    height: 120px;
+    /* Bounce + squash so it reads as a bouncy jellybean rather than a
+       generic spinner. Pure transform so the GPU handles it. */
+    animation: jellybean-bounce 900ms cubic-bezier(0.5, 0, 0.5, 1) infinite;
+    transform-origin: center bottom;
+    will-change: transform;
+}
+
+@keyframes jellybean-bounce {
+    0%   { transform: translateY(0)      scale(1, 1); }
+    20%  { transform: translateY(0)      scale(1.1, 0.9); }
+    50%  { transform: translateY(-40px)  scale(0.95, 1.05); }
+    80%  { transform: translateY(0)      scale(1.1, 0.9); }
+    100% { transform: translateY(0)      scale(1, 1); }
+}
+
+.play-loading-label {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 1rem;
+    margin: 0;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
 /* player transport
  *
  * Custom kid-friendly video transport (issue #33). Replaces native

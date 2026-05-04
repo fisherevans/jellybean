@@ -78,6 +78,11 @@ export default forwardRef<HTMLVideoElement, Props>(function HlsVideo(
             ref={ref}
             controls={controls}
             autoPlay={autoPlay}
+            // 1x1 black PNG, base64. Suppresses Android WebView's
+            // default grey "play poster" + stretched play-arrow icon
+            // that flashes during the buffering window. The on-screen
+            // loading overlay (in Play.tsx) renders on top.
+            poster="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAggA9GkAAAAASUVORK5CYII="
             style={style}
             {...handlers}
         />
