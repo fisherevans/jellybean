@@ -646,6 +646,17 @@ type TileProps = {
     focusKey: string;
 };
 
+// imageAuthSuffix builds the &token=...&userId=... fragment to append to
+// /api/kids/items/{id}/image URLs when running as a kid. <img> elements
+// can't attach Authorization headers, so the kid auth flow falls back to
+// query-param tokens (server accepts both). Admin-cookie previewing
+// doesn't need this; cookies ride on <img> requests automatically.
+function imageAuthSuffix(): string {
+    const s = getSession();
+    if (!s) return "";
+    return `&token=${encodeURIComponent(s.token)}&userId=${encodeURIComponent(s.userId)}`;
+}
+
 function Tile({ item, large, focused, onClick, onFocus, refCallback }: TileProps) {
     const tag = item.ImageTags?.Primary ?? "";
     // Tile poster CSS is 180px wide for the grid and 180px for cw (both
@@ -653,9 +664,13 @@ function Tile({ item, large, focused, onClick, onFocus, refCallback }: TileProps
     // rendered size and let the immutable Cache-Control + per-tag URL
     // do the rest. Larger sizes were a 2-4x oversize on cheap TVs.
     const width = large ? 280 : 220;
+    // <img> can't attach Authorization headers, so for the bearer-auth
+    // kid path we pass the token + userId as query params. The server's
+    // parseBearer accepts both. Admin-cookie path doesn't need this and
+    // imageAuthSuffix returns "".
     const src = `/api/kids/items/${encodeURIComponent(item.Id)}/image?type=Primary&width=${width}${
         tag ? `&tag=${encodeURIComponent(tag)}` : ""
-    }`;
+    }${imageAuthSuffix()}`;
     const isSeries = item.Type === "Series";
     return (
         <button

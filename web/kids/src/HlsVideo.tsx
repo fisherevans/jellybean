@@ -34,25 +34,44 @@ export default forwardRef<HTMLVideoElement, Props>(function HlsVideo(
         if (!video) return;
         const isHLS = src.includes(".m3u8");
 
+        // Force a play() once the source is ready instead of leaning on
+        // <video autoplay>. MSE / hls.js attach the source after the
+        // element mounts, by which point the autoplay attribute has
+        // already given up. Explicit play() after manifest-parsed
+        // (or loadedmetadata for native HLS) is the reliable path.
+        // We swallow the play() promise rejection because some
+        // platforms (older WebViews, Safari without user-gesture)
+        // reject; the user can still tap the controls.
+        const tryPlay = () => {
+            if (!autoPlay) return;
+            const p = video.play();
+            if (p && typeof p.catch === "function") p.catch(() => {});
+        };
+
         if (!isHLS) {
             video.src = src;
-            return;
+            video.addEventListener("loadedmetadata", tryPlay, { once: true });
+            return () => video.removeEventListener("loadedmetadata", tryPlay);
         }
 
         if (video.canPlayType("application/vnd.apple.mpegurl")) {
             video.src = src;
-            return;
+            video.addEventListener("loadedmetadata", tryPlay, { once: true });
+            return () => video.removeEventListener("loadedmetadata", tryPlay);
         }
 
         if (Hls.isSupported()) {
             const hls = new Hls();
+            hls.on(Hls.Events.MANIFEST_PARSED, tryPlay);
             hls.loadSource(src);
             hls.attachMedia(video);
             return () => hls.destroy();
         }
 
         video.src = src;
-    }, [src]);
+        video.addEventListener("loadedmetadata", tryPlay, { once: true });
+        return () => video.removeEventListener("loadedmetadata", tryPlay);
+    }, [src, autoPlay]);
 
     return (
         <video

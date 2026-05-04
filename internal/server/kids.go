@@ -81,24 +81,30 @@ func (s *Server) resolveKidsAuth(r *http.Request) *kidsContext {
 	}
 }
 
-// parseBearer extracts the Jellyfin access token from the Authorization
-// header and the Jellyfin user id from X-Jellyfin-User-Id. Both must be
-// present for kid auth to succeed.
+// parseBearer extracts the Jellyfin access token + user id from the
+// request. Primary path: Authorization: Bearer <token> + X-Jellyfin-User-Id
+// header. Fallback: ?token=<>&userId=<> query params. The fallback exists
+// because <img> elements (and <video src=...>) can't attach custom headers
+// in WebView, so sub-resources need a header-free auth channel.
 func parseBearer(r *http.Request) (token, userID string, ok bool) {
-	h := r.Header.Get("Authorization")
-	if h == "" {
-		return "", "", false
+	if h := r.Header.Get("Authorization"); h != "" {
+		parts := strings.SplitN(h, " ", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[0], kidsBearerScheme) {
+			tok := strings.TrimSpace(parts[1])
+			uid := strings.TrimSpace(r.Header.Get(kidsUserIDHeader))
+			if tok != "" && uid != "" {
+				return tok, uid, true
+			}
+		}
 	}
-	parts := strings.SplitN(h, " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], kidsBearerScheme) {
-		return "", "", false
+	// Query-string fallback for sub-resources that can't set headers.
+	q := r.URL.Query()
+	tok := strings.TrimSpace(q.Get("token"))
+	uid := strings.TrimSpace(q.Get("userId"))
+	if tok != "" && uid != "" {
+		return tok, uid, true
 	}
-	tok := strings.TrimSpace(parts[1])
-	uid := strings.TrimSpace(r.Header.Get(kidsUserIDHeader))
-	if tok == "" || uid == "" {
-		return "", "", false
-	}
-	return tok, uid, true
+	return "", "", false
 }
 
 // resolveKidsProfileID returns the profile id this caller is acting under.
