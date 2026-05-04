@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type Kid, type Profile } from "../api";
 import KidModal from "../KidModal";
+import KidFavoritesModal from "../KidFavoritesModal";
 import Spinner from "../Spinner";
 
 type Modal =
     | { kind: "closed" }
     | { kind: "create" }
-    | { kind: "edit"; kid: Kid };
+    | { kind: "edit"; kid: Kid }
+    | { kind: "favorites"; kid: Kid };
 
 export default function Kids() {
     const [kids, setKids] = useState<Kid[] | null>(null);
@@ -84,6 +86,13 @@ export default function Kids() {
                                     >
                                         View as {k.name}
                                     </a>
+                                    <button
+                                        onClick={() =>
+                                            setModal({ kind: "favorites", kid: k })
+                                        }
+                                    >
+                                        Favorites
+                                    </button>
                                     <button onClick={() => setModal({ kind: "edit", kid: k })}>
                                         Edit
                                     </button>
@@ -95,7 +104,7 @@ export default function Kids() {
                 </ul>
             )}
 
-            {modal.kind !== "closed" && (
+            {(modal.kind === "create" || modal.kind === "edit") && (
                 <KidModal
                     mode={modal.kind}
                     kid={modal.kind === "edit" ? modal.kid : undefined}
@@ -105,6 +114,12 @@ export default function Kids() {
                         setModal({ kind: "closed" });
                         await refresh();
                     }}
+                />
+            )}
+            {modal.kind === "favorites" && (
+                <KidFavoritesModal
+                    kid={modal.kid}
+                    onClose={() => setModal({ kind: "closed" })}
                 />
             )}
         </div>

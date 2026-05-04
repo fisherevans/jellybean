@@ -1,6 +1,7 @@
-import { type Item, type ItemState, formatState } from "./api";
+import { type Item, type ItemState, type Tag, formatState } from "./api";
 import StateControl from "./CategoryControl";
 import { isUnknownLang, langName } from "./lang";
+import TagKebab from "./TagKebab";
 
 type Props = {
     item: Item;
@@ -16,6 +17,10 @@ type Props = {
     /** Active profile's default audio language; when set, items whose
      *  AudioLanguage differs are flagged. */
     expectedLanguage?: string;
+    /** Fires after the tag kebab persists a change. Pages that hold
+     *  an items array can patch the matching row's Tags field in
+     *  place rather than refetching the whole list. */
+    onTagsChanged?: (item: Item, newTags: Tag[]) => void;
 };
 
 const DEFAULT_POSTER_WIDTH = 80;
@@ -36,6 +41,7 @@ export default function ItemCard({
     leaving,
     fixedHeight,
     expectedLanguage,
+    onTagsChanged,
 }: Props) {
     const meta: string[] = [];
     if (item.ProductionYear) meta.push(String(item.ProductionYear));
@@ -164,6 +170,10 @@ export default function ItemCard({
                     compact
                 />
             )}
+            <TagKebab
+                item={item}
+                onChanged={(tags) => onTagsChanged?.(item, tags)}
+            />
         </div>
     );
 }

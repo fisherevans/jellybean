@@ -1446,6 +1446,124 @@ button:disabled {
     margin-bottom: 0.75rem;
 }
 
+/* Tag kebab on item cards. Sits over the corner; only visible to
+   admin (kid app's not affected). The popover is absolute-positioned
+   so it doesn't shift card layout when opening. */
+.tag-kebab {
+    position: relative;
+    margin-left: 0.25rem;
+}
+.tag-kebab-trigger {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.1rem 0.45rem;
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+}
+.tag-kebab-trigger:hover,
+.tag-kebab-trigger:focus {
+    background: rgba(255, 255, 255, 0.12);
+    outline: none;
+}
+.tag-kebab-popover {
+    position: absolute;
+    top: calc(100% + 0.4rem);
+    right: 0;
+    z-index: 30;
+    min-width: 200px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+    padding: 0.5rem 0.75rem;
+}
+.tag-kebab-header {
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.tag-kebab-empty {
+    padding: 0.5rem 0;
+    font-size: 0.9rem;
+}
+.tag-kebab-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+.tag-kebab-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.2rem 0.1rem;
+    cursor: pointer;
+}
+.tag-kebab-row input[type="checkbox"] {
+    accent-color: var(--accent);
+}
+
+/* Wider modal for the favorites editor + profile tag filters where
+   long item lists / multi-column controls live. The default .modal
+   width works for a single form. */
+.modal-wide {
+    max-width: 720px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+/* Per-profile tag filter editor: row per tag with three-way radios. */
+.tag-filter-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+.tag-filter-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+.tag-filter-name {
+    font-weight: 600;
+    flex: 1;
+}
+.tag-filter-desc {
+    font-weight: 400;
+    margin-top: 0.15rem;
+}
+.tag-filter-modes {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+.tag-filter-mode {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.9rem;
+}
+.tag-filter-mode input[type="radio"] {
+    accent-color: var(--accent);
+}
+
 .spinner {
     display: inline-block;
     border-style: solid;

@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type Profile } from "../api";
 import ProfileModal from "../ProfileModal";
+import ProfileTagFiltersModal from "../ProfileTagFiltersModal";
 import Spinner from "../Spinner";
 
 type Modal =
     | { kind: "closed" }
     | { kind: "create" }
-    | { kind: "edit"; profile: Profile };
+    | { kind: "edit"; profile: Profile }
+    | { kind: "tag-filters"; profile: Profile };
 
 export default function Profiles() {
     const [profiles, setProfiles] = useState<Profile[] | null>(null);
@@ -79,6 +81,13 @@ export default function Profiles() {
                                     </div>
                                 </div>
                                 <div className="profile-actions">
+                                    <button
+                                        onClick={() =>
+                                            setModal({ kind: "tag-filters", profile: p })
+                                        }
+                                    >
+                                        Tag rules
+                                    </button>
                                     <button onClick={() => setModal({ kind: "edit", profile: p })}>
                                         Edit
                                     </button>
@@ -100,7 +109,7 @@ export default function Profiles() {
                 </ul>
             )}
 
-            {modal.kind !== "closed" && (
+            {(modal.kind === "create" || modal.kind === "edit") && (
                 <ProfileModal
                     mode={modal.kind}
                     profile={modal.kind === "edit" ? modal.profile : undefined}
@@ -110,6 +119,12 @@ export default function Profiles() {
                         setModal({ kind: "closed" });
                         await refresh();
                     }}
+                />
+            )}
+            {modal.kind === "tag-filters" && (
+                <ProfileTagFiltersModal
+                    profile={modal.profile}
+                    onClose={() => setModal({ kind: "closed" })}
                 />
             )}
         </div>
