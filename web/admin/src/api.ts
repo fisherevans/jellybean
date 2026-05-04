@@ -31,6 +31,10 @@ export type Item = {
 
     State: ItemState; // visibility for the active profile (null = unset)
     Suggestion?: Suggestion;
+    // Tags (M6) currently applied to this item. Always present in the
+    // server response - empty array when the item has no tags. The
+    // kebab menu uses this to seed its checkbox state.
+    Tags?: { id: number; name: string }[];
 };
 
 export type ItemsResult = {
@@ -82,6 +86,45 @@ export type JellyfinUser = {
     isAdmin: boolean;
     isDisabled: boolean;
     assignedTo?: string; // existing kid name when this Jellyfin user is already mapped
+};
+
+// Tag is one row of the global tag namespace (M6). itemCount is
+// included on list responses but missing on bare CRUD responses; the
+// list view is the only place that surfaces it today.
+export type Tag = {
+    id: number;
+    name: string;
+    description?: string;
+    sortOrder: number;
+    itemCount?: number;
+    createdAt?: number;
+    updatedAt?: number;
+};
+
+export type TagSort = "name" | "count" | "recent" | "manual";
+
+// ProfileTagFilter is one row of profile_tag_filters (M6).
+// always_visible / always_hidden override the per-profile
+// categorization for any item carrying the tag.
+export type ProfileFilterMode = "always_visible" | "always_hidden";
+export type ProfileTagFilter = {
+    tagId: number;
+    tagName: string;
+    mode: ProfileFilterMode;
+    setAt: number;
+};
+
+// KidFavorite is one row of kid_favorites decorated with item
+// metadata + a Visible flag run through EffectiveItemVisibility.
+export type KidFavorite = {
+    itemId: string;
+    name?: string;
+    type?: string;
+    productionYear?: number;
+    imageTags?: { Primary?: string };
+    visible: boolean;
+    missing?: boolean; // Jellyfin doesn't recognize this id any more
+    createdAt: number;
 };
 
 export type ActivityEntry = {
@@ -139,6 +182,10 @@ type ItemsQuery = {
     state?: "visible" | "hidden" | "unset";
     search?: string;
     suggest?: boolean;
+    // tagId filters the listing to items carrying this tag (M6).
+    // Returns items even if their per-profile categorization is now
+    // hidden, so admins can find tagged-but-hidden content.
+    tagId?: number;
 };
 
 function itemsURL(q: ItemsQuery): string {
@@ -150,6 +197,7 @@ function itemsURL(q: ItemsQuery): string {
     if (q.state) u.set("state", q.state);
     if (q.search) u.set("search", q.search);
     if (q.suggest) u.set("suggest", "true");
+    if (q.tagId) u.set("tagId", String(q.tagId));
     return `/api/admin/items?${u.toString()}`;
 }
 
@@ -203,6 +251,83 @@ export const api = {
 
     listJellyfinUsers: () =>
         request<{ users: JellyfinUser[] }>("GET", `/api/admin/jellyfin/users`),
+
+    // --- M6: tags + item-tag mapping --------------------------------
+    listTags: (opts?: { sort?: TagSort; search?: string }) => {
+        const u = new URLSearchParams();
+        if (opts?.sort) u.set("sort", opts.sort);
+        if (opts?.search) u.set("search", opts.search);
+        const qs = u.toString();
+        return request<{ tags: Tag[] }>(
+            "GET",
+            `/api/admin/tags${qs ? "?" + qs : ""}`,
+        );
+    },
+    createTag: (input: {
+        name: string;
+        description?: string;
+        sortOrder?: number;
+    }) => request<Tag>("POST", `/api/admin/tags`, input),
+    updateTag: (id: number, input: {
+        name?: string;
+        description?: string;
+        sortOrder?: number;
+    }) => request<Tag>("PATCH", `/api/admin/tags/${id}`, input),
+    deleteTag: (id: number) => request<void>("DELETE", `/api/admin/tags/${id}`),
+
+    getItemTags: (itemId: string) =>
+        request<{ tags: Tag[] }>(
+            "GET",
+            `/api/admin/items/${encodeURIComponent(itemId)}/tags`,
+        ),
+    setItemTags: (itemId: string, tagIds: number[], opts?: { force?: boolean }) => {
+        const u = new URLSearchParams();
+        if (opts?.force) u.set("force", "true");
+        const qs = u.toString();
+        return request<{ tags: Tag[] }>(
+            "PUT",
+            `/api/admin/items/${encodeURIComponent(itemId)}/tags${qs ? "?" + qs : ""}`,
+            { tagIds },
+        );
+    },
+
+    // --- M6: per-kid favorites --------------------------------------
+    listKidFavorites: (kidId: number) =>
+        request<{ kidId: number; profileId: number; favorites: KidFavorite[] }>(
+            "GET",
+            `/api/admin/kids/${kidId}/favorites`,
+        ),
+    addKidFavorite: (kidId: number, itemId: string) =>
+        request<void>(
+            "PUT",
+            `/api/admin/kids/${kidId}/favorites/${encodeURIComponent(itemId)}`,
+        ),
+    removeKidFavorite: (kidId: number, itemId: string) =>
+        request<void>(
+            "DELETE",
+            `/api/admin/kids/${kidId}/favorites/${encodeURIComponent(itemId)}`,
+        ),
+
+    // --- M6: per-profile tag filters --------------------------------
+    listProfileTagFilters: (profileId: number) =>
+        request<{ profileId: number; filters: ProfileTagFilter[] }>(
+            "GET",
+            `/api/admin/profiles/${profileId}/tag-filters`,
+        ),
+    setProfileTagFilters: (
+        profileId: number,
+        filters: { tagId: number; mode: ProfileFilterMode }[],
+    ) =>
+        request<{ profileId: number; filters: ProfileTagFilter[] }>(
+            "PUT",
+            `/api/admin/profiles/${profileId}/tag-filters`,
+            filters,
+        ),
+    clearProfileTagFilter: (profileId: number, tagId: number) =>
+        request<void>(
+            "DELETE",
+            `/api/admin/profiles/${profileId}/tag-filters/${tagId}`,
+        ),
 };
 
 export { HttpError };

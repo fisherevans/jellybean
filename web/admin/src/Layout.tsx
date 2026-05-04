@@ -16,6 +16,7 @@ const links: NavItem[] = [
     { to: "/bulk", label: "Bulk categorize" },
     { to: "/activity", label: "Activity" },
     { to: "/search", label: "Search" },
+    { to: "/tags", label: "Tags" },
     { to: "/profiles", label: "Profiles" },
     { to: "/manage-kids", label: "Kids" },
 ];
@@ -29,12 +30,19 @@ const PROFILE_SCOPED_ROUTES = new Set([
     "/bulk",
     "/activity",
     "/search",
+    "/tags",
 ]);
 
 export default function Layout({ user, onLogout }: Props) {
     const { profile, profiles, setActive } = useActiveProfile();
     const location = useLocation();
-    const showProfilePicker = PROFILE_SCOPED_ROUTES.has(location.pathname);
+    // /tags has a detail route /tags/:id that also benefits from the
+    // picker (the detail page reads the visible-only items list scoped
+    // to the active profile). Treat /tags/* as profile-scoped via a
+    // prefix check rather than enumerating every detail variant.
+    const showProfilePicker =
+        PROFILE_SCOPED_ROUTES.has(location.pathname) ||
+        location.pathname.startsWith("/tags/");
     const [unsetCount, setUnsetCount] = useState<number | null>(null);
 
     // Fetch the active profile's "needs review" count so the Swipe nav
