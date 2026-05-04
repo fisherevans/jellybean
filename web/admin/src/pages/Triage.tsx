@@ -271,6 +271,14 @@ export default function Triage() {
     if (error) return <div className="page"><div className="error">{error}</div></div>;
 
     if (!current) {
+        if (!exhausted) {
+            return (
+                <div className="page">
+                    <h1>Triage</h1>
+                    <p className="muted">Loading items for <strong>{profile.name}</strong>…</p>
+                </div>
+            );
+        }
         return (
             <div className="page">
                 <h1>Triage</h1>
@@ -426,6 +434,26 @@ function Card({
     const langMismatch = !!lang && !!expected && lang !== expected;
     const cardClass = langMismatch ? `${className} lang-mismatch` : className;
 
+    // Confidence-scaled gradient hint: red bleeding from the left for a
+    // "hidden" guess, green bleeding from the right for a "visible" guess.
+    // Alpha ramps from a faint floor at 0% confidence up to a heavy tint at
+    // 100%. "unsure" gets no overlay.
+    const suggestOverlayStyle = (() => {
+        if (!item.Suggestion) return null;
+        const { bucket, confidence } = item.Suggestion;
+        if (bucket === "unsure") return null;
+        const c = Math.max(0, Math.min(1, confidence));
+        const alpha = 0.1 + 0.7 * c;
+        if (bucket === "hidden") {
+            return {
+                background: `linear-gradient(to right, rgba(229, 83, 129, ${alpha}), rgba(229, 83, 129, 0) 65%)`,
+            } as React.CSSProperties;
+        }
+        return {
+            background: `linear-gradient(to left, rgba(6, 214, 160, ${alpha}), rgba(6, 214, 160, 0) 65%)`,
+        } as React.CSSProperties;
+    })();
+
     return (
         <div
             className={cardClass}
@@ -442,6 +470,9 @@ function Card({
                 draggable={false}
                 onError={(e) => (e.currentTarget.style.display = "none")}
             />
+            {suggestOverlayStyle && (
+                <div className="triage-suggest-overlay" style={suggestOverlayStyle} />
+            )}
             <div className="triage-content">
                 <div className="triage-poster-wrap">
                     {posterURL ? (

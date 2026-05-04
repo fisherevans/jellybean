@@ -330,7 +330,15 @@ export default function PlayerTransport({
             // reveal to be eaten too, breaking play/pause.
             const consumed = showOnInput();
             if (consumed) {
-                if (e.key.startsWith("Arrow")) e.preventDefault();
+                // preventDefault unconditionally on the reveal press.
+                // Without this, Enter on a focused button would still
+                // fire the browser's synthesized onClick AFTER our
+                // handler returns - the button mounts + grabs focus
+                // during the same press that revealed the transport,
+                // and the click follows. Net effect: a single OK tap
+                // reveals AND activates the focused button. With
+                // preventDefault, the reveal press only reveals.
+                e.preventDefault();
                 return;
             }
 
