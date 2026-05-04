@@ -83,14 +83,129 @@ Current milestone: **M5: TV deployment**.
   on-device validation. Verify M4's IDB cache + navigator.onLine
   behavior on the chosen TV runtime; consider scheduling the
   reconciler instead of leaving it manual-only.
+- **M6: Tags, Favorites, and Profile Tag Filters** (defined, not
+  started) - global tags (name + description) assigned manually to
+  visible items, per-kid favorites, per-profile tag filters
+  (`always_visible` / `always_hidden`) that override per-profile
+  categorization. Admin-only surface in M6; kid browse rows land in
+  M8 and the kid-side heart + override gesture land in M9. Schema +
+  resolution rules in [`docs/tags-and-favorites.md`](docs/tags-and-favorites.md).
+  6 issues defined.
+- **M7: Watch menu (interstitial)** (defined, not started) - new
+  pre-playback screen at `/kids/watch/:id`. Always shown for series;
+  shown for movies only when there's resume progress. Hero
+  composition (poster + title + actions) over a blurred backdrop;
+  series get an accordion episode browser below the hero. Back from
+  `/play` always lands here (with the video paused), back from
+  `/watch` returns to `/library`. 6 issues defined; design in
+  `docs/watch-menu.md` (to be written as part of the milestone).
+- **M8: Browse UI + Library upgrades** (defined, not started) - the
+  kid home becomes a curated row-based Browse screen by default,
+  with a top-level tab pill switching to Library (search + filter +
+  alphabet jumpscroll). Layouts are reusable entities (named, with
+  ordered rows of configurable types: continue_watching, favorites,
+  tag, tag_fanout, recently_added, random_unwatched, watch_again).
+  Profiles reference a layout. Random / fanout-random rows are
+  stable for ~60 minutes (just-in-time regeneration, no recurring
+  job). New hidden admin dev menu at `/admin/dev` for force-refresh
+  and future tunables. 7 issues defined; design in
+  `docs/browse-and-layouts.md` (to be written as part of the
+  milestone).
+- **M9: Adult override mode** (defined, not started) - a long-press
+  UP gesture on a focused content item triggers a PIN-gated modal
+  that exposes per-item edit actions (favorite, tags, hide, mark
+  watched/unwatched, QR code to deep-link admin). 60s sliding TTL
+  on the unlock anchored on menu-close so consecutive edits don't
+  re-prompt. Single global 4-digit PIN, bcrypt hash, 60s lockout
+  after 3 wrong attempts. New `app_settings` key-value table for
+  cross-cutting global settings (PIN, public URL, future M10/M11
+  knobs). 6 issues; design in `docs/adult-override.md` (to be
+  written as part of the milestone).
+- **M-AT: Device-aware transcode negotiation** (defined, not
+  started, micro-milestone) - replaces direct Master.m3u8 streaming
+  with Jellyfin's PostPlaybackInfo flow + a per-device capability
+  profile catalog. Stutter detection on the kid client falls back
+  to a lower bitrate on repeated waiting events. Slots in early
+  because the M5 hardware (Skyworth Android TV) currently stutters
+  on direct-played 4K content. 4 issues; design in
+  `docs/device-profiles.md` (to be written as part of the
+  milestone).
+- **M10: Time limits** (defined, not started) - per-kid daily
+  bucket with admin-tunable refill cadence (1h / 4h / 12h / 24h)
+  and day-start anchor. Optional per-show daily cap (default
+  30min/day) and per-movie daily-starts cap (default 1/day) with
+  per-content overrides. TTS audio warnings at 10/5/0 minutes
+  remaining. Locked tiles render grayed with a clock icon.
+  Override "Grant time" sub-menu wires +5/+10/+15/+30/+60 min,
+  "until episode ends," and "until next reset" (per-item /
+  per-show / global scopes). Strict mode only in v1; grace mode
+  ("finish episode") deferred. 7 issues; design in
+  `docs/time-limits.md`.
+- **M11: Body breaks** (defined, not started) - opt-in forced
+  commercial-style breaks. Accumulator increments on continuous
+  /play, decays on pause / menu / browse, resets on cross-content
+  swap (next episode of same series does NOT reset). Default 30min
+  play -> 5min break. Full-screen overlay with countdown, voice
+  announcement (TTS), splash placeholder, full input lockout
+  except override gesture. Configurable reasons list and voice
+  template per profile. 6 issues; design in `docs/body-breaks.md`.
+- **M12: Viewing controls (dim, red-shift, auto-off)** (defined,
+  not started) - per-profile CSS-filter ambient effects:
+  brightness dim (0-80%), red-shift (sepia + hue rotate to warm),
+  and clock-based auto-off with full lockout overlay. Volume cap
+  scoped out (too brittle across TV variants). Override sub-menus
+  for set-dim / set-red-shift (TTL 15/30/60min/until-reset) and
+  sleep timer (15/30/60min). 6 issues; design in
+  `docs/viewing-controls.md`.
 
-(M6 "Optional Jellyfin tag mirror" was scrapped - the local SQLite store is
-already the source of truth and there is no benefit to mirroring it back
-to Jellyfin's tag system, which has known write-corruption issues anyway.)
+- **M13: Time-based modes** (defined, not started) - per-profile
+  modes that override M6 tag filters / M10 time limits / M12
+  viewing controls during a scheduled time window. One mode active
+  at a time, alphabetical priority. Hard transitions with TTS +
+  theme cross-fade. Theme = named background-color preset for v1
+  (default / bedtime / morning / focus). Soft cap of 2 modes per
+  profile. 7 issues defined; design in `docs/time-based-modes.md`
+  (to be written as part of the milestone).
+- **M14: API keys for headless admin access** (defined, not
+  started) - bearer-token auth equivalent to admin cookie. Single
+  permission level (no scopes). Admin UI for create / name /
+  revoke / track last-used + an access log. Replaces the original
+  "MCP server for LLM curation" framing - simpler REST + key
+  model, can wrap with MCP later if there's demand. 3 issues
+  defined; design in `docs/api-keys.md`.
+- **M15: Cable TV mode (channels)** (defined, not started) -
+  per-profile channels (mix of tag membership + explicit item
+  picks). Continuous shuffled playback via SPA-managed queue with
+  prefetch. Up Next overlay + Skip button on the M5 player
+  transport. Auto-skips locked items. Channel tile is a new M8
+  layout-row type. 6 issues defined; design in `docs/channels.md`.
+- **M16: Additional TV sources (research spike)** (defined, not
+  started) - time-boxed investigation into YouTube / PBS Kids /
+  other public sources. No production code; the deliverable is
+  `docs/external-sources-research.md` with feasibility verdicts +
+  architectural recommendation. 1 issue (the spike itself).
+- **M17: Skip intro / outro markers (placeholder)** - read
+  Jellyfin `MediaSegments` markers and surface a "Skip Intro" /
+  "Skip Credits" button on the player transport. No issues yet;
+  will be scoped when M5's player UX settles and the marker
+  coverage in the user's library is assessed.
 
-Issues for milestones beyond the current one are intentionally not yet
-defined. They get carved up after the previous milestone closes, informed
-by what we learned.
+(The original M6 "Optional Jellyfin tag mirror" was scrapped - the local
+SQLite store is already the source of truth and there is no benefit to
+mirroring it back to Jellyfin's tag system, which has known
+write-corruption issues anyway. The slot was reused for the current M6
+above.)
+
+Implementation order across all milestones lives in
+[`docs/roadmap.md`](docs/roadmap.md). The sequence isn't strictly
+M5 -> M6 -> M7; e.g. M-AT slots between M5 and M6 because of
+hardware-stutter pain, and M14 slots between M6 and M9 because it's
+small and unblocks LLM-assisted tagging. Read the roadmap doc before
+picking a milestone to start.
+
+Issues for far-future milestones are scoped at planning time but
+intentionally light on implementation detail - they get refined when
+their predecessor closes, informed by what we learned.
 
 When something we discover in the current milestone affects a future
 milestone's scope, append it to that milestone's description on GitHub

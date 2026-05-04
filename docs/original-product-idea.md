@@ -181,10 +181,14 @@ better, but sibling is the default.
 - **Curation state (source of truth):** Jellybean's SQLite database. Schema
   is roughly `(jellyfin_item_id, category, set_at, set_by, source)` where
   `source` distinguishes manual vs auto-suggested. Keyed by Jellyfin's stable
-  item GUID so library rescans do not orphan rows.
-- **Jellyfin tag mirror (derived):** optional, opt-in, written one-way from
-  Jellybean's DB. Can be regenerated from the DB. Never read back as
-  authoritative.
+  item GUID so library rescans do not orphan rows. Tags, favorites, and
+  per-profile tag filters extend the same SQLite store; see
+  [`docs/tags-and-favorites.md`](tags-and-favorites.md) for schema +
+  resolution rules.
+- **Jellyfin tag mirror (derived):** scrapped. The local SQLite store is
+  authoritative; Jellyfin tags have known write-corruption issues and
+  there is no benefit to mirroring back. Originally M6 in the milestone
+  plan; replaced by the M6 (Tags + Favorites) work above.
 - **Profiles:** Jellyfin users, one per kid. Profile switching in the
   streaming client is a Jellyfin auth swap.
 - **Parent web UI auth:** Jellyfin user login. The parent signs in to the
