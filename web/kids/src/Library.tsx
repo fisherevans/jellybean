@@ -68,6 +68,26 @@ export default function Library() {
     const [session] = useState<Session | null>(() => getSession());
     const [admin, setAdmin] = useState<AdminUser | null | undefined>(undefined);
     const adminProfileId = searchParams.get("profileId");
+
+    // Save scroll position on unmount + restore on mount so a kid
+    // returning from a movie lands where they were instead of at the
+    // top. Works cleanly when M4's IDB cache is warm (tiles render
+    // synchronously); on cache miss the scroll target may exceed the
+    // momentarily-empty content but the browser clamps it.
+    useEffect(() => {
+        const KEY = "jellybean.kids.library.scrollY";
+        const saved = sessionStorage.getItem(KEY);
+        if (saved) {
+            const y = Number(saved);
+            if (Number.isFinite(y)) {
+                requestAnimationFrame(() => window.scrollTo(0, y));
+            }
+            sessionStorage.removeItem(KEY);
+        }
+        return () => {
+            sessionStorage.setItem(KEY, String(window.scrollY));
+        };
+    }, []);
     // Preserve search params (e.g. admin's profileId) when navigating to
     // /play so the back link can return to the same filtered library
     // view. Real kid users have no search params; this is a no-op for them.

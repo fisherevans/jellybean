@@ -33,6 +33,10 @@ type PlayerTransportProps = {
     videoRef: React.RefObject<HTMLVideoElement | null>;
     onRestart: () => void;
     onNextEpisode?: () => void;
+    // Emitted whenever the transport's internal visibility flips. The
+    // parent uses this to slide the title header in/out alongside the
+    // bottom transport so they share one show/hide motion.
+    onVisibleChange?: (visible: boolean) => void;
 };
 
 type FocusState =
@@ -54,6 +58,7 @@ export default function PlayerTransport({
     videoRef,
     onRestart,
     onNextEpisode,
+    onVisibleChange,
 }: PlayerTransportProps) {
     // High-level UI state. These flip on human-cadence events so they
     // can drive React renders without thrashing.
@@ -199,6 +204,12 @@ export default function PlayerTransport({
         };
     }, []);
 
+    // Emit visibility changes so the parent can sync chrome (e.g. the
+    // title header) with our show/hide cycle.
+    useEffect(() => {
+        onVisibleChange?.(visible);
+    }, [visible, onVisibleChange]);
+
     // Build the action list. "next" is conditional on series context;
     // movies see two buttons (restart, play/pause). The play/pause
     // button index moves accordingly so D-pad math stays right.
@@ -342,9 +353,16 @@ export default function PlayerTransport({
                 return;
             }
 
-            // Arrow keys: prevent default so the page (which is the
-            // whole player) doesn't scroll behind the transport.
-            if (e.key.startsWith("Arrow")) e.preventDefault();
+            // preventDefault on every key we own. Two reasons:
+            //   1. Arrow keys: stop the page (which is the whole
+            //      player) from scrolling behind the transport.
+            //   2. Enter / Space: stop the browser's synthesized
+            //      click on the focused button. Without this, our
+            //      keydown handler activates the button (pause) AND
+            //      the synthesized click activates it again (play).
+            //      Net effect: pause + play = no-op, kid thinks
+            //      pause is broken.
+            e.preventDefault();
 
             // D-pad routing.
             if (focus.kind === "scrubber") {

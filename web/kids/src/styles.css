@@ -444,10 +444,37 @@ a,
 }
 
 .play-header {
+    /* Overlay the video like the bottom transport. Gradient backdrop
+       (transparent at the bottom -> dark at the top) so the title +
+       back arrow read on any video frame without a hard band. */
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 6;
     display: flex;
     align-items: center;
     gap: 1rem;
-    padding: 0.75rem 1.25rem;
+    padding: 0.75rem 1.25rem 1.5rem;
+    background: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 0.7) 0%,
+        rgba(0, 0, 0, 0) 100%
+    );
+    /* Slide / fade synced with the bottom transport's show/hide. */
+    transform: translateY(0);
+    transition: transform 200ms ease-out, opacity 200ms ease-out;
+}
+
+.play-header.hidden {
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
+}
+
+.play-header.visible {
+    transform: translateY(0);
+    opacity: 1;
 }
 
 .play-back {

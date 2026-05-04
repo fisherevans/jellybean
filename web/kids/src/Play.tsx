@@ -68,6 +68,13 @@ export default function Play() {
     // initial loading overlay covers the WebView's default grey play
     // poster so the kid sees a clean brand splash instead.
     const [hasStarted, setHasStarted] = useState(false);
+    // isBuffering flips true on the video's `waiting` event (stalled
+    // for data) and false on `playing`. We show the loading overlay
+    // any time the video can't progress, not just at first launch.
+    const [isBuffering, setIsBuffering] = useState(false);
+    // Mirror of PlayerTransport's internal visibility. Used to
+    // overlay the title header in sync with the bottom controls.
+    const [transportVisible, setTransportVisible] = useState(false);
 
     // Esc remains the back-out shortcut; the transport doesn't own it.
     useEffect(() => {
@@ -303,6 +310,12 @@ export default function Play() {
     const isAdminPreview = new URLSearchParams(location.search).has("profileId");
     const showNextEpisode = !!stream.seriesId;
 
+    // Header overlays the video like the bottom controls do. It's
+    // visible while the loading splash is up (so the kid knows what's
+    // loading) and follows the transport's show/hide cycle once
+    // playback has begun.
+    const headerVisible = !hasStarted || transportVisible;
+
     return (
         <div className="play-screen">
             {isAdminPreview && (
@@ -313,7 +326,27 @@ export default function Play() {
                     </a>
                 </div>
             )}
-            <header className="play-header">
+            <HlsVideo
+                ref={videoRef}
+                key={stream.itemId}
+                src={stream.streamUrl}
+                autoPlay
+                controls={false}
+                onLoadedMetadata={onLoadedMetadata}
+                onPlay={() => {
+                    setHasStarted(true);
+                    setIsBuffering(false);
+                    reportStart();
+                }}
+                onPause={() => {
+                    reportProgress(true);
+                }}
+                onWaiting={() => setIsBuffering(true)}
+                onPlaying={() => setIsBuffering(false)}
+                onEnded={onEnded}
+                style={{ width: "100%", height: "100vh" }}
+            />
+            <header className={`play-header ${headerVisible ? "visible" : "hidden"}`}>
                 <Link to={libraryHref} className="play-back" aria-label="Back to library">
                     <span aria-hidden>{"←"}</span>
                 </Link>
@@ -333,24 +366,7 @@ export default function Play() {
                     )}
                 </div>
             </header>
-            <HlsVideo
-                ref={videoRef}
-                key={stream.itemId}
-                src={stream.streamUrl}
-                autoPlay
-                controls={false}
-                onLoadedMetadata={onLoadedMetadata}
-                onPlay={() => {
-                    setHasStarted(true);
-                    reportStart();
-                }}
-                onPause={() => {
-                    reportProgress(true);
-                }}
-                onEnded={onEnded}
-                style={{ width: "100%", height: "calc(100vh - 80px)" }}
-            />
-            {!hasStarted && (
+            {(!hasStarted || isBuffering) && (
                 <div className="play-loading-overlay" aria-hidden>
                     <img
                         src="/kids/jellybean-kids.png"
@@ -364,6 +380,7 @@ export default function Play() {
                 videoRef={videoRef}
                 onRestart={handleRestart}
                 onNextEpisode={showNextEpisode ? handleNextEpisode : undefined}
+                onVisibleChange={setTransportVisible}
             />
         </div>
     );

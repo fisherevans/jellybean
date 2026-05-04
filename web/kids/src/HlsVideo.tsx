@@ -19,6 +19,8 @@ type Props = {
     onPause?: React.ReactEventHandler<HTMLVideoElement>;
     onEnded?: React.ReactEventHandler<HTMLVideoElement>;
     onTimeUpdate?: React.ReactEventHandler<HTMLVideoElement>;
+    onWaiting?: React.ReactEventHandler<HTMLVideoElement>;
+    onPlaying?: React.ReactEventHandler<HTMLVideoElement>;
     onError?: React.ReactEventHandler<HTMLVideoElement>;
 };
 

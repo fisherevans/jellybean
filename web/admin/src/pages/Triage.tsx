@@ -332,6 +332,7 @@ export default function Triage() {
                         transition: dragOffset && !swipe ? "none" : `transform ${ANIM_MS}ms ease-out, opacity ${ANIM_MS}ms`,
                     }}
                     interactive={!busy && !swipe}
+                    showSuggestion
                     onPointerDown={onPointerDown}
                     onPointerMove={onPointerMove}
                     onPointerUp={onPointerUp}
@@ -400,6 +401,7 @@ type CardProps = {
     item: Item;
     className: string;
     interactive: boolean;
+    showSuggestion?: boolean;
     style?: React.CSSProperties;
     onPointerDown?: (e: React.PointerEvent) => void;
     onPointerMove?: (e: React.PointerEvent) => void;
@@ -413,6 +415,7 @@ function Card({
     item,
     className,
     interactive,
+    showSuggestion = false,
     style,
     onPointerDown,
     onPointerMove,
@@ -437,8 +440,10 @@ function Card({
     // Confidence-scaled gradient hint: red bleeding from the left for a
     // "hidden" guess, green bleeding from the right for a "visible" guess.
     // Alpha ramps from a faint floor at 0% confidence up to a heavy tint at
-    // 100%. "unsure" gets no overlay.
+    // 100%. Only painted on the active card; the behind card peeks above
+    // the front and its hint would read as a stray colored border.
     const suggestOverlayStyle = (() => {
+        if (!showSuggestion) return null;
         if (!item.Suggestion) return null;
         const { bucket, confidence } = item.Suggestion;
         if (bucket === "unsure") return null;
