@@ -131,12 +131,69 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Optional ?tagId=N filter. When set, the result set is the items
+	// carrying that tag (regardless of categorization state) - admin
+	// flows want to see hidden-but-tagged items so they can untag or
+	// recategorize. tagId composes with type: a tag is global, but the
+	// caller can still narrow by Movie / Series.
+	var filterTagID int64
+	if v := q.Get("tagId"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			http.Error(w, "tagId must be a positive integer", http.StatusBadRequest)
+			return
+		}
+		filterTagID = n
+	}
+
 	var (
 		items     []jellyfin.Item
 		total     int
 		hasMore   bool
 		nextStart = startIndex
 	)
+
+	if filterTagID > 0 {
+		ids, err := s.curation.ListItemIDsByTag(r.Context(), filterTagID, limit+1, startIndex)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("list ids by tag")
+			http.Error(w, "failed to load items", http.StatusInternalServerError)
+			return
+		}
+		hasMore = len(ids) > limit
+		if hasMore {
+			ids = ids[:limit]
+		}
+		if len(ids) > 0 {
+			res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{IDs: ids})
+			if err != nil {
+				s.logger.Error().Err(err).Msg("get items by ids (tag filter)")
+				http.Error(w, "failed to load items", http.StatusBadGateway)
+				return
+			}
+			items = res.Items
+			total = res.TotalRecordCount
+		}
+		// Honor the type filter: drop items whose Type isn't in the
+		// allowed set.
+		if len(items) > 0 {
+			allowed := map[string]struct{}{}
+			for _, t := range itemTypes {
+				allowed[t] = struct{}{}
+			}
+			kept := items[:0]
+			for _, it := range items {
+				if _, ok := allowed[it.Type]; ok {
+					kept = append(kept, it)
+				}
+			}
+			items = kept
+			total = len(items)
+		}
+		nextStart = startIndex + len(items)
+		// Skip the state-filter switch below when tagId is in play.
+		goto enrich
+	}
 
 	switch wantState {
 	case filterVisible, filterHidden:
@@ -201,6 +258,7 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 		hasMore = nextStart < total
 	}
 
+enrich:
 	idList := make([]string, len(items))
 	for i, it := range items {
 		idList[i] = it.ID
@@ -209,6 +267,12 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Error().Err(err).Msg("fetch states")
 		http.Error(w, "failed to load states", http.StatusInternalServerError)
+		return
+	}
+	tagSets, err := s.curation.GetTagsForItems(r.Context(), idList)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("fetch tags")
+		http.Error(w, "failed to load tags", http.StatusInternalServerError)
 		return
 	}
 
@@ -230,6 +294,20 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 			row["State"] = string(st)
 		} else {
 			row["State"] = nil
+		}
+		// Decorate with the item's tag set so the kebab UI on each
+		// tile can render checkboxes without an extra round trip.
+		if tags, ok := tagSets[it.ID]; ok {
+			compact := make([]map[string]any, 0, len(tags))
+			for _, tg := range tags {
+				compact = append(compact, map[string]any{
+					"id":   tg.ID,
+					"name": tg.Name,
+				})
+			}
+			row["Tags"] = compact
+		} else {
+			row["Tags"] = []map[string]any{}
 		}
 		if withSuggest {
 			row["Suggestion"] = curation.Suggest(it)

@@ -88,6 +88,8 @@ func (s *Server) routes() {
 	admin := api.PathPrefix("/admin").Subrouter()
 	admin.Use(s.auth.Middleware)
 	admin.HandleFunc("/items", s.handleAdminItems).Methods(http.MethodGet)
+	admin.HandleFunc("/items/{id}/tags", s.handleAdminGetItemTags).Methods(http.MethodGet)
+	admin.HandleFunc("/items/{id}/tags", s.handleAdminSetItemTags).Methods(http.MethodPut)
 	admin.HandleFunc("/items/{id}/image", s.handleAdminImage).Methods(http.MethodGet)
 	admin.HandleFunc("/items/{id}/stream", s.handleAdminStream).Methods(http.MethodGet)
 	admin.HandleFunc("/items/{id}/state", s.handleAdminSetState).Methods(http.MethodPost)
@@ -103,6 +105,10 @@ func (s *Server) routes() {
 	admin.HandleFunc("/kids/{id}", s.handleUpdateKid).Methods(http.MethodPatch)
 	admin.HandleFunc("/kids/{id}", s.handleDeleteKid).Methods(http.MethodDelete)
 	admin.HandleFunc("/jellyfin/users", s.handleListJellyfinUsers).Methods(http.MethodGet)
+	admin.HandleFunc("/tags", s.handleListTags).Methods(http.MethodGet)
+	admin.HandleFunc("/tags", s.handleCreateTag).Methods(http.MethodPost)
+	admin.HandleFunc("/tags/{id}", s.handleUpdateTag).Methods(http.MethodPatch)
+	admin.HandleFunc("/tags/{id}", s.handleDeleteTag).Methods(http.MethodDelete)
 
 	// Kids API. /auth/login is unauthenticated (it IS the auth flow); the
 	// rest accept either an admin session cookie (parent previewing) or
