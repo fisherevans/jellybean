@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, HttpError, type User } from "../api";
 import { useActiveProfile } from "../activeProfile";
+import Spinner from "../Spinner";
 
 type Props = {
     user: User;
@@ -19,7 +20,7 @@ type Counts = {
 // into the workflows that move those numbers.
 
 export default function Dashboard({ user, onLogout }: Props) {
-    const { profile } = useActiveProfile();
+    const { profile, loading: profileLoading } = useActiveProfile();
     const [counts, setCounts] = useState<Counts | null>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -65,25 +66,44 @@ export default function Dashboard({ user, onLogout }: Props) {
                     (default audio: <code>{profile.defaultLanguage || "eng"}</code>).
                     Switch profiles via the picker at the top right.
                 </p>
+            ) : profileLoading ? (
+                <Spinner size={20} label="Loading profile…" />
             ) : (
-                <p className="muted">Loading profile...</p>
+                <p className="muted">No profile available.</p>
             )}
 
             {error && <div className="error">{error}</div>}
+
+            {profile && (counts?.unset ?? 0) > 0 && (
+                <div className="dashboard-primary-cta">
+                    <div>
+                        <div className="dashboard-primary-cta-label">
+                            {(counts?.unset ?? 0).toLocaleString()} item
+                            {counts?.unset === 1 ? "" : "s"} need a decision
+                        </div>
+                        <div className="muted">
+                            Swipe through them one at a time. Left to hide, right to allow.
+                        </div>
+                    </div>
+                    <Link to="/swipe" className="cta-primary">
+                        Start swiping →
+                    </Link>
+                </div>
+            )}
 
             <div className="dashboard-counts">
                 <CountCard
                     label="Needs review"
                     value={counts?.unset}
                     tone="warn"
-                    cta={{ to: "/sweep", label: "Sweep" }}
+                    cta={{ to: "/swipe", label: "Swipe" }}
                     note="Items with no decision yet for this profile."
                 />
                 <CountCard
                     label="Visible"
                     value={counts?.visible}
                     tone="ok"
-                    cta={{ to: "/triage", label: "Re-triage" }}
+                    cta={{ to: "/search", label: "Search" }}
                     note="Approved for kids in this profile."
                 />
                 <CountCard
@@ -96,6 +116,7 @@ export default function Dashboard({ user, onLogout }: Props) {
             </div>
 
             <div className="dashboard-links">
+                <Link to="/bulk">Bulk categorize</Link>
                 <Link to="/activity">Recent activity</Link>
                 <Link to="/manage-kids">Kids</Link>
                 <Link to="/profiles">Profiles</Link>

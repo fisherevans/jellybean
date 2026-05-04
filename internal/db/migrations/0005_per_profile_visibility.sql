@@ -1,6 +1,6 @@
 -- Replace global age-based categorizations with per-profile visibility.
 -- Each (item, profile) pair is independently visible / hidden / unset.
--- A future "Zoe" profile gets its own triage pass; Ollie's decisions
+-- A future "Zoe" profile gets its own categorization pass; Ollie's decisions
 -- don't carry over.
 --
 -- Migration of existing data: anything previously marked min_age < 13 maps

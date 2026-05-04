@@ -21,12 +21,15 @@ type Profile struct {
 	CreatedAt       time.Time
 }
 
-// ProfileWithKidCount is what the listing endpoint returns; the count is
-// useful in the UI for "this profile has 3 kids assigned" hints and to
-// guard delete actions.
+// ProfileWithKidCount is what the listing endpoint returns; the counts
+// are useful in the UI for "this profile has 3 kids assigned" hints,
+// per-profile categorization stats, and to guard delete actions.
+// VisibleCount and HiddenCount exclude orphaned categorizations.
 type ProfileWithKidCount struct {
 	Profile
-	KidCount int
+	KidCount     int
+	VisibleCount int
+	HiddenCount  int
 }
 
 // ErrProfileNotFound is returned when a profile lookup or update misses.
@@ -39,11 +42,17 @@ var ErrProfileInUse = errors.New("profile has kids assigned; reassign first")
 // ErrProfileProtected covers the immutable "Default" profile.
 var ErrProfileProtected = errors.New("default profile cannot be deleted")
 
-// ListProfiles returns all profiles with their current kid counts.
+// ListProfiles returns all profiles with their current kid counts and
+// visibility totals. Counts ignore orphan rows so the numbers reflect
+// what the kid client would actually see.
 func (s *Store) ListProfiles(ctx context.Context) ([]ProfileWithKidCount, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.id, p.name, COALESCE(p.description, ''), p.default_language, p.created_at,
-		       (SELECT COUNT(*) FROM kids WHERE profile_id = p.id)
+		       (SELECT COUNT(*) FROM kids WHERE profile_id = p.id),
+		       (SELECT COUNT(*) FROM categorizations
+		           WHERE profile_id = p.id AND state = 'visible' AND orphan_at IS NULL),
+		       (SELECT COUNT(*) FROM categorizations
+		           WHERE profile_id = p.id AND state = 'hidden'  AND orphan_at IS NULL)
 		FROM profiles p
 		ORDER BY p.id ASC`)
 	if err != nil {
@@ -57,7 +66,8 @@ func (s *Store) ListProfiles(ctx context.Context) ([]ProfileWithKidCount, error)
 			p  ProfileWithKidCount
 			ts int64
 		)
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.DefaultLanguage, &ts, &p.KidCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.DefaultLanguage, &ts,
+			&p.KidCount, &p.VisibleCount, &p.HiddenCount); err != nil {
 			return nil, err
 		}
 		p.CreatedAt = time.Unix(ts, 0)

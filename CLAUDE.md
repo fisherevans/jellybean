@@ -60,7 +60,7 @@ Current milestone: **M5: TV deployment**.
   Docker image, CI publishing, dev runbook. 8 issues, all closed.
 - **M2: Curation data model and parent web app** (closed) - SQLite curation
   schema, per-profile visibility (visible / hidden / unset), auto-
-  categorization heuristics, parent web UI (sweep + triage with card-stack
+  categorization heuristics, parent web UI (bulk + swipe with card-stack
   swipe gestures, activity, search), profile + kid management with per-kid
   Jellyfin tokens, both Movies and TV Series treated as first-class. 8
   issues, plus follow-up polish.

@@ -16,7 +16,7 @@ test.describe("admin shell", () => {
         await gotoAndWaitReady(page, "/");
         await expect(page.getByRole("heading", { name: /Welcome/ })).toBeVisible();
         const nav = page.getByRole("navigation");
-        for (const label of ["Sweep", "Triage", "Activity", "Search", "Profiles", "Kids"]) {
+        for (const label of ["Bulk categorize", "Swipe", "Activity", "Search", "Profiles", "Kids"]) {
             await expect(nav.getByRole("link", { name: label })).toBeVisible();
         }
     });
@@ -29,10 +29,10 @@ test.describe("admin shell", () => {
     });
 });
 
-test.describe("sweep", () => {
+test.describe("bulk", () => {
     test("loads with three columns and counts", async ({ page }) => {
-        await gotoAndWaitReady(page, "/sweep");
-        await expect(page.getByRole("heading", { name: "Sweep" })).toBeVisible();
+        await gotoAndWaitReady(page, "/bulk");
+        await expect(page.getByRole("heading", { name: "Bulk categorize" })).toBeVisible();
 
         // Initial fetch can take a while on large libraries (2300+ items).
         // The Loading state disappears once the columns mount; allow up to
@@ -51,15 +51,16 @@ test.describe("sweep", () => {
     });
 });
 
-test.describe("triage", () => {
+test.describe("swipe", () => {
     test("loads (queue or empty state)", async ({ page }) => {
-        await gotoAndWaitReady(page, "/triage");
+        await gotoAndWaitReady(page, "/swipe");
         // Either the queue is empty ("All caught up for X") or there's an
-        // item to triage and the ← Hide / ↓ Skip / Show → buttons are
-        // present. Wait for either state to settle.
+        // item to categorize and the ← Hide / ↓ Skip / Show → buttons are
+        // present. Initial fetch can take up to ~10s on a large library
+        // (the page shows a spinner while it waits); allow 30s like Bulk.
         const allCaughtUp = page.getByText(/All caught up/);
         const hide = page.getByRole("button", { name: /← Hide/ });
-        await expect(allCaughtUp.or(hide)).toBeVisible();
+        await expect(allCaughtUp.or(hide)).toBeVisible({ timeout: 30_000 });
 
         const empty = await allCaughtUp.isVisible().catch(() => false);
         if (empty) return;

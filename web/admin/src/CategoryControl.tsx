@@ -9,7 +9,7 @@ type Props = {
 
 // StateControl is the per-item control that flips an item between visible
 // and hidden for the active profile (or back to unset). Three buttons:
-// Visible / Hidden / Unset. Used by sweep, search, activity, and triage.
+// Visible / Hidden / Unset. Used by bulk, search, activity, and swipe.
 export default function StateControl({ value, onChange, busy, compact }: Props) {
     return (
         <div className={`cat-control${compact ? " compact" : ""}`}>

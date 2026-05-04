@@ -1,4 +1,5 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { api, type User } from "./api";
 import { useActiveProfile } from "./activeProfile";
 
@@ -7,18 +8,62 @@ type Props = {
     onLogout: () => void;
 };
 
-const links = [
+type NavItem = { to: string; label: string; key?: "swipe" };
+
+const links: NavItem[] = [
     { to: "/", label: "Home" },
-    { to: "/sweep", label: "Sweep" },
-    { to: "/triage", label: "Triage" },
+    { to: "/swipe", label: "Swipe", key: "swipe" },
+    { to: "/bulk", label: "Bulk categorize" },
     { to: "/activity", label: "Activity" },
     { to: "/search", label: "Search" },
     { to: "/profiles", label: "Profiles" },
     { to: "/manage-kids", label: "Kids" },
 ];
 
+// Routes that operate on a single active profile. The profile picker is
+// only useful on these; on settings pages (/profiles, /manage-kids) it
+// just adds noise.
+const PROFILE_SCOPED_ROUTES = new Set([
+    "/",
+    "/swipe",
+    "/bulk",
+    "/activity",
+    "/search",
+]);
+
 export default function Layout({ user, onLogout }: Props) {
     const { profile, profiles, setActive } = useActiveProfile();
+    const location = useLocation();
+    const showProfilePicker = PROFILE_SCOPED_ROUTES.has(location.pathname);
+    const [unsetCount, setUnsetCount] = useState<number | null>(null);
+
+    // Fetch the active profile's "needs review" count so the Swipe nav
+    // entry can call attention to itself when there's work to do. Stale
+    // by definition (other tabs / actions don't notify), but the value
+    // refreshes on profile switch and on full reloads, which is enough
+    // for a nav-bar hint.
+    useEffect(() => {
+        if (!profile) {
+            setUnsetCount(null);
+            return;
+        }
+        let cancelled = false;
+        api.listItems({
+            profileId: profile.id,
+            state: "unset",
+            limit: 1,
+            type: "Movie,Series",
+        })
+            .then((res) => {
+                if (!cancelled) setUnsetCount(res.TotalRecordCount);
+            })
+            .catch(() => {
+                if (!cancelled) setUnsetCount(null);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [profile?.id, location.pathname]);
 
     async function handleLogout() {
         try {
@@ -43,19 +88,35 @@ export default function Layout({ user, onLogout }: Props) {
                     Jellybean
                 </Link>
                 <nav className="nav">
-                    {links.map((l) => (
-                        <NavLink
-                            key={l.to}
-                            to={l.to}
-                            end={l.to === "/"}
-                            className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
-                        >
-                            {l.label}
-                        </NavLink>
-                    ))}
+                    {links.map((l) => {
+                        const isSwipe = l.key === "swipe";
+                        const attention = isSwipe && (unsetCount ?? 0) > 0;
+                        return (
+                            <NavLink
+                                key={l.to}
+                                to={l.to}
+                                end={l.to === "/"}
+                                className={({ isActive }) =>
+                                    [
+                                        "nav-link",
+                                        isActive && "active",
+                                        isSwipe && "nav-link-primary",
+                                        attention && "nav-link-attention",
+                                    ]
+                                        .filter(Boolean)
+                                        .join(" ")
+                                }
+                            >
+                                {l.label}
+                                {attention && (
+                                    <span className="nav-badge">{unsetCount}</span>
+                                )}
+                            </NavLink>
+                        );
+                    })}
                 </nav>
                 <div className="user">
-                    {profiles.length > 0 && (
+                    {showProfilePicker && profiles.length > 0 && (
                         <label className="profile-pick">
                             <span>Profile</span>
                             <select

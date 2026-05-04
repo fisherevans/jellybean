@@ -3,10 +3,12 @@ import { Link } from "react-router-dom";
 import { api, HttpError, typeFilterParam, type Item, type ItemState } from "../api";
 import { useActiveProfile } from "../activeProfile";
 import { useTypeFilter } from "../useTypeFilter";
+import { isUnknownLang, langName } from "../lang";
 import PreviewModal from "../PreviewModal";
+import Spinner from "../Spinner";
 import TypeFilterPicker from "../TypeFilter";
 
-// Triage as a Tinder-style card stack:
+// Swipe as a Tinder-style card stack:
 //
 //   ←  hide  (red flash, ✕ symbol, swipe-left)
 //   →  show  (green flash, ✓ symbol, swipe-right)
@@ -56,8 +58,8 @@ function flashSymbol(dir: SwipeDir): string {
     }
 }
 
-export default function Triage() {
-    const { profile } = useActiveProfile();
+export default function Swipe() {
+    const { profile, loading: profileLoading } = useActiveProfile();
     const [typeFilter, setTypeFilter] = useTypeFilter();
     const [queue, setQueue] = useState<Item[]>([]);
     const [cursor, setCursor] = useState(0);
@@ -263,8 +265,12 @@ export default function Triage() {
     if (!profile) {
         return (
             <div className="page">
-                <h1>Triage</h1>
-                <p>No profile selected. <Link to="/profiles">Pick or create one</Link>.</p>
+                <h1>Swipe</h1>
+                {profileLoading ? (
+                    <Spinner block size={36} label="Loading profile…" />
+                ) : (
+                    <p>No profile selected. <Link to="/profiles">Pick or create one</Link>.</p>
+                )}
             </div>
         );
     }
@@ -274,16 +280,20 @@ export default function Triage() {
         if (!exhausted) {
             return (
                 <div className="page">
-                    <h1>Triage</h1>
-                    <p className="muted">Loading items for <strong>{profile.name}</strong>…</p>
+                    <h1>Swipe</h1>
+                    <Spinner
+                        block
+                        size={48}
+                        label={`Loading items for ${profile.name}…`}
+                    />
                 </div>
             );
         }
         return (
             <div className="page">
-                <h1>Triage</h1>
+                <h1>Swipe</h1>
                 <p>All caught up for <strong>{profile.name}</strong>.{" "}
-                <Link to="/sweep">Back to sweep</Link>.</p>
+                <Link to="/bulk">Bulk categorize</Link>.</p>
                 <p className="muted">{doneCount} item(s) categorized this session.</p>
             </div>
         );
@@ -304,20 +314,20 @@ export default function Triage() {
     const cardOpacity = swipe && swipe !== "up-incoming" ? 0 : 1;
 
     return (
-        <div className="page triage">
-            <div className="triage-controls">
+        <div className="page swipe">
+            <div className="swipe-controls">
                 <TypeFilterPicker value={typeFilter} onChange={setTypeFilter} busy={busy} />
                 <span className="muted">
-                    Triaging for <strong>{profile.name}</strong> · {doneCount} done ·{" "}
+                    Swiping for <strong>{profile.name}</strong> · {doneCount} done ·{" "}
                     {queue.length - cursor} remaining
                 </span>
             </div>
 
-            <div className="triage-stack">
+            <div className="swipe-stack">
                 {upcoming && (
                     <Card
                         item={upcoming}
-                        className="triage-card behind"
+                        className="swipe-card behind"
                         interactive={false}
                         expectedLanguage={profile?.defaultLanguage}
                     />
@@ -325,7 +335,7 @@ export default function Triage() {
                 <Card
                     key={current.Id}
                     item={current}
-                    className={`triage-card front swipe-${swipe ?? "idle"}`}
+                    className={`swipe-card front swipe-${swipe ?? "idle"}`}
                     style={{
                         transform: cardTransform,
                         opacity: cardOpacity,
@@ -341,13 +351,13 @@ export default function Triage() {
                     expectedLanguage={profile?.defaultLanguage}
                 />
                 {flash && (
-                    <div className={`triage-flash ${flashColor(flash)}`}>
-                        <span className="triage-flash-symbol">{flashSymbol(flash)}</span>
+                    <div className={`swipe-flash ${flashColor(flash)}`}>
+                        <span className="swipe-flash-symbol">{flashSymbol(flash)}</span>
                     </div>
                 )}
             </div>
 
-            <div className="triage-actions">
+            <div className="swipe-actions">
                 <button
                     onClick={() => performAction("left")}
                     disabled={busy}
@@ -382,7 +392,7 @@ export default function Triage() {
                 </button>
             </div>
 
-            <p className="muted">
+            <p className="muted swipe-hint">
                 Keyboard: ← hide · → show · ↓ skip · ↑ back · or drag the card.
             </p>
 
@@ -475,26 +485,26 @@ function Card({
             onPointerCancel={interactive ? onPointerCancel : undefined}
         >
             <img
-                className="triage-backdrop"
+                className="swipe-backdrop"
                 src={backdropURL}
                 alt=""
                 draggable={false}
                 onError={(e) => (e.currentTarget.style.display = "none")}
             />
             {suggestOverlayStyle && (
-                <div className="triage-suggest-overlay" style={suggestOverlayStyle} />
+                <div className="swipe-suggest-overlay" style={suggestOverlayStyle} />
             )}
-            <div className="triage-content">
-                <div className="triage-poster-wrap">
+            <div className="swipe-content">
+                <div className="swipe-poster-wrap">
                     {posterURL ? (
-                        <img className="triage-poster" src={posterURL} alt="" draggable={false} />
+                        <img className="swipe-poster" src={posterURL} alt="" draggable={false} />
                     ) : (
-                        <div className="triage-poster placeholder">no poster</div>
+                        <div className="swipe-poster placeholder">no poster</div>
                     )}
                     {onPreview && interactive && (
                         <button
                             type="button"
-                            className="triage-preview"
+                            className="swipe-preview"
                             aria-label={`Preview ${item.Name}`}
                             onPointerDown={(e) => e.stopPropagation()}
                             onClick={(e) => {
@@ -506,21 +516,27 @@ function Card({
                         </button>
                     )}
                 </div>
-                <div className="triage-info">
+                <div className="swipe-info">
                     <h1>{item.Name}</h1>
                     {(meta.length > 0 || lang) && (
                         <div className="muted">
                             {meta.join(" · ")}
                             {lang && (
                                 <span
-                                    className={`lang-badge ${langMismatch ? "lang-badge-mismatch" : ""}`}
+                                    className={`lang-badge ${
+                                        langMismatch
+                                            ? "lang-badge-mismatch"
+                                            : isUnknownLang(lang)
+                                            ? "lang-badge-unknown"
+                                            : ""
+                                    }`}
                                     title={
                                         langMismatch
-                                            ? `Audio: ${lang}; profile default is ${expected}`
-                                            : `Audio: ${lang}`
+                                            ? `Audio: ${langName(lang)}; profile default is ${langName(expected)}`
+                                            : `Audio: ${langName(lang)}`
                                     }
                                 >
-                                    {lang}
+                                    {langName(lang)}
                                 </span>
                             )}
                         </div>
@@ -531,7 +547,7 @@ function Card({
                         </div>
                     )}
                     {item.Suggestion && (
-                        <div className={`triage-suggestion sugg-${item.Suggestion.bucket}`}>
+                        <div className={`swipe-suggestion sugg-${item.Suggestion.bucket}`}>
                             guess: <strong>{item.Suggestion.bucket}</strong> (
                             {Math.round(item.Suggestion.confidence * 100)}%)
                             {item.Suggestion.reasoning?.length ? (

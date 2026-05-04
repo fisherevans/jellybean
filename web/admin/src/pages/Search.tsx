@@ -4,13 +4,15 @@ import { api, HttpError, typeFilterParam, type Item, type ItemState } from "../a
 import { useActiveProfile } from "../activeProfile";
 import { useTypeFilter } from "../useTypeFilter";
 import ItemCard from "../ItemCard";
+import PreviewModal from "../PreviewModal";
+import Spinner from "../Spinner";
 import TypeFilterPicker from "../TypeFilter";
 
 // Search hits Jellyfin's substring filter and shows results with the
 // active profile's visibility state per item.
 
 export default function Search() {
-    const { profile } = useActiveProfile();
+    const { profile, loading: profileLoading } = useActiveProfile();
     const [typeFilter, setTypeFilter] = useTypeFilter();
     const [params, setParams] = useSearchParams();
     const [query, setQuery] = useState(params.get("q") ?? "");
@@ -19,6 +21,7 @@ export default function Search() {
     const [hasMore, setHasMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
+    const [previewItem, setPreviewItem] = useState<Item | null>(null);
 
     useEffect(() => {
         if (!profile) return;
@@ -77,7 +80,11 @@ export default function Search() {
         return (
             <div className="page">
                 <h1>Search</h1>
-                <p>No profile selected. <Link to="/profiles">Pick or create one</Link>.</p>
+                {profileLoading ? (
+                    <Spinner block size={36} label="Loading profile…" />
+                ) : (
+                    <p>No profile selected. <Link to="/profiles">Pick or create one</Link>.</p>
+                )}
             </div>
         );
     }
@@ -103,7 +110,7 @@ export default function Search() {
             {items === null && query.trim() === "" ? (
                 <p className="muted">Start typing.</p>
             ) : items === null ? (
-                <p className="muted">Searching...</p>
+                <Spinner size={20} label="Searching…" />
             ) : items.length === 0 ? (
                 <p className="muted">No matches.</p>
             ) : (
@@ -118,12 +125,21 @@ export default function Search() {
                                 <ItemCard
                                     item={it}
                                     onStateChange={(s) => setItemState(it.Id, s)}
+                                    onPreview={setPreviewItem}
                                     busy={busy === it.Id}
+                                    expectedLanguage={profile.defaultLanguage}
                                 />
                             </li>
                         ))}
                     </ul>
                 </>
+            )}
+            {previewItem && (
+                <PreviewModal
+                    itemId={previewItem.Id}
+                    itemName={previewItem.Name}
+                    onClose={() => setPreviewItem(null)}
+                />
             )}
         </div>
     );

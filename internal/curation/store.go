@@ -1,7 +1,7 @@
 // Package curation owns Jellybean's per-profile visibility state.
 //
 // Each (item, profile) pair is independently visible, hidden, or unset.
-// A future "Zoe" profile gets her own triage; Ollie's decisions don't
+// A future "Zoe" profile gets her own categorization; Ollie's decisions don't
 // carry over. The kid-stream filter for a given profile shows only items
 // whose state is 'visible' for that profile.
 package curation
@@ -257,10 +257,10 @@ func (s *Store) ProfileMaxSetAt(ctx context.Context, profileID int64) (int64, er
 }
 
 // AllCategorizedIDsForProfile returns every item ID that has ANY state
-// (visible or hidden) for the given profile. The "uncategorized" sweep
+// (visible or hidden) for the given profile. The "uncategorized" bulk
 // view uses this set to skip items the parent has already decided on.
 // Orphan-tombstoned rows are skipped so a re-imported item shows up in
-// sweep again rather than staying hidden behind a stale decision.
+// bulk again rather than staying hidden behind a stale decision.
 func (s *Store) AllCategorizedIDsForProfile(ctx context.Context, profileID int64) (map[string]struct{}, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT jellyfin_item_id FROM categorizations

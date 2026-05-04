@@ -13,7 +13,7 @@ const tabs: { value: TypeFilter; label: string }[] = [
 ];
 
 // Three-way pill selector for "what kind of content am I looking at right
-// now". Used in Sweep, Triage, and Search; defaults to Both.
+// now". Used in Bulk, Swipe, and Search; defaults to Both.
 export default function TypeFilterPicker({ value, onChange, busy }: Props) {
     return (
         <div className="type-filter" role="tablist" aria-label="Content type">

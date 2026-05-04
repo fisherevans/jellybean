@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type Profile } from "../api";
 import ProfileModal from "../ProfileModal";
+import Spinner from "../Spinner";
 
 type Modal =
     | { kind: "closed" }
@@ -53,7 +54,7 @@ export default function Profiles() {
             {error && <div className="error">{error}</div>}
 
             {profiles === null ? (
-                <p className="muted">Loading...</p>
+                <Spinner block size={36} label="Loading profiles…" />
             ) : (
                 <ul className="profile-list">
                     {profiles.map((p) => (
@@ -67,6 +68,14 @@ export default function Profiles() {
                                         {p.kidCount} kid{p.kidCount === 1 ? "" : "s"}
                                         {" · default lang "}
                                         <code>{p.defaultLanguage || "eng"}</code>
+                                    </div>
+                                    <div className="profile-stats">
+                                        <span className="stat stat-visible">
+                                            {p.visibleCount.toLocaleString()} visible
+                                        </span>
+                                        <span className="stat stat-hidden">
+                                            {p.hiddenCount.toLocaleString()} hidden
+                                        </span>
                                     </div>
                                 </div>
                                 <div className="profile-actions">

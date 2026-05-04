@@ -249,7 +249,7 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 }
 
 // pageUnsetForProfile walks Jellyfin's catalog and returns items that have
-// no state row for the given profile. This is the sweep view's data source.
+// no state row for the given profile. This is the bulk view's data source.
 func (s *Server) pageUnsetForProfile(
 	ctx context.Context,
 	itemTypes []string,

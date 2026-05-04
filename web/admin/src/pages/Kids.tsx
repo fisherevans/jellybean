@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type Kid, type Profile } from "../api";
 import KidModal from "../KidModal";
+import Spinner from "../Spinner";
 
 type Modal =
     | { kind: "closed" }
@@ -59,7 +60,7 @@ export default function Kids() {
             {error && <div className="error">{error}</div>}
 
             {kids === null ? (
-                <p className="muted">Loading...</p>
+                <Spinner block size={36} label="Loading kids…" />
             ) : kids.length === 0 ? (
                 <p className="muted">No kids yet. Tap "+ Add kid" above.</p>
             ) : (

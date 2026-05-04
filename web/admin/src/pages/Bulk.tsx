@@ -5,12 +5,13 @@ import { useActiveProfile } from "../activeProfile";
 import { useTypeFilter } from "../useTypeFilter";
 import ItemCard from "../ItemCard";
 import PreviewModal from "../PreviewModal";
+import Spinner from "../Spinner";
 import TypeFilterPicker from "../TypeFilter";
 
-// Sweep loads items that have no state for the active profile and groups
-// them by the AI's suggestion: looks visible / needs review / looks hidden.
-// The user picks visible / hidden / skip per item or in bulk; each profile
-// is triaged independently.
+// Bulk-categorize loads items that have no state for the active profile
+// and groups them by the AI's suggestion: looks visible / needs review /
+// looks hidden. The user picks visible / hidden / skip per item or in
+// bulk; each profile is categorized independently.
 
 type Section = "visible" | "unsure" | "hidden";
 
@@ -36,8 +37,8 @@ type RecentAction = {
     timestamp: number;
 };
 
-export default function Sweep() {
-    const { profile } = useActiveProfile();
+export default function Bulk() {
+    const { profile, loading: profileLoading } = useActiveProfile();
     const [typeFilter, setTypeFilter] = useTypeFilter();
     const [loaded, setLoaded] = useState<Loaded | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -49,6 +50,10 @@ export default function Sweep() {
     const [leaving, setLeaving] = useState<Set<string>>(new Set());
     const [recentAction, setRecentAction] = useState<RecentAction | null>(null);
     const [previewItem, setPreviewItem] = useState<Item | null>(null);
+    // Mobile breakpoint shows one section at a time via a tab strip.
+    // Default to "Needs review" — that's the bucket the parent most wants
+    // to chip away at; the other two are confirm-only.
+    const [mobileTab, setMobileTab] = useState<Section>("unsure");
     const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     async function loadInitial() {
@@ -260,27 +265,35 @@ export default function Sweep() {
     if (!profile) {
         return (
             <div className="page">
-                <h1>Sweep</h1>
-                <p>No profile selected. <Link to="/profiles">Create or pick one</Link>.</p>
+                <h1>Bulk categorize</h1>
+                {profileLoading ? (
+                    <Spinner block size={36} label="Loading profile…" />
+                ) : (
+                    <p>No profile selected. <Link to="/profiles">Create or pick one</Link>.</p>
+                )}
             </div>
         );
     }
     if (!loaded) {
         return (
             <div className="page">
-                <h1>Sweep</h1>
-                {error ? <div className="error">{error}</div> : <p>Loading library...</p>}
+                <h1>Bulk categorize</h1>
+                {error ? (
+                    <div className="error">{error}</div>
+                ) : (
+                    <Spinner block size={48} label="Loading library…" />
+                )}
             </div>
         );
     }
 
     return (
-        <div className="page sweep">
-            <h1>Sweep</h1>
-            <div className="sweep-controls">
+        <div className="page bulk">
+            <h1>Bulk categorize</h1>
+            <div className="bulk-controls">
                 <TypeFilterPicker value={typeFilter} onChange={setTypeFilter} busy={busy} />
                 <span className="muted">
-                    Triaging for <strong>{profile.name}</strong>. Loaded{" "}
+                    Categorizing for <strong>{profile.name}</strong>. Loaded{" "}
                     {loaded.items.length} of {loaded.total} unset items.
                     {loaded.hasMore && (
                         <>
@@ -319,10 +332,28 @@ export default function Sweep() {
                 </button>
             </div>
 
-            <div className="sweep-columns">
+            <div className="bulk-tabs" role="tablist" aria-label="Suggestion bucket">
+                {(["unsure", "visible", "hidden"] as Section[]).map((section) => (
+                    <button
+                        key={section}
+                        role="tab"
+                        type="button"
+                        aria-selected={mobileTab === section}
+                        className={`bulk-tab bulk-tab-${section}${
+                            mobileTab === section ? " active" : ""
+                        }`}
+                        onClick={() => setMobileTab(section)}
+                    >
+                        <span className="bulk-tab-label">{sectionTitles[section]}</span>
+                        <span className="bulk-tab-count">{sections[section].length}</span>
+                    </button>
+                ))}
+            </div>
+
+            <div className="bulk-columns" data-tab={mobileTab}>
                 {(["visible", "unsure", "hidden"] as Section[]).map((section) => (
-                    <div className="sweep-column" key={section}>
-                        <div className="sweep-column-header">
+                    <div className="bulk-column" data-section={section} key={section}>
+                        <div className="bulk-column-header">
                             <h2>{sectionTitles[section]}</h2>
                             <span className="muted">{sections[section].length}</span>
                             {sections[section].length > 0 && (
@@ -342,7 +373,7 @@ export default function Sweep() {
                                 </>
                             )}
                         </div>
-                        <ul className="sweep-list">
+                        <ul className="bulk-list">
                             {sections[section].map((it, i) => (
                                 <li key={it.Id}>
                                     <ItemCard

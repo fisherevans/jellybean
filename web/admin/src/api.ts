@@ -56,6 +56,8 @@ export type Profile = {
     defaultLanguage: string; // ISO 639-3, e.g. "eng"
     createdAt: number;
     kidCount: number;
+    visibleCount: number; // categorizations.state='visible' for this profile (orphans excluded)
+    hiddenCount: number;
 };
 
 export type ProfileInput = {

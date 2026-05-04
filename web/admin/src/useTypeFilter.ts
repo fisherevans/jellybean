@@ -3,7 +3,7 @@ import type { TypeFilter } from "./api";
 
 // useTypeFilter persists the parent's content-type selection in
 // localStorage so it survives reloads and feels consistent across the
-// three pages that surface it (Sweep, Triage, Search). Default is "both".
+// three pages that surface it (Bulk, Swipe, Search). Default is "both".
 
 const STORAGE_KEY = "jellybean.admin.typeFilter";
 

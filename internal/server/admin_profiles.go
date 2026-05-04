@@ -18,6 +18,8 @@ type profileResponse struct {
 	DefaultLanguage string `json:"defaultLanguage"`
 	CreatedAt       int64  `json:"createdAt"`
 	KidCount        int    `json:"kidCount"`
+	VisibleCount    int    `json:"visibleCount"`
+	HiddenCount     int    `json:"hiddenCount"`
 }
 
 func toProfileResponse(p curation.ProfileWithKidCount) profileResponse {
@@ -28,6 +30,8 @@ func toProfileResponse(p curation.ProfileWithKidCount) profileResponse {
 		DefaultLanguage: p.DefaultLanguage,
 		CreatedAt:       p.CreatedAt.Unix(),
 		KidCount:        p.KidCount,
+		VisibleCount:    p.VisibleCount,
+		HiddenCount:     p.HiddenCount,
 	}
 }
 

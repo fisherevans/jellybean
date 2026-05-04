@@ -4,12 +4,13 @@ import { api, type User } from "./api";
 import Layout from "./Layout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
-import Sweep from "./pages/Sweep";
-import Triage from "./pages/Triage";
+import Bulk from "./pages/Bulk";
+import Swipe from "./pages/Swipe";
 import Activity from "./pages/Activity";
 import Search from "./pages/Search";
 import Profiles from "./pages/Profiles";
 import Kids from "./pages/Kids";
+import Spinner from "./Spinner";
 
 type AuthState =
     | { status: "loading" }
@@ -26,7 +27,11 @@ export default function App() {
     }, []);
 
     if (auth.status === "loading") {
-        return <div className="screen-message">Loading...</div>;
+        return (
+            <div className="screen-message">
+                <Spinner block size={48} label="Loading…" />
+            </div>
+        );
     }
 
     return (
@@ -59,8 +64,8 @@ export default function App() {
                             />
                         }
                     />
-                    <Route path="/sweep" element={<Sweep />} />
-                    <Route path="/triage" element={<Triage />} />
+                    <Route path="/bulk" element={<Bulk />} />
+                    <Route path="/swipe" element={<Swipe />} />
                     <Route path="/activity" element={<Activity />} />
                     <Route path="/search" element={<Search />} />
                     <Route path="/profiles" element={<Profiles />} />

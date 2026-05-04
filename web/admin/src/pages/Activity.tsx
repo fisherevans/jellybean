@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, HttpError, formatState, type ActivityEntry, type ItemState } from "../api";
 import { useActiveProfile } from "../activeProfile";
 import StateControl from "../CategoryControl";
+import Spinner from "../Spinner";
 
 // Activity shows recent visibility changes for the active profile (or all
 // profiles if "All" is selected). Each row has a re-categorize control so
@@ -61,7 +62,7 @@ export default function Activity() {
             </p>
             {error && <div className="error">{error}</div>}
             {entries === null ? (
-                <p>Loading...</p>
+                <Spinner block size={36} label="Loading activity…" />
             ) : entries.length === 0 ? (
                 <p className="muted">No activity yet.</p>
             ) : (

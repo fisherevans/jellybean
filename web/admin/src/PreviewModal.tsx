@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import { useActiveProfile } from "./activeProfile";
 
-// PreviewModal is a throwaway viewer used from the sweep / triage cards.
+// PreviewModal is a throwaway viewer used from the bulk / swipe / search cards.
 // Not meant to be a real player - it just streams the item, seeks to ~1/3
 // of the runtime so the parent can confirm "yes, this is the show I think
 // it is" without having to scrub through opening credits.

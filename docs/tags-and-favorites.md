@@ -132,7 +132,7 @@ step, not a default behavior.
 
 - Tag list page: search, sort by name / count / recency, create / rename / delete.
 - Tag detail page: list assigned items, add via a search-filtered picker that defaults to visible-only items.
-- Per-tile kebab menu (universal across sweep / triage / library / search): popover with checkboxes for all tags. Toggling persists immediately.
+- Per-tile kebab menu (universal across bulk / swipe / library / search): popover with checkboxes for all tags. Toggling persists immediately.
 - Per-kid favorites editor in the kid management view: list current favorites, add via the same search-filtered picker (filtered to items visible *to that kid's profile*).
 - Per-profile tag filter editor in the profile management view: per-tag radio of `none | always show | always hide`.
 

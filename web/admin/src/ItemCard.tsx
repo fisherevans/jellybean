@@ -1,5 +1,6 @@
 import { type Item, type ItemState, formatState } from "./api";
 import StateControl from "./CategoryControl";
+import { isUnknownLang, langName } from "./lang";
 
 type Props = {
     item: Item;
@@ -119,14 +120,20 @@ export default function ItemCard({
                             {meta.join(" · ")}
                             {lang && (
                                 <span
-                                    className={`lang-badge ${langMismatch ? "lang-badge-mismatch" : ""}`}
+                                    className={`lang-badge ${
+                                        langMismatch
+                                            ? "lang-badge-mismatch"
+                                            : isUnknownLang(lang)
+                                            ? "lang-badge-unknown"
+                                            : ""
+                                    }`}
                                     title={
                                         langMismatch
-                                            ? `Audio: ${lang}; profile default is ${expected}`
-                                            : `Audio: ${lang}`
+                                            ? `Audio: ${langName(lang)}; profile default is ${langName(expected)}`
+                                            : `Audio: ${langName(lang)}`
                                     }
                                 >
-                                    {lang}
+                                    {langName(lang)}
                                 </span>
                             )}
                         </div>
