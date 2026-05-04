@@ -110,10 +110,41 @@ export function clearSession(): void {
 export function getDeviceId(): string {
     let id = localStorage.getItem(DEVICE_ID_KEY);
     if (!id) {
-        id = crypto.randomUUID();
+        id = generateUUIDv4();
         localStorage.setItem(DEVICE_ID_KEY, id);
     }
     return id;
+}
+
+// generateUUIDv4 produces an RFC 4122 v4 UUID. Prefers crypto.randomUUID()
+// when available, but that API is only exposed in secure contexts (HTTPS
+// or localhost). On a sideloaded TV WebView loading the dev server over
+// plain HTTP from a LAN IP, randomUUID throws. crypto.getRandomValues is
+// always available and gives us the same entropy.
+function generateUUIDv4(): string {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        try {
+            return crypto.randomUUID();
+        } catch {
+            // fall through to the manual path below
+        }
+    }
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    // Per RFC 4122 §4.4: set the version (4) and variant (10xx) bits.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex: string[] = [];
+    for (let i = 0; i < bytes.length; i++) {
+        hex.push(bytes[i]!.toString(16).padStart(2, "0"));
+    }
+    return (
+        hex.slice(0, 4).join("") + "-" +
+        hex.slice(4, 6).join("") + "-" +
+        hex.slice(6, 8).join("") + "-" +
+        hex.slice(8, 10).join("") + "-" +
+        hex.slice(10, 16).join("")
+    );
 }
 
 export async function probeAdmin(): Promise<AdminUser | null> {
