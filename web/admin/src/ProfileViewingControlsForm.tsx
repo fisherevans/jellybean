@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type ProfileViewingControls } from "./api";
-import SnapSlider from "./SnapSlider";
-import ToggleSwitch from "./ToggleSwitch";
-import ViewingPreview from "./ViewingPreview";
 
-// Per-profile viewing controls: dim, red-shift, clock-based auto-off.
-// Effective values are baseline + per-kid overrides resolved at read
-// time. Per-kid overrides are set from the override modal on the TV.
+// Per-profile viewing controls is now just the bedtime hard cutoff.
+// Dim + warm tint moved onto modes (configure them inside a bedtime
+// or focus mode); the "auto-off at zero minutes" toggle was dropped
+// (the rolling-bucket lockout overlay always shows when M10's
+// daily budget hits zero — no opt-in switch).
 
 type Props = {
     profileId: number;
@@ -50,7 +49,14 @@ export default function ProfileViewingControlsForm({ profileId }: Props) {
         setSaving(true);
         setError(null);
         try {
-            await api.setProfileViewingControls(profileId, cfg);
+            // Force dim + warm to zero from the profile UI; modes own
+            // them now. The fields are still on the wire because the
+            // resolver hasn't been migrated yet.
+            await api.setProfileViewingControls(profileId, {
+                ...cfg,
+                dimPercent: 0,
+                redShiftPercent: 0,
+            });
             setSaved(true);
         } catch (err) {
             setError(err instanceof HttpError ? err.message : String(err));
@@ -62,52 +68,13 @@ export default function ProfileViewingControlsForm({ profileId }: Props) {
     return (
         <div className="settings-form">
             <p className="muted">
-                Baseline screen effects applied to the kid client.
-                Override values (with TTL) can be granted from the
-                adult-override gesture on the TV.
+                Hard bedtime cutoff for the kid client. Dim + warm tint
+                aren't here — they're configured per mode (e.g. a
+                "Bedtime" mode that applies a warm tint when active).
             </p>
 
-            <ViewingPreview
-                dimPercent={cfg.dimPercent}
-                redShiftPercent={cfg.redShiftPercent}
-            />
-
-            <SnapSlider
-                label="Dim (darker, 0-80%)"
-                value={cfg.dimPercent}
-                min={0}
-                max={80}
-                step={5}
-                suffix="%"
-                snaps={[
-                    { value: 0, label: "Off" },
-                    { value: 15, label: "15%" },
-                    { value: 30, label: "30%" },
-                    { value: 50, label: "50%" },
-                    { value: 80, label: "80%" },
-                ]}
-                onChange={(v) => set("dimPercent", v)}
-            />
-
-            <SnapSlider
-                label="Warm tint (cooler ↔ warmer)"
-                value={cfg.redShiftPercent}
-                min={0}
-                max={100}
-                step={5}
-                suffix="%"
-                snaps={[
-                    { value: 0, label: "Off" },
-                    { value: 25, label: "25%" },
-                    { value: 50, label: "50%" },
-                    { value: 75, label: "75%" },
-                    { value: 100, label: "Max" },
-                ]}
-                onChange={(v) => set("redShiftPercent", v)}
-            />
-
             <label>
-                Auto-off at clock time
+                Auto-disable streaming after
                 <input
                     type="time"
                     value={cfg.autoOffClockTime ?? ""}
@@ -116,19 +83,12 @@ export default function ProfileViewingControlsForm({ profileId }: Props) {
                     }
                 />
                 <span className="help">
-                    Locks the kid client out at this time each day.
-                    Leave blank to disable.
+                    Locks the kid client out with the bedtime overlay
+                    starting at this clock time each day. Leave blank to
+                    disable. An adult override can clear it for the
+                    night.
                 </span>
             </label>
-
-            <ToggleSwitch
-                label="Auto-off at zero minutes"
-                description="When the kid's daily time limit hits zero, skip the locked-tile screen and go straight to the lockout overlay."
-                checked={cfg.autoOffOnTimeLimit}
-                onChange={(v) => set("autoOffOnTimeLimit", v)}
-                onLabel="Enabled"
-                offLabel="Disabled"
-            />
 
             {error && <p className="error">{error}</p>}
             {saved && !error && <p className="muted">Saved.</p>}

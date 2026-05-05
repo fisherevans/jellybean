@@ -16,12 +16,11 @@ import (
 )
 
 type ProfileViewingControls struct {
-	ProfileID          int64     `json:"profileId"`
-	DimPercent         int       `json:"dimPercent"`
-	RedShiftPercent    int       `json:"redShiftPercent"`
-	AutoOffClockTime   string    `json:"autoOffClockTime,omitempty"` // "HH:MM" 24h
-	AutoOffOnTimeLimit bool      `json:"autoOffOnTimeLimit"`
-	UpdatedAt          time.Time `json:"updatedAt"`
+	ProfileID        int64     `json:"profileId"`
+	DimPercent       int       `json:"dimPercent"`
+	RedShiftPercent  int       `json:"redShiftPercent"`
+	AutoOffClockTime string    `json:"autoOffClockTime,omitempty"` // "HH:MM" 24h
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 type ViewingState struct {
@@ -37,22 +36,20 @@ type ViewingState struct {
 func (s *Store) GetProfileViewingControls(ctx context.Context, profileID int64) (*ProfileViewingControls, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT profile_id, dim_percent, red_shift_percent,
-		       COALESCE(auto_off_clock_time, ''), auto_off_on_time_limit, updated_at
+		       COALESCE(auto_off_clock_time, ''), updated_at
 		FROM profile_viewing_controls WHERE profile_id = ?`, profileID)
 	var (
-		out      ProfileViewingControls
-		onLimit  int
-		updated  int64
+		out     ProfileViewingControls
+		updated int64
 	)
 	err := row.Scan(&out.ProfileID, &out.DimPercent, &out.RedShiftPercent,
-		&out.AutoOffClockTime, &onLimit, &updated)
+		&out.AutoOffClockTime, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return &ProfileViewingControls{ProfileID: profileID}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	out.AutoOffOnTimeLimit = onLimit != 0
 	out.UpdatedAt = time.Unix(updated, 0).UTC()
 	return &out, nil
 }
@@ -72,23 +69,18 @@ func (s *Store) UpsertProfileViewingControls(ctx context.Context, p ProfileViewi
 			return fmt.Errorf("auto_off_clock_time %q must be HH:MM 24h", p.AutoOffClockTime)
 		}
 	}
-	onLimit := 0
-	if p.AutoOffOnTimeLimit {
-		onLimit = 1
-	}
 	clock := nullableString(p.AutoOffClockTime)
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO profile_viewing_controls
 		    (profile_id, dim_percent, red_shift_percent, auto_off_clock_time,
-		     auto_off_on_time_limit, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		     updated_at)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(profile_id) DO UPDATE SET
 		    dim_percent = excluded.dim_percent,
 		    red_shift_percent = excluded.red_shift_percent,
 		    auto_off_clock_time = excluded.auto_off_clock_time,
-		    auto_off_on_time_limit = excluded.auto_off_on_time_limit,
 		    updated_at = excluded.updated_at`,
-		p.ProfileID, p.DimPercent, p.RedShiftPercent, clock, onLimit, time.Now().Unix())
+		p.ProfileID, p.DimPercent, p.RedShiftPercent, clock, time.Now().Unix())
 	return err
 }
 

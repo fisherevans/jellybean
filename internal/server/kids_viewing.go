@@ -127,21 +127,19 @@ func (s *Server) handleAdminUpdateProfileViewingControls(w http.ResponseWriter, 
 		return
 	}
 	var body struct {
-		DimPercent         int    `json:"dimPercent"`
-		RedShiftPercent    int    `json:"redShiftPercent"`
-		AutoOffClockTime   string `json:"autoOffClockTime"`
-		AutoOffOnTimeLimit bool   `json:"autoOffOnTimeLimit"`
+		DimPercent       int    `json:"dimPercent"`
+		RedShiftPercent  int    `json:"redShiftPercent"`
+		AutoOffClockTime string `json:"autoOffClockTime"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
 	in := curation.ProfileViewingControls{
-		ProfileID:          id,
-		DimPercent:         body.DimPercent,
-		RedShiftPercent:    body.RedShiftPercent,
-		AutoOffClockTime:   body.AutoOffClockTime,
-		AutoOffOnTimeLimit: body.AutoOffOnTimeLimit,
+		ProfileID:        id,
+		DimPercent:       body.DimPercent,
+		RedShiftPercent:  body.RedShiftPercent,
+		AutoOffClockTime: body.AutoOffClockTime,
 	}
 	if err := s.curation.UpsertProfileViewingControls(r.Context(), in); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

@@ -244,10 +244,13 @@ export type ProfileBodyBreaks = {
 
 export type ProfileViewingControls = {
     profileId: number;
+    /** Kept on the wire for backwards compatibility with the
+     *  resolver but no longer surfaced in the profile UI - dim
+     *  + warm tint live on modes now. Always 0 from the admin. */
     dimPercent: number;
+    /** See dimPercent. */
     redShiftPercent: number;
     autoOffClockTime?: string;
-    autoOffOnTimeLimit: boolean;
     updatedAt?: string;
 };
 

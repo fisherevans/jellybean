@@ -485,11 +485,57 @@ test("browse: Load more appends another page", async ({ page }) => {
     expect(after).toBeGreaterThan(before);
 });
 
-test("warm tint sweep: 0/50/100 produce visibly different output", async ({ page }) => {
+test("modes editor opens as a modal with dim/warm sliders", async ({ page }) => {
+    await page.goto("/manage/profiles");
+    await page.locator(".profile-card-link").first().click();
+    await page.getByRole("tab", { name: "Modes" }).click();
+    await page.waitForSelector(".settings-form");
+    await page.getByRole("button", { name: /Add mode/ }).click();
+    const modal = page.locator(".mode-editor-modal");
+    await expect(modal).toBeVisible();
+    // The mode editor lives in a modal, not a sub-nav. The Modes
+    // tab should still be on the page and the modal closes via Esc
+    // or backdrop click.
+    await expect(modal.getByRole("button", { name: /^Cancel$/ })).toBeVisible();
+    // Dim + Warm tint sliders are inside the modal (moved from the
+    // Viewing tab).
+    await expect(modal.locator(".snap-slider")).toHaveCount(2, {
+        // tolerate slow render
+        timeout: 5_000,
+    }).catch(async () => {
+        const count = await modal.locator(".snap-slider").count();
+        expect(count).toBeGreaterThanOrEqual(2);
+    });
+    // Esc closes the modal.
+    await page.keyboard.press("Escape");
+    await expect(modal).toHaveCount(0);
+});
+
+test("viewing tab: only auto-off remains; no dim/warm/auto-off-zero", async ({ page }) => {
     await page.goto("/manage/profiles");
     await page.locator(".profile-card-link").first().click();
     await page.getByRole("tab", { name: "Viewing" }).click();
-    await page.waitForSelector(".viewing-preview-bezel");
+    await page.waitForSelector(".settings-form");
+    // Dim + warm sliders moved out.
+    expect(await page.locator(".snap-slider").count()).toBe(0);
+    // Toggle "Auto-off at zero minutes" gone.
+    expect(
+        await page.getByText(/Auto-off at zero/).count(),
+    ).toBe(0);
+    // The clock-time input is still here.
+    await expect(
+        page.locator("input[type=time]").first(),
+    ).toBeVisible();
+});
+
+test("warm tint sweep: 0/50/100 produce visibly different output", async ({ page }) => {
+    // Dim + warm now live inside the mode editor. Open it.
+    await page.goto("/manage/profiles");
+    await page.locator(".profile-card-link").first().click();
+    await page.getByRole("tab", { name: "Modes" }).click();
+    await page.waitForSelector(".settings-form");
+    await page.getByRole("button", { name: /Add mode/ }).click();
+    await page.waitForSelector(".mode-editor-modal .viewing-preview-bezel");
     await setSlider(page, /Dim/, 0);
 
     for (const pct of [0, 50, 100]) {
@@ -522,8 +568,10 @@ test("warm tint sweep: 0/50/100 produce visibly different output", async ({ page
 test("viewing preview backdrop fits inside the bezel", async ({ page }) => {
     await page.goto("/manage/profiles");
     await page.locator(".profile-card-link").first().click();
-    await page.getByRole("tab", { name: "Viewing" }).click();
-    await page.waitForSelector(".viewing-preview-bezel");
+    await page.getByRole("tab", { name: "Modes" }).click();
+    await page.waitForSelector(".settings-form");
+    await page.getByRole("button", { name: /Add mode/ }).click();
+    await page.waitForSelector(".mode-editor-modal .viewing-preview-bezel");
     const bezel = page.locator(".viewing-preview-bezel").first();
     const img = page.locator(".viewing-preview-img").first();
     const b = await bezel.boundingBox();
@@ -546,8 +594,10 @@ test("viewing preview backdrop fits inside the bezel", async ({ page }) => {
 test("warm tint filter expression matches kid SPA target", async ({ page }) => {
     await page.goto("/manage/profiles");
     await page.locator(".profile-card-link").first().click();
-    await page.getByRole("tab", { name: "Viewing" }).click();
-    await page.waitForSelector(".viewing-preview-bezel");
+    await page.getByRole("tab", { name: "Modes" }).click();
+    await page.waitForSelector(".settings-form");
+    await page.getByRole("button", { name: /Add mode/ }).click();
+    await page.waitForSelector(".mode-editor-modal .viewing-preview-bezel");
     await setSlider(page, /Warm tint|Red shift/, 100);
     await page.waitForTimeout(150);
     const filter = await page
