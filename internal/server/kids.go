@@ -41,6 +41,7 @@ type kidsContext struct {
 	JellyfinUserID string
 	JellyfinToken  string // bearer token from the TV; empty on admin path
 	ProfileID      int64
+	KidID          int64  // jellybean kid row id; 0 on admin path
 	Source         string // "admin" or "kid"
 	Label          string
 }
@@ -76,6 +77,7 @@ func (s *Server) resolveKidsAuth(r *http.Request) *kidsContext {
 		JellyfinUserID: kid.JellyfinUserID,
 		JellyfinToken:  token,
 		ProfileID:      kid.ProfileID,
+		KidID:          kid.ID,
 		Source:         "kid",
 		Label:          kid.Name,
 	}
@@ -471,6 +473,7 @@ func itemIDs(items []jellyfin.Item) []string {
 
 type playbackPayload struct {
 	ItemID           string `json:"itemId"`
+	SeriesID         string `json:"seriesId,omitempty"`
 	MediaSourceID    string `json:"mediaSourceId,omitempty"`
 	PlaySessionID    string `json:"playSessionId,omitempty"`
 	PositionTicks    int64  `json:"positionTicks"`
@@ -538,6 +541,13 @@ func (s *Server) handleKidsPlaybackProgress(w http.ResponseWriter, r *http.Reque
 	})
 	if err != nil {
 		s.logger.Warn().Err(err).Str("kid", kc.Label).Str("item", p.ItemID).Msg("playback progress report")
+	}
+	// M10: side-effect to maintain kid_watch_segments. Only kid path
+	// (admin preview has no kid id and no time tracking).
+	if kc.KidID > 0 {
+		if rerr := s.curation.RecordPlaybackProgress(ctx, kc.KidID, kc.ProfileID, p.ItemID, p.SeriesID, p.IsPaused, time.Now().UTC()); rerr != nil {
+			s.logger.Warn().Err(rerr).Int64("kid", kc.KidID).Str("item", p.ItemID).Msg("watch segment record")
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
