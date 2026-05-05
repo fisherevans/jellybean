@@ -80,6 +80,30 @@ func (c *Client) ReportPlaybackProgress(ctx context.Context, userToken string, i
 	return c.postPlayback(ctx, "/Sessions/Playing/Progress", userToken, info)
 }
 
+// SetPlayedState marks a single item as played or unplayed for the
+// authenticated user. Used by the M9 override "Mark Watched /
+// Unwatched" actions. Empty userToken / userID short-circuits to a
+// no-op (returns nil) to keep the override path uniform with the
+// progress reporters.
+func (c *Client) SetPlayedState(ctx context.Context, userToken, userID, itemID string, played bool) error {
+	if userToken == "" || userID == "" || itemID == "" {
+		return nil
+	}
+	method := http.MethodPost
+	if !played {
+		method = http.MethodDelete
+	}
+	path := "/Users/" + userID + "/PlayedItems/" + itemID
+	req, err := c.newRequestWithToken(ctx, method, path, nil, userToken)
+	if err != nil {
+		return err
+	}
+	if err := c.do(req, nil); err != nil {
+		return fmt.Errorf("set played state: %w", err)
+	}
+	return nil
+}
+
 // ReportPlaybackStopped fires when the player closes / video ends. Carries
 // the final position so Jellyfin's resume tracking sees a clean end state.
 func (c *Client) ReportPlaybackStopped(ctx context.Context, userToken string, info PlaybackStopInfo) error {

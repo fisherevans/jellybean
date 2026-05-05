@@ -21,6 +21,7 @@ const links: NavItem[] = [
     { to: "/profiles", label: "Profiles" },
     { to: "/manage-kids", label: "Kids" },
     { to: "/api-keys", label: "API keys" },
+    { to: "/settings", label: "Settings" },
 ];
 
 // Routes that operate on a single active profile. The profile picker is

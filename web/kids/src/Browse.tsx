@@ -6,6 +6,7 @@ import {
     type Session,
 } from "./auth";
 import TabPill from "./TabPill";
+import OverrideModal, { useLongPressUp } from "./OverrideModal";
 
 // Browse is the kid home (M8 #48). Renders a vertical stack of
 // horizontally-scrolling rows from /api/kids/browse. Each row's
@@ -54,6 +55,26 @@ export default function Browse() {
     const [error, setError] = useState<string | null>(null);
     const [focus, setFocus] = useState<Focus>({ kind: "tile", row: 0, col: 0 });
     const tileRefs = useRef<Record<string, HTMLElement | null>>({});
+    const [override, setOverride] = useState<
+        { itemId: string; itemName: string } | null
+    >(null);
+
+    // Long-press UP on a focused tile opens the override modal. The
+    // hook is gated on having a focused tile + an active session
+    // (admin preview can't override - server returns 403 anyway, no
+    // need to surface the modal).
+    const focusedItem =
+        focus.kind === "tile" && data
+            ? data.rows[focus.row]?.items[focus.col]
+            : undefined;
+    useLongPressUp(
+        () => {
+            if (!focusedItem || !session) return;
+            setOverride({ itemId: focusedItem.Id, itemName: focusedItem.Name });
+        },
+        focus.kind === "tile" && !!session && override === null,
+        600,
+    );
 
     // Auth gate (mirrors Library's behavior). Without a session and
     // without an admin ?profileId, kick to /login.
@@ -249,6 +270,13 @@ export default function Browse() {
                     </div>
                 </section>
             ))}
+            {override && (
+                <OverrideModal
+                    itemId={override.itemId}
+                    itemName={override.itemName}
+                    onClose={() => setOverride(null)}
+                />
+            )}
         </div>
     );
 }

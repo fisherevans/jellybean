@@ -138,6 +138,11 @@ func (s *Server) routes() {
 	admin.HandleFunc("/api-keys/{id}/revoke", s.handleAdminRevokeAPIKey).Methods(http.MethodPost)
 	admin.HandleFunc("/api-keys/{id}/log", s.handleAdminListAccessLog).Methods(http.MethodGet)
 	admin.HandleFunc("/api-access-log", s.handleAdminListAccessLog).Methods(http.MethodGet)
+	admin.HandleFunc("/override", s.handleAdminOverrideStatus).Methods(http.MethodGet)
+	admin.HandleFunc("/override/pin", s.handleAdminSetOverridePIN).Methods(http.MethodPost)
+	admin.HandleFunc("/override/clear-lockout", s.handleAdminClearOverrideLockout).Methods(http.MethodPost)
+	admin.HandleFunc("/settings", s.handleAdminListSettings).Methods(http.MethodGet)
+	admin.HandleFunc("/settings", s.handleAdminSetSetting).Methods(http.MethodPut)
 
 	// Kids API. /auth/login is unauthenticated (it IS the auth flow); the
 	// rest accept either an admin session cookie (parent previewing) or
@@ -155,6 +160,15 @@ func (s *Server) routes() {
 	kids.HandleFunc("/playback/progress", s.handleKidsPlaybackProgress).Methods(http.MethodPost)
 	kids.HandleFunc("/playback/stopped", s.handleKidsPlaybackStopped).Methods(http.MethodPost)
 	kids.HandleFunc("/playback/stop-encoding", s.handleKidsStopEncoding).Methods(http.MethodPost)
+	kids.HandleFunc("/override/verify-pin", s.handleKidsOverrideVerifyPIN).Methods(http.MethodPost)
+	kids.HandleFunc("/override/refresh", s.handleKidsOverrideRefresh).Methods(http.MethodPost)
+	kids.HandleFunc("/override/end", s.handleKidsOverrideEnd).Methods(http.MethodPost)
+	kids.HandleFunc("/override/items/{id}/favorite", s.handleKidsOverrideFavorite).Methods(http.MethodPost)
+	kids.HandleFunc("/override/items/{id}/tags", s.handleKidsOverrideTagsList).Methods(http.MethodGet)
+	kids.HandleFunc("/override/items/{id}/tags", s.handleKidsOverrideTags).Methods(http.MethodPut)
+	kids.HandleFunc("/override/items/{id}/hide", s.handleKidsOverrideHide).Methods(http.MethodPost)
+	kids.HandleFunc("/override/items/{id}/mark/{state}", s.handleKidsOverrideMarkPlayed).Methods(http.MethodPost)
+	kids.HandleFunc("/override/items/{id}/qr", s.handleKidsOverrideQR).Methods(http.MethodGet)
 
 	// Static SPAs. Order matters: /kids prefix wins over /, so the more
 	// specific one is registered first.

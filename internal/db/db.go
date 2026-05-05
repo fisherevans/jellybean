@@ -28,6 +28,16 @@ func Open(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	// Each ":memory:" sqlite connection is a separate in-memory
+	// database under modernc.org/sqlite. Capping the pool to 1
+	// connection keeps test runs deterministic - otherwise an
+	// async goroutine that opens a second connection sees an
+	// empty schema. File-path databases keep the default pool
+	// behavior; SQLite's WAL mode handles concurrent reads + a
+	// single writer just fine for our load.
+	if path == ":memory:" {
+		conn.SetMaxOpenConns(1)
+	}
 	if err := conn.Ping(); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("ping sqlite: %w", err)

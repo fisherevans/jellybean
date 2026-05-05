@@ -115,7 +115,7 @@ Current milestone: **M5: TV deployment**.
   and future tunables. 7 issues defined; design in
   `docs/browse-and-layouts.md` (to be written as part of the
   milestone).
-- **M9: Adult override mode** (defined, not started) - a long-press
+- **M9: Adult override mode** (server + admin UI complete; kid-side gesture shipped, hardware verification deferred) - a long-press
   UP gesture on a focused content item triggers a PIN-gated modal
   that exposes per-item edit actions (favorite, tags, hide, mark
   watched/unwatched, QR code to deep-link admin). 60s sliding TTL

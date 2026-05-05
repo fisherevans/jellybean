@@ -61,7 +61,7 @@ func TestAdminAPIKeyCRUDFlow(t *testing.T) {
 	rec = authedRequest(t, srv, store, http.MethodPost,
 		"/api/admin/api-keys/"+strconv.FormatInt(created.Key.ID, 10)+"/revoke", nil)
 	if rec.Code != http.StatusNoContent {
-		t.Fatalf("revoke -> %d", rec.Code)
+		t.Fatalf("revoke -> %d body %s", rec.Code, rec.Body.String())
 	}
 
 	// Bearer no longer works.

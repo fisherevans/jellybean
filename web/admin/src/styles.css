@@ -2124,3 +2124,69 @@ button:disabled {
 .apikey-log-scope {
     font-weight: 400;
 }
+
+/* M9 Settings page. */
+.settings-form {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
+}
+.settings-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+    min-width: 200px;
+}
+.settings-form input {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.45rem 0.6rem;
+    font-size: 0.95rem;
+    font-family: inherit;
+}
+.settings-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-self: flex-end;
+}
+.settings-notice {
+    color: var(--success);
+    font-size: 0.9rem;
+    background: rgba(6, 214, 160, 0.1);
+    border: 1px solid var(--success);
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    margin-bottom: 0.75rem;
+}
+
+/* Manage-item deep-link page. */
+.manage-item-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+.manage-item-tags {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.3rem 0.6rem;
+}
+.manage-item-tags label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.95rem;
+}
+.manage-item-tags input[type="checkbox"] {
+    accent-color: var(--accent);
+    transform: scale(1.2);
+}

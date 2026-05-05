@@ -515,6 +515,26 @@ export const api = {
             "GET",
             `/api/admin/api-access-log?limit=${limit}`,
         ),
+
+    // --- M9: override + app settings -------------------------------
+    getOverrideStatus: () =>
+        request<{
+            pinSet: boolean;
+            failedAttempts: number;
+            lockedForSeconds: number;
+            updatedAt: number;
+        }>("GET", `/api/admin/override`),
+    setOverridePIN: (pin: string) =>
+        request<void>("POST", `/api/admin/override/pin`, { pin }),
+    clearOverrideLockout: () =>
+        request<void>("POST", `/api/admin/override/clear-lockout`),
+    listSettings: () =>
+        request<{ settings: Record<string, string> }>(
+            "GET",
+            `/api/admin/settings`,
+        ),
+    setSetting: (key: string, value: string) =>
+        request<void>("PUT", `/api/admin/settings`, { key, value }),
 };
 
 export { HttpError };
