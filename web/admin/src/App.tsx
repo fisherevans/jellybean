@@ -20,6 +20,7 @@ import LayoutDetail from "./pages/LayoutDetail";
 import APIKeys from "./pages/APIKeys";
 import Settings from "./pages/Settings";
 import ManageItem from "./pages/ManageItem";
+import NotFound from "./pages/NotFound";
 import Spinner from "./Spinner";
 
 type AuthState =
@@ -100,6 +101,9 @@ export default function App() {
                         <Route path="/api-keys" element={<APIKeys />} />
                         <Route path="/settings" element={<Settings />} />
                     </Route>
+                    {/* Catch-all 404 inside the authed layout so users
+                        keep the top nav + sign-out affordance. */}
+                    <Route path="*" element={<NotFound />} />
                 </Route>
             ) : (
                 <Route path="*" element={<RedirectToLogin />} />

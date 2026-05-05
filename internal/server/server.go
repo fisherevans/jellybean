@@ -231,7 +231,116 @@ func (s *Server) routes() {
 			s.logger.Warn().Err(err).Msg("admin SPA disabled")
 		}
 	}
+
+	// Catch-all 404: anything not matched by the routes above gets
+	// either a JSON 404 (for /api/*) or a styled HTML page (otherwise).
+	// The styled page links into /manage so the user can navigate
+	// back without typing.
+	s.router.NotFoundHandler = http.HandlerFunc(s.handleNotFound)
 }
+
+func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write([]byte(notFoundHTML))
+}
+
+// Self-contained 404 page. Inline CSS so it works even when the
+// admin SPA bundle is broken / unbuilt - this is a last-resort
+// surface and shouldn't depend on anything but the standard library.
+const notFoundHTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>404 - Jellybean</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #0c0d12;
+      color: #e8e8ea;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+    main {
+      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1.5rem;
+      text-align: center;
+    }
+    .code {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      color: #8084ff;
+      font-size: 5rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.4rem;
+    }
+    h1 {
+      margin: 0 0 0.6rem;
+      font-size: 1.6rem;
+      font-weight: 600;
+    }
+    p {
+      margin: 0 0 1.5rem;
+      color: #98989f;
+      max-width: 32rem;
+      line-height: 1.5;
+    }
+    .links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      justify-content: center;
+    }
+    a {
+      display: inline-block;
+      padding: 0.55rem 1rem;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #e8e8ea;
+      text-decoration: none;
+      font-size: 0.95rem;
+      transition: background 0.1s, border-color 0.1s;
+    }
+    a:hover {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+    a.primary {
+      background: #8084ff;
+      color: #111;
+      border-color: #8084ff;
+      font-weight: 600;
+    }
+    a.primary:hover { filter: brightness(1.08); background: #8084ff; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="code">404</div>
+    <h1>Page not found</h1>
+    <p>The page you're looking for doesn't exist on this Jellybean instance. It may have moved or the link could be stale.</p>
+    <div class="links">
+      <a href="/manage" class="primary">Open admin</a>
+      <a href="/player">Player</a>
+    </div>
+  </main>
+</body>
+</html>
+`
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{

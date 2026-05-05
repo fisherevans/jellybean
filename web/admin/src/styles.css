@@ -3307,3 +3307,70 @@ textarea:focus {
 .settings-content > .page {
     padding: 0;
 }
+
+/* In-app 404 catch-all (rendered inside the regular admin Layout
+   shell, not the standalone server-side 404). Centered column with
+   nav back home. */
+.not-found {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 4rem 1.5rem;
+    min-height: 60vh;
+}
+.not-found-code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    color: var(--accent);
+    font-size: 4.5rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.4rem;
+}
+.not-found h1 {
+    margin: 0 0 0.4rem;
+    font-size: 1.5rem;
+}
+.not-found p {
+    margin: 0 0 1.5rem;
+    color: var(--muted);
+    max-width: 32rem;
+    line-height: 1.55;
+}
+.not-found code {
+    background: rgba(255, 255, 255, 0.06);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.95em;
+}
+.not-found-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: center;
+}
+.not-found-links a {
+    display: inline-block;
+    padding: 0.55rem 1rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    text-decoration: none;
+    font-size: 0.95rem;
+    color: var(--fg);
+}
+.not-found-links a:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+.not-found-links a.primary-link {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+    font-weight: 600;
+}
+.not-found-links a.muted-link {
+    color: var(--muted);
+}
+.not-found-links a.muted-link:hover {
+    color: var(--fg);
+}
