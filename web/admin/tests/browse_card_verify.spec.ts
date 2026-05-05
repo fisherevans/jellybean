@@ -461,6 +461,30 @@ async function setSlider(page, hasText: RegExp, value: number) {
     }, value);
 }
 
+test("browse: Load more appends another page", async ({ page }) => {
+    await page.goto("/manage/browse");
+    await page.waitForSelector(".browse-item", { timeout: 15_000 });
+    const before = await page.locator(".browse-item").count();
+    const button = page.locator(".browse-load-more button");
+    if ((await button.count()) === 0) {
+        // Fewer than PAGE_SIZE items; nothing to test.
+        return;
+    }
+    await expect(button).toBeVisible();
+    await button.click();
+    await expect(button).toContainText(/Loading|Load more/);
+    // Wait for either the count to grow OR the button to disappear.
+    await page.waitForFunction(
+        (initial) =>
+            document.querySelectorAll(".browse-item").length > initial ||
+            document.querySelector(".browse-load-more") === null,
+        before,
+        { timeout: 10_000 },
+    );
+    const after = await page.locator(".browse-item").count();
+    expect(after).toBeGreaterThan(before);
+});
+
 test("warm tint sweep: 0/50/100 produce visibly different output", async ({ page }) => {
     await page.goto("/manage/profiles");
     await page.locator(".profile-card-link").first().click();

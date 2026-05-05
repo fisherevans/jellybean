@@ -31,6 +31,12 @@ export default function Browse() {
     const navigate = useNavigate();
     const [items, setItems] = useState<Item[]>([]);
     const [total, setTotal] = useState(0);
+    // Server cursor for the next page. The single-tag/no-tag path
+    // uses the server's NextStartIndex; the multi-tag fan-out path
+    // increments by PAGE_SIZE per tag.
+    const [nextStart, setNextStart] = useState(0);
+    const [hasMore, setHasMore] = useState(false);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [tags, setTags] = useState<Tag[]>([]);
     const [stateFilter, setStateFilter] = useState<StateFilter>("visible");
     const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
@@ -60,19 +66,16 @@ export default function Browse() {
         api.listTags({ sort: "name" }).then((res) => setTags(res.tags));
     }, []);
 
-    const refresh = useCallback(async () => {
-        if (!profile) return;
-        setLoading(true);
-        setError(null);
-        try {
+    // fetchPage does the actual server call, reusable for both the
+    // initial load and the Load-more append path. Returns the page
+    // payload; year-range/sort post-processing is the caller's job.
+    const fetchPage = useCallback(
+        async (startIndex: number) => {
+            if (!profile) return null;
             const stateParam: ItemState | "all" =
                 stateFilter === "all" ? "all" : (stateFilter as ItemState);
             const typeParam =
                 typeFilter === "all" ? "Movie,Series" : typeFilter;
-            // The server tagId filter only takes one value. With
-            // multiple tags selected we issue one request per tag and
-            // intersect the results client-side - works for the
-            // typical 2-3 tag combinations and avoids a server change.
             const tagIds = [...activeTagIds];
             const baseParams = {
                 profileId: profile.id,
@@ -81,21 +84,26 @@ export default function Browse() {
                         ? undefined
                         : (stateParam as Exclude<ItemState, null>),
                 limit: PAGE_SIZE,
+                startIndex,
                 type: typeParam,
                 search: searchDebounced || undefined,
             } as const;
-            let baseItems: Item[];
-            let baseTotal: number;
+            let pageItems: Item[];
+            let pageTotal: number;
+            let pageNext: number;
+            let pageHasMore: boolean;
             if (tagIds.length === 0) {
                 const res = await api.listItems(baseParams);
-                baseItems = res.Items ?? [];
-                baseTotal = res.TotalRecordCount ?? 0;
+                pageItems = res.Items ?? [];
+                pageTotal = res.TotalRecordCount ?? 0;
+                pageNext = res.NextStartIndex ?? startIndex + pageItems.length;
+                pageHasMore = res.HasMore ?? false;
             } else {
-                // Multi-tag is OR (union). The server's tagId param is
-                // single-value, so we fan out one request per selected
-                // tag and union by id. First-seen wins for ordering +
-                // metadata; that's stable enough for typical 2-3 tag
-                // selections.
+                // Multi-tag OR: fan out one request per selected tag,
+                // union by id (first-seen wins). Each tag's pagination
+                // independently advances by PAGE_SIZE; the merged page
+                // size after dedupe will usually be smaller than PAGE_SIZE
+                // but the server cursor still moves forward properly.
                 const responses = await Promise.all(
                     tagIds.map((id) =>
                         api.listItems({ ...baseParams, tagId: id }),
@@ -103,51 +111,100 @@ export default function Browse() {
                 );
                 const seen = new Set<string>();
                 const merged: Item[] = [];
+                let totalSum = 0;
+                let anyMore = false;
                 for (const res of responses) {
+                    totalSum += res.TotalRecordCount ?? 0;
+                    if (res.HasMore) anyMore = true;
                     for (const it of res.Items ?? []) {
                         if (seen.has(it.Id)) continue;
                         seen.add(it.Id);
                         merged.push(it);
                     }
                 }
-                baseItems = merged;
-                baseTotal = merged.length;
+                pageItems = merged;
+                // totalSum overcounts items in multiple tags; bound the
+                // displayed total to the items we've actually loaded
+                // when no more pages remain, otherwise show >= sum.
+                pageTotal = anyMore ? totalSum : merged.length;
+                pageNext = startIndex + PAGE_SIZE;
+                pageHasMore = anyMore;
             }
-            // Year range filter (client-side - server lacks this).
-            const min = yearMin ? Number(yearMin) : null;
-            const max = yearMax ? Number(yearMax) : null;
-            if (min || max) {
-                baseItems = baseItems.filter((x) => {
-                    const y = x.ProductionYear;
-                    if (!y) return false;
-                    if (min && y < min) return false;
-                    if (max && y > max) return false;
-                    return true;
-                });
-            }
-            // Sort client-side. The server only supports SortName for
-            // SortOrder Asc; for the other axes we sort the loaded
-            // page (acceptable since we cap at PAGE_SIZE and most
-            // libraries fit in a few pages).
-            baseItems = sortItems(baseItems, sortKey, sortDir);
-            setItems(baseItems);
-            setTotal(baseTotal);
+            return { pageItems, pageTotal, pageNext, pageHasMore };
+        },
+        [
+            profile?.id,
+            stateFilter,
+            typeFilter,
+            activeTagIds,
+            searchDebounced,
+        ],
+    );
+
+    function applyYearAndSort(rows: Item[]): Item[] {
+        const min = yearMin ? Number(yearMin) : null;
+        const max = yearMax ? Number(yearMax) : null;
+        let out = rows;
+        if (min || max) {
+            out = out.filter((x) => {
+                const y = x.ProductionYear;
+                if (!y) return false;
+                if (min && y < min) return false;
+                if (max && y > max) return false;
+                return true;
+            });
+        }
+        return sortItems(out, sortKey, sortDir);
+    }
+
+    const refresh = useCallback(async () => {
+        if (!profile) return;
+        setLoading(true);
+        setError(null);
+        try {
+            const page = await fetchPage(0);
+            if (!page) return;
+            setItems(applyYearAndSort(page.pageItems));
+            setTotal(page.pageTotal);
+            setNextStart(page.pageNext);
+            setHasMore(page.pageHasMore);
         } catch (err) {
             setError(err instanceof Error ? err.message : "load failed");
         } finally {
             setLoading(false);
         }
+        // applyYearAndSort closes over yearMin/yearMax/sortKey/sortDir;
+        // they're already in fetchPage's deps via the call.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
-        profile?.id,
-        searchDebounced,
-        activeTagIds,
-        stateFilter,
-        typeFilter,
+        fetchPage,
         yearMin,
         yearMax,
         sortKey,
         sortDir,
     ]);
+
+    async function loadMore() {
+        if (loadingMore || !hasMore) return;
+        setLoadingMore(true);
+        setError(null);
+        try {
+            const page = await fetchPage(nextStart);
+            if (!page) return;
+            setItems((prev) => {
+                const seen = new Set(prev.map((it) => it.Id));
+                const fresh = page.pageItems.filter((it) => !seen.has(it.Id));
+                return applyYearAndSort([...prev, ...fresh]);
+            });
+            setTotal(page.pageTotal);
+            setNextStart(page.pageNext);
+            setHasMore(page.pageHasMore);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "load failed");
+        } finally {
+            setLoadingMore(false);
+        }
+    }
 
     useEffect(() => {
         void refresh();
@@ -386,6 +443,20 @@ export default function Browse() {
                         />
                     ))}
                 </ul>
+            )}
+
+            {!loading && hasMore && (
+                <div className="browse-load-more">
+                    <button
+                        type="button"
+                        onClick={() => void loadMore()}
+                        disabled={loadingMore}
+                    >
+                        {loadingMore
+                            ? "Loading…"
+                            : `Load more (${(total - items.length).toLocaleString()} left)`}
+                    </button>
+                </div>
             )}
 
             {editorItemId && profile && (

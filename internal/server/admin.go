@@ -245,6 +245,7 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 				items = matching[startIndex:end]
 			}
 			hasMore = startIndex+len(items) < total
+			nextStart = startIndex + len(items)
 		} else {
 			// Pull one extra to know if there's a next page, plus the
 			// real total of categorized items for that state. The
@@ -277,6 +278,7 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 				items = res.Items
 			}
 			total = countTotal
+			nextStart = startIndex + len(items)
 		}
 
 	case filterUnset:
