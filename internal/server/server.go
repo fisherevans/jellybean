@@ -115,6 +115,20 @@ func (s *Server) routes() {
 	admin.HandleFunc("/profiles/{id}/tag-filters", s.handleAdminListProfileTagFilters).Methods(http.MethodGet)
 	admin.HandleFunc("/profiles/{id}/tag-filters", s.handleAdminPutProfileTagFilters).Methods(http.MethodPut)
 	admin.HandleFunc("/profiles/{id}/tag-filters/{tagId}", s.handleAdminDeleteProfileTagFilter).Methods(http.MethodDelete)
+	admin.HandleFunc("/profiles/{id}/layout", s.handleAdminSetProfileLayout).Methods(http.MethodPut)
+	admin.HandleFunc("/layouts", s.handleAdminListLayouts).Methods(http.MethodGet)
+	admin.HandleFunc("/layouts", s.handleAdminCreateLayout).Methods(http.MethodPost)
+	admin.HandleFunc("/layouts/{id}", s.handleAdminGetLayout).Methods(http.MethodGet)
+	admin.HandleFunc("/layouts/{id}", s.handleAdminUpdateLayout).Methods(http.MethodPatch)
+	admin.HandleFunc("/layouts/{id}", s.handleAdminDeleteLayout).Methods(http.MethodDelete)
+	admin.HandleFunc("/layouts/{id}/clone", s.handleAdminCloneLayout).Methods(http.MethodPost)
+	admin.HandleFunc("/layouts/{id}/default", s.handleAdminSetDefaultLayout).Methods(http.MethodPost)
+	admin.HandleFunc("/layouts/{id}/preview", s.handleAdminLayoutPreview).Methods(http.MethodGet)
+	admin.HandleFunc("/layouts/{id}/rows", s.handleAdminAppendRow).Methods(http.MethodPost)
+	admin.HandleFunc("/layouts/{id}/rows/order", s.handleAdminReorderRows).Methods(http.MethodPut)
+	admin.HandleFunc("/layouts/{id}/rows/{rowId}", s.handleAdminUpdateRow).Methods(http.MethodPatch)
+	admin.HandleFunc("/layouts/{id}/rows/{rowId}", s.handleAdminDeleteRow).Methods(http.MethodDelete)
+	admin.HandleFunc("/dev/refresh-layout-cache", s.handleAdminRefreshLayoutCache).Methods(http.MethodPost)
 
 	// Kids API. /auth/login is unauthenticated (it IS the auth flow); the
 	// rest accept either an admin session cookie (parent previewing) or
@@ -124,6 +138,7 @@ func (s *Server) routes() {
 	kids := api.PathPrefix("/kids").Subrouter()
 	kids.Use(s.auth.OptionalMiddleware)
 	kids.HandleFunc("/library", s.handleKidsLibrary).Methods(http.MethodGet)
+	kids.HandleFunc("/browse", s.handleKidsBrowse).Methods(http.MethodGet)
 	kids.HandleFunc("/items/{id}/image", s.handleKidsImage).Methods(http.MethodGet)
 	kids.HandleFunc("/items/{id}/stream", s.handleKidsStream).Methods(http.MethodGet)
 	kids.HandleFunc("/items/{id}/next-up", s.handleKidsNextUp).Methods(http.MethodGet)

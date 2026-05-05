@@ -30,6 +30,9 @@ type Item struct {
 	Studios        []Studio  `json:"Studios"`
 	ProductionYear int       `json:"ProductionYear"`
 	RunTimeTicks   int64     `json:"RunTimeTicks"`
+	// DateCreated is when the item was added to Jellyfin's library.
+	// Used by the M8 "recently_added" browse row.
+	DateCreated    string    `json:"DateCreated,omitempty"`
 	ImageTags      ImageTags `json:"ImageTags"`
 	// UserData is populated only when the request was made with a user
 	// token AND Fields=UserData was requested. nil otherwise.
@@ -126,6 +129,11 @@ type ItemUserData struct {
 	Played                bool    `json:"Played"`
 	PlayCount             int     `json:"PlayCount"`
 	IsFavorite            bool    `json:"IsFavorite"`
+	// LastPlayedDate is the ISO-8601 timestamp of the most recent
+	// playback start for the user. Empty when the user has never
+	// started this item. Used by M8's "watch_again" row to
+	// surface dormant content.
+	LastPlayedDate string `json:"LastPlayedDate,omitempty"`
 }
 
 type Studio struct {
@@ -156,4 +164,9 @@ type ItemsFilter struct {
 	SortBy           string
 	SortOrder        string
 	SearchTerm       string
+	// Filters maps to Jellyfin's `Filters` query param - a comma-
+	// separated list of named filters. Currently used by the M8
+	// browse resolver for "IsUnplayed" (PlayCount = 0). Other
+	// useful values: IsPlayed, IsResumable, IsFavorite.
+	Filters []string
 }

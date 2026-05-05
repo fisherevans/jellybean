@@ -49,10 +49,14 @@ func (c *Client) getItemsWith(ctx context.Context, f ItemsFilter, userToken stri
 	if f.SearchTerm != "" {
 		q.Set("SearchTerm", f.SearchTerm)
 	}
+	if len(f.Filters) > 0 {
+		q.Set("Filters", strings.Join(f.Filters, ","))
+	}
 	// Always ask for the metadata fields we use; UserData only meaningful
 	// when authenticated as a user. MediaStreams carries audio language
 	// info the admin curation UI uses to flag non-default-language items.
-	fields := "Genres,Studios,OfficialRating,ProductionYear,RunTimeTicks,MediaStreams"
+	// DateCreated drives the M8 "recently_added" browse row.
+	fields := "Genres,Studios,OfficialRating,ProductionYear,RunTimeTicks,MediaStreams,DateCreated"
 	if userToken != "" {
 		fields += ",UserData"
 	}
