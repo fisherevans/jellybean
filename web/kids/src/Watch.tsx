@@ -70,6 +70,10 @@ export default function Watch() {
 
     const fetchItem = useCallback(async () => {
         if (!itemId) return;
+        // Skip when neither auth path is present - the auth gate
+        // above redirects to /login; firing the fetch anyway would
+        // briefly surface a 400 from the server.
+        if (!session && !adminProfileId) return;
         try {
             // /items/{id} returns metadata only (no PostPlaybackInfo,
             // no transcode session). We deliberately don't hit

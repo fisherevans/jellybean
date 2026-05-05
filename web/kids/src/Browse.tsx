@@ -85,8 +85,12 @@ export default function Browse() {
         }
     }, [session, adminProfileId, nav]);
 
-    // Fetch on mount.
+    // Fetch on mount. Gated on having either a kid session or an
+    // admin ?profileId - the auth gate above redirects to /login in
+    // either-missing case, but without this guard we'd briefly
+    // surface the server's 400 ("profileId query param required").
     const refresh = useCallback(async () => {
+        if (!session && !adminProfileId) return;
         try {
             const url = new URL(
                 "/api/kids/browse",
