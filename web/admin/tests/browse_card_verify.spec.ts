@@ -348,6 +348,30 @@ test("channel editor: search-and-add picker replaces textarea", async ({ page })
     await expect(results.first()).toBeVisible({ timeout: 5_000 });
 });
 
+test("viewing preview backdrop fits inside the bezel", async ({ page }) => {
+    await page.goto("/manage/profiles");
+    await page.locator(".profile-card-link").first().click();
+    await page.getByRole("tab", { name: "Viewing" }).click();
+    await page.waitForSelector(".viewing-preview-bezel");
+    const bezel = page.locator(".viewing-preview-bezel").first();
+    const img = page.locator(".viewing-preview-img").first();
+    const b = await bezel.boundingBox();
+    const i = await img.boundingBox();
+    if (!b || !i) throw new Error("missing");
+    // The image must not extend past the bezel.
+    expect(i.x).toBeGreaterThanOrEqual(b.x - 1);
+    expect(i.y).toBeGreaterThanOrEqual(b.y - 1);
+    expect(i.x + i.width).toBeLessThanOrEqual(b.x + b.width + 1);
+    expect(i.y + i.height).toBeLessThanOrEqual(b.y + b.height + 1);
+    // The bezel itself must stay roughly its declared 320x180.
+    expect(b.width).toBeLessThan(360);
+    expect(b.height).toBeLessThan(220);
+    await page.screenshot({
+        path: resolve(SHOTS_DIR, "26-viewing-preview.png"),
+        fullPage: true,
+    });
+});
+
 test("warm tint filter expression matches kid SPA target", async ({ page }) => {
     await page.goto("/manage/profiles");
     await page.locator(".profile-card-link").first().click();
