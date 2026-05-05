@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, HttpError, type Profile } from "../api";
+import { Link } from "react-router-dom";
+import { api, HttpError, type Layout, type Profile } from "../api";
 import ProfileModal from "../ProfileModal";
 import ProfileTagFiltersModal from "../ProfileTagFiltersModal";
 import Spinner from "../Spinner";
@@ -12,13 +13,18 @@ type Modal =
 
 export default function Profiles() {
     const [profiles, setProfiles] = useState<Profile[] | null>(null);
+    const [layouts, setLayouts] = useState<Layout[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [modal, setModal] = useState<Modal>({ kind: "closed" });
 
     async function refresh() {
         try {
-            const res = await api.listProfiles();
-            setProfiles(res.profiles);
+            const [pRes, lRes] = await Promise.all([
+                api.listProfiles(),
+                api.listLayouts(),
+            ]);
+            setProfiles(pRes.profiles);
+            setLayouts(lRes.layouts);
         } catch (err) {
             setError(err instanceof Error ? err.message : "load failed");
         }
@@ -27,6 +33,15 @@ export default function Profiles() {
     useEffect(() => {
         refresh();
     }, []);
+
+    async function changeLayout(profileId: number, layoutId: number) {
+        try {
+            await api.setProfileLayout(profileId, layoutId);
+            await refresh();
+        } catch (err) {
+            setError(err instanceof HttpError ? err.message : String(err));
+        }
+    }
 
     async function remove(p: Profile) {
         if (!confirm(`Delete profile "${p.name}"? Visibility decisions made for it will be lost.`)) return;
@@ -78,6 +93,32 @@ export default function Profiles() {
                                         <span className="stat stat-hidden">
                                             {p.hiddenCount.toLocaleString()} hidden
                                         </span>
+                                    </div>
+                                    <div className="profile-layout">
+                                        <label>
+                                            Browse layout
+                                            <select
+                                                value={p.layoutId ?? 0}
+                                                onChange={(e) =>
+                                                    changeLayout(p.id, Number(e.target.value))
+                                                }
+                                            >
+                                                {layouts.map((l) => (
+                                                    <option key={l.id} value={l.id}>
+                                                        {l.name}
+                                                        {l.isDefault ? " (default)" : ""}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        {p.layoutId ? (
+                                            <Link
+                                                to={`/layouts/${p.layoutId}`}
+                                                className="profile-layout-edit"
+                                            >
+                                                Edit this layout
+                                            </Link>
+                                        ) : null}
                                     </div>
                                 </div>
                                 <div className="profile-actions">

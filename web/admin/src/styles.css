@@ -1564,6 +1564,161 @@ button:disabled {
     accent-color: var(--accent);
 }
 
+/* M8 layout pages: list of row cards in the editor + supporting bits. */
+.layout-header {
+    flex: 1;
+}
+.layout-header-edit {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    max-width: 500px;
+}
+.layout-header-edit input,
+.layout-header-edit textarea {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    padding: 0.45rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.95rem;
+    font-family: inherit;
+}
+.layout-header-name-input {
+    font-size: 1.4rem !important;
+    font-weight: 600;
+}
+.layout-header-actions {
+    display: flex;
+    gap: 0.4rem;
+}
+.layout-default-pill {
+    display: inline-block;
+    margin-left: 0.6rem;
+    padding: 0.15rem 0.55rem;
+    font-size: 0.7rem;
+    background: rgba(128, 132, 255, 0.18);
+    color: var(--accent);
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    vertical-align: middle;
+}
+
+.layout-row-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+.layout-row-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.6rem 0.85rem;
+}
+.layout-row-info {
+    display: flex;
+    gap: 0.85rem;
+    align-items: flex-start;
+    flex: 1;
+}
+.layout-row-position {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+.layout-row-title {
+    font-weight: 600;
+}
+.layout-row-type {
+    font-size: 0.85rem;
+    margin-top: 0.1rem;
+}
+.layout-row-config {
+    font-size: 0.8rem;
+    margin-top: 0.15rem;
+}
+.layout-row-actions {
+    display: flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.layout-add-row {
+    margin-top: 1rem;
+}
+
+/* Profile -> layout assignment dropdown on the Profiles page. */
+.profile-layout {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.4rem;
+    flex-wrap: wrap;
+}
+.profile-layout label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+.profile-layout select {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.25rem 0.5rem;
+}
+.profile-layout-edit {
+    color: var(--accent);
+    font-size: 0.85rem;
+}
+
+/* Tag multi-picker (used in layout row config for tag_fanout). */
+.tag-multipicker {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    margin: 0;
+}
+.tag-multipicker legend {
+    font-size: 0.85rem;
+    color: var(--muted);
+    padding: 0 0.4rem;
+}
+.tag-multipicker-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.3rem 0 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 0.2rem 0.6rem;
+}
+.tag-multipicker-list label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.9rem;
+}
+.tag-multipicker-list input[type="checkbox"] {
+    accent-color: var(--accent);
+}
+
 .spinner {
     display: inline-block;
     border-style: solid;

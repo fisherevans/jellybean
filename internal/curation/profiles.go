@@ -18,6 +18,7 @@ type Profile struct {
 	Name            string
 	Description     string
 	DefaultLanguage string // ISO 639-3 (e.g. "eng"); matches Jellyfin MediaStream.Language
+	LayoutID        int64  // M8: 0 = use default layout
 	CreatedAt       time.Time
 }
 
@@ -47,7 +48,8 @@ var ErrProfileProtected = errors.New("default profile cannot be deleted")
 // what the kid client would actually see.
 func (s *Store) ListProfiles(ctx context.Context) ([]ProfileWithKidCount, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.id, p.name, COALESCE(p.description, ''), p.default_language, p.created_at,
+		SELECT p.id, p.name, COALESCE(p.description, ''), p.default_language,
+		       COALESCE(p.layout_id, 0), p.created_at,
 		       (SELECT COUNT(*) FROM kids WHERE profile_id = p.id),
 		       (SELECT COUNT(*) FROM categorizations
 		           WHERE profile_id = p.id AND state = 'visible' AND orphan_at IS NULL),
@@ -66,7 +68,7 @@ func (s *Store) ListProfiles(ctx context.Context) ([]ProfileWithKidCount, error)
 			p  ProfileWithKidCount
 			ts int64
 		)
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.DefaultLanguage, &ts,
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.DefaultLanguage, &p.LayoutID, &ts,
 			&p.KidCount, &p.VisibleCount, &p.HiddenCount); err != nil {
 			return nil, err
 		}
@@ -79,13 +81,14 @@ func (s *Store) ListProfiles(ctx context.Context) ([]ProfileWithKidCount, error)
 // GetProfile fetches one profile by ID. Returns ErrProfileNotFound if none.
 func (s *Store) GetProfile(ctx context.Context, id int64) (*Profile, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, COALESCE(description, ''), default_language, created_at
+		SELECT id, name, COALESCE(description, ''), default_language,
+		       COALESCE(layout_id, 0), created_at
 		FROM profiles WHERE id = ?`, id)
 	var (
 		p  Profile
 		ts int64
 	)
-	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.DefaultLanguage, &ts); err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.DefaultLanguage, &p.LayoutID, &ts); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrProfileNotFound
 		}

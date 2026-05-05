@@ -12,6 +12,8 @@ import Profiles from "./pages/Profiles";
 import Kids from "./pages/Kids";
 import Tags from "./pages/Tags";
 import TagDetail from "./pages/TagDetail";
+import Layouts from "./pages/Layouts";
+import LayoutDetail from "./pages/LayoutDetail";
 import Spinner from "./Spinner";
 
 type AuthState =
@@ -74,6 +76,8 @@ export default function App() {
                     <Route path="/manage-kids" element={<Kids />} />
                     <Route path="/tags" element={<Tags />} />
                     <Route path="/tags/:tagId" element={<TagDetail />} />
+                    <Route path="/layouts" element={<Layouts />} />
+                    <Route path="/layouts/:layoutId" element={<LayoutDetail />} />
                 </Route>
             ) : (
                 <Route path="*" element={<RedirectToLogin />} />

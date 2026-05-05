@@ -16,6 +16,7 @@ type profileResponse struct {
 	Name            string `json:"name"`
 	Description     string `json:"description,omitempty"`
 	DefaultLanguage string `json:"defaultLanguage"`
+	LayoutID        int64  `json:"layoutId,omitempty"`
 	CreatedAt       int64  `json:"createdAt"`
 	KidCount        int    `json:"kidCount"`
 	VisibleCount    int    `json:"visibleCount"`
@@ -28,6 +29,7 @@ func toProfileResponse(p curation.ProfileWithKidCount) profileResponse {
 		Name:            p.Name,
 		Description:     p.Description,
 		DefaultLanguage: p.DefaultLanguage,
+		LayoutID:        p.LayoutID,
 		CreatedAt:       p.CreatedAt.Unix(),
 		KidCount:        p.KidCount,
 		VisibleCount:    p.VisibleCount,

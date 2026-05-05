@@ -62,6 +62,7 @@ export type Profile = {
     kidCount: number;
     visibleCount: number; // categorizations.state='visible' for this profile (orphans excluded)
     hiddenCount: number;
+    layoutId?: number; // M8: profile's browse layout (null = use default)
 };
 
 export type ProfileInput = {
@@ -125,6 +126,79 @@ export type KidFavorite = {
     visible: boolean;
     missing?: boolean; // Jellyfin doesn't recognize this id any more
     createdAt: number;
+};
+
+// Layout (M8) is a named ordered set of rows that drives the kid
+// Browse screen. Each row has a typed config blob.
+export type RowType =
+    | "continue_watching"
+    | "favorites"
+    | "tag"
+    | "tag_fanout"
+    | "recently_added"
+    | "random_unwatched"
+    | "watch_again";
+
+export const ALL_ROW_TYPES: RowType[] = [
+    "continue_watching",
+    "favorites",
+    "tag",
+    "tag_fanout",
+    "recently_added",
+    "random_unwatched",
+    "watch_again",
+];
+
+export const ROW_TYPE_LABELS: Record<RowType, string> = {
+    continue_watching: "Continue Watching",
+    favorites: "Favorites",
+    tag: "Tag (single)",
+    tag_fanout: "Tag fanout (one row per tag)",
+    recently_added: "Recently Added",
+    random_unwatched: "Random Unwatched",
+    watch_again: "Watch Again",
+};
+
+// LayoutRowConfig is loosely-typed - the server validates the per-type
+// shape. Admin UIs render type-specific forms and submit `config` as
+// the JSON object Jellybean stores in layout_rows.config_json.
+export type LayoutRowConfig = Record<string, unknown>;
+
+export type LayoutRow = {
+    id: number;
+    position: number;
+    type: RowType;
+    title?: string;
+    config: LayoutRowConfig;
+    createdAt: number;
+    updatedAt: number;
+};
+
+export type Layout = {
+    id: number;
+    name: string;
+    description?: string;
+    isDefault: boolean;
+    profileCount: number;
+    rows: LayoutRow[];
+    createdAt: number;
+    updatedAt: number;
+};
+
+// BrowseRow is what the admin preview / kid browse endpoint returns.
+export type BrowseRow = {
+    rowId: number;
+    type: RowType;
+    title: string;
+    subtitle?: string;
+    items: Item[];
+};
+
+export type BrowseResponse = {
+    layoutId: number;
+    layoutName: string;
+    profileId: number;
+    rows: BrowseRow[];
 };
 
 export type ActivityEntry = {
@@ -327,6 +401,77 @@ export const api = {
         request<void>(
             "DELETE",
             `/api/admin/profiles/${profileId}/tag-filters/${tagId}`,
+        ),
+
+    // --- M8: layouts -----------------------------------------------
+    listLayouts: () =>
+        request<{ layouts: Layout[] }>("GET", `/api/admin/layouts`),
+    getLayout: (id: number) =>
+        request<Layout>("GET", `/api/admin/layouts/${id}`),
+    createLayout: (input: { name: string; description?: string }) =>
+        request<Layout>("POST", `/api/admin/layouts`, input),
+    updateLayout: (
+        id: number,
+        input: { name?: string; description?: string },
+    ) => request<Layout>("PATCH", `/api/admin/layouts/${id}`, input),
+    deleteLayout: (id: number) =>
+        request<void>("DELETE", `/api/admin/layouts/${id}`),
+    cloneLayout: (id: number, name?: string) =>
+        request<Layout>("POST", `/api/admin/layouts/${id}/clone`, name ? { name } : {}),
+    setDefaultLayout: (id: number) =>
+        request<void>("POST", `/api/admin/layouts/${id}/default`),
+    setProfileLayout: (profileId: number, layoutId: number) =>
+        request<void>("PUT", `/api/admin/profiles/${profileId}/layout`, {
+            layoutId,
+        }),
+
+    appendLayoutRow: (
+        layoutId: number,
+        row: { type: RowType; title?: string; config: LayoutRowConfig },
+    ) =>
+        request<LayoutRow>(
+            "POST",
+            `/api/admin/layouts/${layoutId}/rows`,
+            row,
+        ),
+    updateLayoutRow: (
+        layoutId: number,
+        rowId: number,
+        row: { type?: RowType; title?: string; config?: LayoutRowConfig },
+    ) =>
+        request<LayoutRow>(
+            "PATCH",
+            `/api/admin/layouts/${layoutId}/rows/${rowId}`,
+            row,
+        ),
+    deleteLayoutRow: (layoutId: number, rowId: number) =>
+        request<void>(
+            "DELETE",
+            `/api/admin/layouts/${layoutId}/rows/${rowId}`,
+        ),
+    reorderLayoutRows: (layoutId: number, rowIds: number[]) =>
+        request<void>(
+            "PUT",
+            `/api/admin/layouts/${layoutId}/rows/order`,
+            { rowIds },
+        ),
+
+    previewLayout: (layoutId: number, profileId: number) =>
+        request<BrowseResponse>(
+            "GET",
+            `/api/admin/layouts/${layoutId}/preview?profileId=${profileId}`,
+        ),
+    refreshLayoutCache: (profileId: number) =>
+        request<void>(
+            "POST",
+            `/api/admin/dev/refresh-layout-cache?profileId=${profileId}`,
+        ),
+
+    // --- M8: kid-side browse (admin can hit it via cookie auth) ----
+    browse: (profileId: number) =>
+        request<BrowseResponse>(
+            "GET",
+            `/api/kids/browse?profileId=${profileId}`,
         ),
 };
 

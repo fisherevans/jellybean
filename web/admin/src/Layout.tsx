@@ -17,6 +17,7 @@ const links: NavItem[] = [
     { to: "/activity", label: "Activity" },
     { to: "/search", label: "Search" },
     { to: "/tags", label: "Tags" },
+    { to: "/layouts", label: "Layouts" },
     { to: "/profiles", label: "Profiles" },
     { to: "/manage-kids", label: "Kids" },
 ];
