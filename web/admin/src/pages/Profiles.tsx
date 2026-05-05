@@ -6,6 +6,7 @@ import ProfileTagFiltersModal from "../ProfileTagFiltersModal";
 import ProfileTimeLimitsModal from "../ProfileTimeLimitsModal";
 import ProfileBodyBreaksModal from "../ProfileBodyBreaksModal";
 import ProfileViewingControlsModal from "../ProfileViewingControlsModal";
+import ProfileModesModal from "../ProfileModesModal";
 import Spinner from "../Spinner";
 
 type Modal =
@@ -15,7 +16,8 @@ type Modal =
     | { kind: "tag-filters"; profile: Profile }
     | { kind: "time-limits"; profile: Profile }
     | { kind: "body-breaks"; profile: Profile }
-    | { kind: "viewing-controls"; profile: Profile };
+    | { kind: "viewing-controls"; profile: Profile }
+    | { kind: "modes"; profile: Profile };
 
 export default function Profiles() {
     const [profiles, setProfiles] = useState<Profile[] | null>(null);
@@ -159,6 +161,13 @@ export default function Profiles() {
                                     >
                                         Viewing
                                     </button>
+                                    <button
+                                        onClick={() =>
+                                            setModal({ kind: "modes", profile: p })
+                                        }
+                                    >
+                                        Modes
+                                    </button>
                                     <button onClick={() => setModal({ kind: "edit", profile: p })}>
                                         Edit
                                     </button>
@@ -212,6 +221,12 @@ export default function Profiles() {
             )}
             {modal.kind === "viewing-controls" && (
                 <ProfileViewingControlsModal
+                    profile={modal.profile}
+                    onClose={() => setModal({ kind: "closed" })}
+                />
+            )}
+            {modal.kind === "modes" && (
+                <ProfileModesModal
                     profile={modal.profile}
                     onClose={() => setModal({ kind: "closed" })}
                 />

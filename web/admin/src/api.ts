@@ -248,6 +248,23 @@ export type ProfileViewingControls = {
     updatedAt?: string;
 };
 
+export type Mode = {
+    id: number;
+    profileId: number;
+    name: string;
+    scheduleDays: number;
+    scheduleStartTime: string;
+    scheduleEndTime: string;
+    tagFiltersJson?: string;
+    timeLimitsJson?: string;
+    viewingControlsJson?: string;
+    themeKey: string;
+    enterVoiceMessage?: string;
+    exitVoiceMessage?: string;
+    createdAt?: string;
+    updatedAt?: string;
+};
+
 export type APIKey = {
     id: number;
     name: string;
@@ -656,6 +673,19 @@ export const api = {
             `/api/admin/profiles/${profileId}/viewing-controls`,
             body,
         ),
+
+    // --- M13: time-based modes ------------------------------------
+    listProfileModes: (profileId: number) =>
+        request<{ modes: Mode[] }>(
+            "GET",
+            `/api/admin/profiles/${profileId}/modes`,
+        ),
+    createMode: (profileId: number, body: Mode) =>
+        request<Mode>("POST", `/api/admin/profiles/${profileId}/modes`, body),
+    updateMode: (id: number, body: Mode) =>
+        request<Mode>("PATCH", `/api/admin/modes/${id}`, body),
+    deleteMode: (id: number) =>
+        request<void>("DELETE", `/api/admin/modes/${id}`),
 };
 
 export { HttpError };
