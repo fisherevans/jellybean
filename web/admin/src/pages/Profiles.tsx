@@ -7,6 +7,7 @@ import ProfileTimeLimitsModal from "../ProfileTimeLimitsModal";
 import ProfileBodyBreaksModal from "../ProfileBodyBreaksModal";
 import ProfileViewingControlsModal from "../ProfileViewingControlsModal";
 import ProfileModesModal from "../ProfileModesModal";
+import ProfileChannelsModal from "../ProfileChannelsModal";
 import Spinner from "../Spinner";
 
 type Modal =
@@ -17,7 +18,8 @@ type Modal =
     | { kind: "time-limits"; profile: Profile }
     | { kind: "body-breaks"; profile: Profile }
     | { kind: "viewing-controls"; profile: Profile }
-    | { kind: "modes"; profile: Profile };
+    | { kind: "modes"; profile: Profile }
+    | { kind: "channels"; profile: Profile };
 
 export default function Profiles() {
     const [profiles, setProfiles] = useState<Profile[] | null>(null);
@@ -168,6 +170,13 @@ export default function Profiles() {
                                     >
                                         Modes
                                     </button>
+                                    <button
+                                        onClick={() =>
+                                            setModal({ kind: "channels", profile: p })
+                                        }
+                                    >
+                                        Channels
+                                    </button>
                                     <button onClick={() => setModal({ kind: "edit", profile: p })}>
                                         Edit
                                     </button>
@@ -227,6 +236,12 @@ export default function Profiles() {
             )}
             {modal.kind === "modes" && (
                 <ProfileModesModal
+                    profile={modal.profile}
+                    onClose={() => setModal({ kind: "closed" })}
+                />
+            )}
+            {modal.kind === "channels" && (
+                <ProfileChannelsModal
                     profile={modal.profile}
                     onClose={() => setModal({ kind: "closed" })}
                 />

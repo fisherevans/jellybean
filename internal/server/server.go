@@ -156,6 +156,10 @@ func (s *Server) routes() {
 	admin.HandleFunc("/profiles/{id}/modes", s.handleAdminCreateMode).Methods(http.MethodPost)
 	admin.HandleFunc("/modes/{id}", s.handleAdminUpdateMode).Methods(http.MethodPatch)
 	admin.HandleFunc("/modes/{id}", s.handleAdminDeleteMode).Methods(http.MethodDelete)
+	admin.HandleFunc("/profiles/{id}/channels", s.handleAdminListChannels).Methods(http.MethodGet)
+	admin.HandleFunc("/profiles/{id}/channels", s.handleAdminCreateChannel).Methods(http.MethodPost)
+	admin.HandleFunc("/channels/{id}", s.handleAdminUpdateChannel).Methods(http.MethodPatch)
+	admin.HandleFunc("/channels/{id}", s.handleAdminDeleteChannel).Methods(http.MethodDelete)
 
 	// Kids API. /auth/login is unauthenticated (it IS the auth flow); the
 	// rest accept either an admin session cookie (parent previewing) or
@@ -193,6 +197,7 @@ func (s *Server) routes() {
 	kids.HandleFunc("/override/viewing/{action}", s.handleKidsOverrideSetViewing).Methods(http.MethodPost)
 	kids.HandleFunc("/active-mode", s.handleKidsActiveMode).Methods(http.MethodGet)
 	kids.HandleFunc("/override/set-mode", s.handleKidsOverrideSetMode).Methods(http.MethodPost)
+	kids.HandleFunc("/channels", s.handleKidsChannels).Methods(http.MethodGet)
 
 	// Static SPAs. Order matters: /kids prefix wins over /, so the more
 	// specific one is registered first.

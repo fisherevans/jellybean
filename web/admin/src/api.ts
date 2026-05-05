@@ -265,6 +265,20 @@ export type Mode = {
     updatedAt?: string;
 };
 
+export type Channel = {
+    id: number;
+    profileId: number;
+    name: string;
+    description?: string;
+    badgeText?: string;
+    badgeColor?: string;
+    sortOrder: "random" | "round_robin_tags" | "in_order";
+    tagIds: number[];
+    itemIds: string[];
+    createdAt?: string;
+    updatedAt?: string;
+};
+
 export type APIKey = {
     id: number;
     name: string;
@@ -686,6 +700,23 @@ export const api = {
         request<Mode>("PATCH", `/api/admin/modes/${id}`, body),
     deleteMode: (id: number) =>
         request<void>("DELETE", `/api/admin/modes/${id}`),
+
+    // --- M15: cable TV channels -----------------------------------
+    listProfileChannels: (profileId: number) =>
+        request<{ channels: Channel[] }>(
+            "GET",
+            `/api/admin/profiles/${profileId}/channels`,
+        ),
+    createChannel: (profileId: number, body: Channel) =>
+        request<Channel>(
+            "POST",
+            `/api/admin/profiles/${profileId}/channels`,
+            body,
+        ),
+    updateChannel: (id: number, body: Channel) =>
+        request<Channel>("PATCH", `/api/admin/channels/${id}`, body),
+    deleteChannel: (id: number) =>
+        request<void>("DELETE", `/api/admin/channels/${id}`),
 };
 
 export { HttpError };
