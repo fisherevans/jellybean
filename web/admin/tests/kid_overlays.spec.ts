@@ -334,6 +334,41 @@ test("kid: watch menu + play screen render for a real item", async ({
     });
 });
 
+test("kid: watch menu renders the episode accordion for a series", async ({
+    page,
+    baseURL,
+}) => {
+    const session = await seedKidSession(page, baseURL!);
+    const ctx = await request.newContext({ baseURL, storageState: { cookies: [], origins: [] } });
+    const lib = await ctx.get("/api/kids/library?type=Series&limit=10", {
+        headers: {
+            Authorization: `Bearer ${session.token}`,
+            "X-Jellyfin-User-Id": session.userId,
+            "X-Jellybean-DeviceId": "test-device",
+        },
+    });
+    if (!lib.ok()) {
+        await ctx.dispose();
+        return;
+    }
+    const body = await lib.json();
+    const seriesId = body.Items?.[0]?.Id;
+    await ctx.dispose();
+    if (!seriesId) return;
+
+    await page.goto(`/player/watch/${encodeURIComponent(seriesId)}`);
+    await page.waitForSelector(".watch-screen", { timeout: 15_000 });
+    // Series get the accordion below the hero. Wait for at least
+    // one season header to appear.
+    await expect(page.locator(".watch-season-head").first()).toBeVisible({
+        timeout: 10_000,
+    });
+    await page.screenshot({
+        path: resolve(SHOTS_DIR, "12-watch-series.png"),
+        fullPage: true,
+    });
+});
+
 test("kid overlay: no overlays render when nothing is firing", async ({
     page,
     baseURL,
