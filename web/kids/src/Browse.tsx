@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
     authHeaders,
     getSession,
+    imageAuthSuffix,
     type Session,
 } from "./auth";
 import TabPill, { tabHref } from "./TabPill";
@@ -335,12 +336,16 @@ function Poster({ id, hasPoster }: { id: string; hasPoster: boolean }) {
     if (!hasPoster) {
         return <div className="browse-tile-poster placeholder">?</div>;
     }
+    // <img> can't attach Authorization headers; kids pass token + userId
+    // as query params instead (admin cookie path returns "" suffix).
+    const src = `/api/kids/items/${encodeURIComponent(id)}/image?type=Primary&width=240${imageAuthSuffix()}`;
     return (
         <img
             className="browse-tile-poster"
-            src={`/api/kids/items/${encodeURIComponent(id)}/image?type=Primary&width=240`}
+            src={src}
             alt=""
             loading="lazy"
+            decoding="async"
         />
     );
 }

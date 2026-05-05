@@ -173,3 +173,14 @@ export function authHeaders(): Record<string, string> {
     }
     return headers;
 }
+
+// imageAuthSuffix builds the &token=...&userId=... fragment to append to
+// /api/kids/items/{id}/image URLs when running as a kid. <img> elements
+// can't attach Authorization headers, so the server's parseBearer also
+// accepts these as query params. Admin-cookie previewing doesn't need
+// it; cookies ride on <img> requests automatically.
+export function imageAuthSuffix(): string {
+    const s = getSession();
+    if (!s) return "";
+    return `&token=${encodeURIComponent(s.token)}&userId=${encodeURIComponent(s.userId)}`;
+}

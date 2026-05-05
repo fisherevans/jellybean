@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { authHeaders, getSession, type Session } from "./auth";
+import { authHeaders, getSession, imageAuthSuffix, type Session } from "./auth";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
 
 // Watch menu (M7). Pre-playback interstitial that surfaces a hero
@@ -281,7 +281,7 @@ function BackdropImage({ itemId }: { itemId: string }) {
     return (
         <img
             className="watch-backdrop"
-            src={`/api/kids/items/${encodeURIComponent(itemId)}/image?type=Backdrop&width=1920`}
+            src={`/api/kids/items/${encodeURIComponent(itemId)}/image?type=Backdrop&width=1920${imageAuthSuffix()}`}
             alt=""
             aria-hidden
             onError={() => setFailed(true)}
@@ -293,7 +293,7 @@ function Poster({ id }: { id: string; hasPoster: boolean }) {
     return (
         <img
             className="watch-poster"
-            src={`/api/kids/items/${encodeURIComponent(id)}/image?type=Primary&width=480`}
+            src={`/api/kids/items/${encodeURIComponent(id)}/image?type=Primary&width=480${imageAuthSuffix()}`}
             alt=""
             loading="eager"
         />
@@ -490,7 +490,7 @@ function EpisodeThumb({ episode }: { episode: SeriesEpisode }) {
     return (
         <img
             className="watch-episode-thumb"
-            src={`/api/kids/items/${encodeURIComponent(episode.id)}/image?type=Primary&width=240`}
+            src={`/api/kids/items/${encodeURIComponent(episode.id)}/image?type=Primary&width=240${imageAuthSuffix()}`}
             alt=""
             loading="lazy"
         />
