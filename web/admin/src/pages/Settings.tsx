@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, HttpError } from "../api";
 import Spinner from "../Spinner";
+import PinInput from "../PinInput";
 
 // Settings page (M9 #57). Houses the override PIN config + the
 // public_url app_setting that the kid client's QR-code generator
@@ -164,23 +165,18 @@ export default function Settings() {
             <form className="settings-form" onSubmit={savePIN}>
                 <label>
                     {override.pinSet ? "New PIN" : "PIN"}
-                    <input
-                        type="password"
-                        inputMode="numeric"
-                        autoComplete="new-password"
+                    <PinInput
                         value={pin}
-                        onChange={(e) => setPin(e.target.value)}
+                        onChange={setPin}
                         disabled={busy}
+                        autoFocus={!override.pinSet}
                     />
                 </label>
                 <label>
                     Confirm
-                    <input
-                        type="password"
-                        inputMode="numeric"
-                        autoComplete="new-password"
+                    <PinInput
                         value={pinConfirm}
-                        onChange={(e) => setPinConfirm(e.target.value)}
+                        onChange={setPinConfirm}
                         disabled={busy}
                     />
                 </label>

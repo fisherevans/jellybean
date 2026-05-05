@@ -233,6 +233,27 @@ test.describe("full admin UI review", () => {
         await page.screenshot({ path: shot("13-admin-hub"), fullPage: true });
     });
 
+    test("layout preview modal", async ({ page }) => {
+        await page.goto("/manage/profiles");
+        await page.locator(".profile-card-link").first().click();
+        await page.waitForSelector(".settings-form");
+        await page.getByRole("button", { name: "Preview", exact: true }).click();
+        await page.waitForSelector(".layout-preview");
+        await page.screenshot({
+            path: shot("18-layout-preview-modal"),
+            fullPage: true,
+        });
+    });
+
+    test("PIN MFA-style input", async ({ page }) => {
+        await page.goto("/manage/settings");
+        await page.waitForSelector(".pin-input");
+        await page.screenshot({
+            path: shot("19-pin-input"),
+            fullPage: true,
+        });
+    });
+
     test("categorize wrapper", async ({ page }) => {
         await page.goto("/manage/categorize");
         await page.waitForLoadState("networkidle");

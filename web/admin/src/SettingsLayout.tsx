@@ -57,22 +57,23 @@ export default function SettingsLayout() {
                         rootHref="/profiles"
                         expanded={onProfilesPage}
                     >
-                        {profiles.map((p) => (
-                            <NavLink
-                                key={p.id}
-                                to={`/profiles/${p.id}`}
-                                className={() =>
-                                    [
-                                        "settings-sidebar-child",
-                                        activeProfileId === p.id && "active",
-                                    ]
-                                        .filter(Boolean)
-                                        .join(" ")
-                                }
-                            >
-                                {p.name}
-                            </NavLink>
-                        ))}
+                        {onProfilesPage &&
+                            profiles.map((p) => (
+                                <NavLink
+                                    key={p.id}
+                                    to={`/profiles/${p.id}`}
+                                    className={() =>
+                                        [
+                                            "settings-sidebar-child",
+                                            activeProfileId === p.id && "active",
+                                        ]
+                                            .filter(Boolean)
+                                            .join(" ")
+                                    }
+                                >
+                                    {p.name}
+                                </NavLink>
+                            ))}
                     </SettingsSection>
 
                     <SettingsLink to="/kids" label="Kids" />
@@ -82,27 +83,28 @@ export default function SettingsLayout() {
                         rootHref="/layouts"
                         expanded={onLayoutsPage}
                     >
-                        {layouts.map((l) => (
-                            <NavLink
-                                key={l.id}
-                                to={`/layouts/${l.id}`}
-                                className={() =>
-                                    [
-                                        "settings-sidebar-child",
-                                        activeLayoutId === l.id && "active",
-                                    ]
-                                        .filter(Boolean)
-                                        .join(" ")
-                                }
-                            >
-                                {l.name}
-                                {l.isDefault ? (
-                                    <span className="settings-sidebar-badge">
-                                        default
-                                    </span>
-                                ) : null}
-                            </NavLink>
-                        ))}
+                        {onLayoutsPage &&
+                            layouts.map((l) => (
+                                <NavLink
+                                    key={l.id}
+                                    to={`/layouts/${l.id}`}
+                                    className={() =>
+                                        [
+                                            "settings-sidebar-child",
+                                            activeLayoutId === l.id && "active",
+                                        ]
+                                            .filter(Boolean)
+                                            .join(" ")
+                                    }
+                                >
+                                    {l.name}
+                                    {l.isDefault ? (
+                                        <span className="settings-sidebar-badge">
+                                            default
+                                        </span>
+                                    ) : null}
+                                </NavLink>
+                            ))}
                     </SettingsSection>
 
                     <SettingsLink to="/activity" label="Activity" />
@@ -130,9 +132,11 @@ function SettingsSection({ label, rootHref, expanded, children }: SectionProps) 
         <div
             className={`settings-sidebar-section ${expanded ? "expanded" : ""}`}
         >
-            <Link to={rootHref} className="settings-sidebar-section-head">
-                <span className="settings-sidebar-caret">{expanded ? "▾" : "▸"}</span>
-                <span>{label}</span>
+            <Link
+                to={rootHref}
+                className={`settings-sidebar-link ${expanded ? "active" : ""}`}
+            >
+                {label}
             </Link>
             {expanded && (
                 <div className="settings-sidebar-children">{children}</div>

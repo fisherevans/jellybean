@@ -44,10 +44,17 @@ export default function LayoutPreviewModal({ layoutId, onClose }: Props) {
     return (
         <div className="modal-backdrop" onClick={onClose}>
             <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
-                <div className="modal-head">
-                    <h3>Layout preview{layout ? ` — ${layout.name}` : ""}</h3>
-                    <button className="modal-close" onClick={onClose}>×</button>
-                </div>
+                <button
+                    type="button"
+                    className="modal-close-corner"
+                    aria-label="Close"
+                    onClick={onClose}
+                >
+                    ×
+                </button>
+                <h3 className="modal-title">
+                    Layout preview{layout ? ` — ${layout.name}` : ""}
+                </h3>
                 {error ? (
                     <p className="error">{error}</p>
                 ) : !layout ? (
@@ -78,11 +85,14 @@ export default function LayoutPreviewModal({ layoutId, onClose }: Props) {
                                 ))}
                             </ol>
                         )}
-                        <div className="modal-actions">
-                            <Link to={`/layouts/${layoutId}`} className="button-link">
-                                Open editor →
-                            </Link>
+                        <div className="modal-actions modal-actions-right">
                             <button onClick={onClose}>Close</button>
+                            <Link
+                                to={`/layouts/${layoutId}`}
+                                className="button-link primary"
+                            >
+                                Edit
+                            </Link>
                         </div>
                     </div>
                 )}

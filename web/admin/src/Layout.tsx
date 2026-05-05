@@ -27,8 +27,7 @@ const links: NavItem[] = [
         key: "categorize",
         matchPrefixes: ["/categorize", "/swipe", "/bulk"],
     },
-    { to: "/browse", label: "Browse" },
-    { to: "/search", label: "Search" },
+    { to: "/browse", label: "Browse", matchPrefixes: ["/browse", "/search"] },
     { to: "/tags", label: "Tags", matchPrefixes: ["/tags"] },
     {
         to: "/admin",
@@ -53,7 +52,6 @@ const PROFILE_SCOPED_PATHS = [
     "/bulk",
     "/categorize",
     "/browse",
-    "/search",
     "/tags",
 ];
 

@@ -1,6 +1,7 @@
 // Live preview of dim + red-shift effects using a CSS filter on a
-// gradient-rendered "TV". Pure visual preview - the actual kid SPA
-// applies the same filter expression at the document root.
+// real photo (Muppets, supplied as the preview reference). Pure
+// visual preview - the kid SPA applies the same filter expression
+// at the document root.
 
 type Props = {
     dimPercent: number;
@@ -13,19 +14,12 @@ export default function ViewingPreview({ dimPercent, redShiftPercent }: Props) {
         <div className="viewing-preview">
             <div className="viewing-preview-label">Preview</div>
             <div className="viewing-preview-tv" aria-hidden>
-                <div
-                    className="viewing-preview-bezel"
-                    style={{ filter }}
-                >
-                    <div className="viewing-preview-scene">
-                        <div className="vp-sky" />
-                        <div className="vp-sun" />
-                        <div className="vp-mountain vp-mountain-back" />
-                        <div className="vp-mountain vp-mountain-front" />
-                        <div className="vp-foreground" />
-                        <div className="vp-tree vp-tree-1" />
-                        <div className="vp-tree vp-tree-2" />
-                    </div>
+                <div className="viewing-preview-bezel" style={{ filter }}>
+                    <img
+                        src="/manage/viewing-preview.jpg"
+                        alt=""
+                        className="viewing-preview-img"
+                    />
                 </div>
                 <div className="viewing-preview-stand" />
             </div>

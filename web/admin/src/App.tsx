@@ -5,7 +5,6 @@ import Layout from "./Layout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Activity from "./pages/Activity";
-import Search from "./pages/Search";
 import Profiles from "./pages/Profiles";
 import ProfileSettings from "./pages/ProfileSettings";
 import Categorize from "./pages/Categorize";
@@ -79,7 +78,12 @@ export default function App() {
                     <Route path="/swipe" element={<Categorize />} />
                     <Route path="/categorize" element={<Categorize />} />
                     <Route path="/browse" element={<Browse />} />
-                    <Route path="/search" element={<Search />} />
+                    {/* /search is collapsed into /browse - keep the
+                        route as a redirect so legacy bookmarks work. */}
+                    <Route
+                        path="/search"
+                        element={<Navigate to="/browse" replace />}
+                    />
                     <Route path="/tags" element={<Tags />} />
                     <Route path="/tags/:tagId" element={<TagDetail />} />
                     <Route path="/items/:itemId" element={<ManageItem />} />

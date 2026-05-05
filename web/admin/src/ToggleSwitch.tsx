@@ -42,6 +42,14 @@ export default function ToggleSwitch({
                 <span className="toggle-switch-track" aria-hidden>
                     <span className="toggle-switch-thumb" />
                 </span>
+                <span
+                    className={`toggle-switch-state ${
+                        checked ? "on" : "off"
+                    }`}
+                    aria-hidden
+                >
+                    {checked ? "On" : "Off"}
+                </span>
             </span>
         </label>
     );
