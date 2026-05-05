@@ -5,7 +5,7 @@ import {
     getSession,
     type Session,
 } from "./auth";
-import TabPill from "./TabPill";
+import TabPill, { tabHref } from "./TabPill";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
 import { shouldShowWatchMenu } from "./Watch";
 
@@ -44,8 +44,10 @@ type BrowseResponse = {
 };
 
 type Focus =
-    | { kind: "tab" }
+    | { kind: "tab"; index: number }
     | { kind: "tile"; row: number; col: number };
+
+const TAB_COUNT = 2;
 
 export default function Browse() {
     const nav = useNavigate();
@@ -165,7 +167,9 @@ export default function Browse() {
                         setFocus({ kind: "tile", row: focus.row - 1, col: prevCol });
                     } else {
                         lastTileRef.current = { row: focus.row, col: focus.col };
-                        setFocus({ kind: "tab" });
+                        // Browse is the active tab on this page; land
+                        // focus on it so Left/Right cycles to Library.
+                        setFocus({ kind: "tab", index: 0 });
                     }
                     e.preventDefault();
                     return;
@@ -189,16 +193,46 @@ export default function Browse() {
                     setFocus({ kind: "tile", ...lastTileRef.current });
                     e.preventDefault();
                     return;
+                case "ArrowLeft":
+                    if (focus.index > 0) {
+                        setFocus({ kind: "tab", index: focus.index - 1 });
+                        e.preventDefault();
+                    }
+                    return;
+                case "ArrowRight":
+                    if (focus.index < TAB_COUNT - 1) {
+                        setFocus({ kind: "tab", index: focus.index + 1 });
+                        e.preventDefault();
+                    }
+                    return;
+                case "Enter":
+                case " ": {
+                    const target = focus.index === 0 ? "browse" : "library";
+                    nav(tabHref(target, location.search));
+                    e.preventDefault();
+                    return;
+                }
             }
         }
     }
 
-    // Scroll focused tile into view when it changes.
+    // Scroll focused tile into view + imperatively focus the DOM
+    // element when state changes. Both branches use the tileRefs map.
     useEffect(() => {
-        if (focus.kind !== "tile") return;
-        const k = `${focus.row}:${focus.col}`;
+        const k =
+            focus.kind === "tile"
+                ? `${focus.row}:${focus.col}`
+                : `tab:${focus.index}`;
         const el = tileRefs.current[k];
-        if (el) el.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+        if (!el) return;
+        el.focus({ preventScroll: false });
+        if (focus.kind === "tile") {
+            el.scrollIntoView({
+                block: "nearest",
+                inline: "center",
+                behavior: "smooth",
+            });
+        }
     }, [focus]);
 
     if (error) {
@@ -230,7 +264,14 @@ export default function Browse() {
 
     return (
         <div className="browse" onKeyDown={onKey}>
-            <TabPill active="browse" search={location.search} />
+            <TabPill
+                active="browse"
+                search={location.search}
+                focusedIndex={focus.kind === "tab" ? focus.index : null}
+                tabRef={(i, el) => {
+                    tileRefs.current[`tab:${i}`] = el;
+                }}
+            />
             {data.rows.map((row, rIdx) => (
                 <section key={row.rowId} className="browse-row">
                     <h2 className="browse-row-title">{row.title}</h2>

@@ -225,14 +225,19 @@ export default function Browse() {
         });
     }
 
+    // The default Visibility=Visible is itself a filter (the page opens
+    // already restricted to visible items). Count it so the dropdown
+    // badge reflects the actual narrowing being applied; "All" is the
+    // only true zero state. Clear-all drops to All so the badge can
+    // actually reach zero from the UI.
     const activeFilterCount =
         (typeFilter !== "all" ? 1 : 0) +
         activeTagIds.size +
         (yearMin || yearMax ? 1 : 0) +
-        (stateFilter !== "visible" ? 1 : 0);
+        (stateFilter !== "all" ? 1 : 0);
 
     function clearAll() {
-        setStateFilter("visible");
+        setStateFilter("all");
         setTypeFilter("all");
         setActiveTagIds(new Set());
         setYearMin("");

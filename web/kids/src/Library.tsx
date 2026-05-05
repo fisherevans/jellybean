@@ -15,7 +15,7 @@ import {
 } from "./libraryCache";
 import { useOnlineStatus } from "./onlineStatus";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
-import TabPill from "./TabPill";
+import TabPill, { tabHref } from "./TabPill";
 import { shouldShowWatchMenu } from "./Watch";
 
 // Library is the kid's main browsing screen. Layout top-to-bottom:
@@ -59,9 +59,12 @@ function filterToType(t: TypeFilter): string {
 }
 
 type Focus =
+    | { kind: "tab"; index: number }
     | { kind: "filter"; index: number }
     | { kind: "cw"; index: number }
     | { kind: "grid"; index: number };
+
+const TAB_COUNT = 2;
 
 const PAGE_SIZE = 24;
 
@@ -484,7 +487,14 @@ export default function Library() {
 
     return (
         <div className="library" onKeyDown={onKey}>
-            <TabPill active="library" search={location.search} />
+            <TabPill
+                active="library"
+                search={location.search}
+                focusedIndex={focus.kind === "tab" ? focus.index : null}
+                tabRef={(i, el) => {
+                    tileRefs.current[`tab:${i}`] = el;
+                }}
+            />
             {adminProfileId && !session && <AdminPreviewBanner />}
             <header className="library-header">
                 <div>
@@ -672,10 +682,17 @@ function moveFocus(f: Focus, key: string, opts: MoveOpts): Focus {
         return f;
     }
     switch (f.kind) {
+        case "tab":
+            if (key === "ArrowLeft") return { kind: "tab", index: Math.max(0, f.index - 1) };
+            if (key === "ArrowRight")
+                return { kind: "tab", index: Math.min(TAB_COUNT - 1, f.index + 1) };
+            if (key === "ArrowDown") return { kind: "filter", index: 0 };
+            return f;
         case "filter":
             if (key === "ArrowLeft") return { kind: "filter", index: Math.max(0, f.index - 1) };
             if (key === "ArrowRight")
                 return { kind: "filter", index: Math.min(opts.filterCount - 1, f.index + 1) };
+            if (key === "ArrowUp") return { kind: "tab", index: 1 };
             if (key === "ArrowDown") {
                 if (opts.cwCount > 0) return { kind: "cw", index: 0 };
                 if (opts.gridCount > 0) return { kind: "grid", index: 0 };
@@ -723,6 +740,11 @@ function activate(
     nav: ReturnType<typeof useNavigate>,
     playSuffix: string,
 ) {
+    if (f.kind === "tab") {
+        const target = f.index === 0 ? "browse" : "library";
+        nav(tabHref(target, playSuffix));
+        return;
+    }
     if (f.kind === "filter") {
         const next = TYPE_FILTERS[f.index];
         if (next) setFilter(next);

@@ -820,7 +820,8 @@ a,
     background: var(--accent);
     color: var(--accent-fg);
 }
-.kids-tabpill-btn:focus {
+.kids-tabpill-btn:focus,
+.kids-tabpill-btn.focused {
     outline: none;
     border-color: #fff;
 }
