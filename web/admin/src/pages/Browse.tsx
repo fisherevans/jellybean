@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, type Item, type ItemState, type Tag } from "../api";
 import { useActiveProfile } from "../activeProfile";
@@ -44,7 +44,6 @@ export default function Browse() {
     const [filterOpen, setFilterOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [busyItemId, setBusyItemId] = useState<string | null>(null);
     // Item editor opens as a modal. The route /items/:itemId still
     // works as a deep link - we read it here and seed the modal id
     // on mount so the QR-code flow keeps working.
@@ -181,19 +180,6 @@ export default function Browse() {
         setActiveTagIds(new Set());
         setYearMin("");
         setYearMax("");
-    }
-
-    async function setItemState(id: string, next: ItemState) {
-        if (!profile) return;
-        setBusyItemId(id);
-        try {
-            await api.setState(id, profile.id, next);
-            await refresh();
-        } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
-        } finally {
-            setBusyItemId(null);
-        }
     }
 
     if (!profile) {
@@ -396,10 +382,6 @@ export default function Browse() {
                             key={it.Id}
                             item={it}
                             tagsById={tagsById}
-                            busy={busyItemId === it.Id}
-                            onMarkVisible={() => setItemState(it.Id, "visible")}
-                            onMarkHidden={() => setItemState(it.Id, "hidden")}
-                            onClearState={() => setItemState(it.Id, null)}
                             onEdit={() => setEditorItemId(it.Id)}
                         />
                     ))}
@@ -463,40 +445,10 @@ function formatAddedDate(iso?: string): string | null {
 type CardProps = {
     item: Item;
     tagsById: Map<number, Tag>;
-    busy: boolean;
-    onMarkVisible: () => void;
-    onMarkHidden: () => void;
-    onClearState: () => void;
     onEdit: () => void;
 };
 
-function BrowseCard({
-    item,
-    busy,
-    onMarkVisible,
-    onMarkHidden,
-    onClearState,
-    onEdit,
-}: CardProps) {
-    const [menuOpen, setMenuOpen] = useState(false);
-    const wrapRef = useRef<HTMLLIElement | null>(null);
-
-    useEffect(() => {
-        if (!menuOpen) return;
-        function onClick(e: MouseEvent) {
-            if (!wrapRef.current?.contains(e.target as Node)) setMenuOpen(false);
-        }
-        function onKey(e: KeyboardEvent) {
-            if (e.key === "Escape") setMenuOpen(false);
-        }
-        document.addEventListener("mousedown", onClick);
-        document.addEventListener("keydown", onKey);
-        return () => {
-            document.removeEventListener("mousedown", onClick);
-            document.removeEventListener("keydown", onKey);
-        };
-    }, [menuOpen]);
-
+function BrowseCard({ item, onEdit }: CardProps) {
     const posterURL = item.ImageTags?.Primary
         ? `/api/admin/items/${encodeURIComponent(item.Id)}/image?type=Primary&width=80&tag=${encodeURIComponent(
               item.ImageTags.Primary,
@@ -504,7 +456,7 @@ function BrowseCard({
         : null;
 
     return (
-        <li ref={wrapRef} className="browse-item">
+        <li className="browse-item">
             <div className="browse-item-link">
                 {posterURL ? (
                     <img
@@ -559,75 +511,18 @@ function BrowseCard({
                     )}
                 </div>
             </div>
-            <div className="browse-item-actions">
-                <button
-                    type="button"
-                    className="browse-item-edit"
-                    aria-label={`Edit ${item.Name}`}
-                    onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onEdit();
-                    }}
-                    disabled={busy}
-                >
-                    Edit
-                </button>
-                <button
-                    type="button"
-                    className="browse-item-kebab"
-                    aria-label="Quick actions"
-                    aria-expanded={menuOpen}
-                    onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setMenuOpen((v) => !v);
-                    }}
-                    disabled={busy}
-                >
-                    ⋯
-                </button>
-            </div>
-            {menuOpen && (
-                <div className="browse-item-menu" role="menu">
-                    {item.State !== "visible" && (
-                        <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                                setMenuOpen(false);
-                                onMarkVisible();
-                            }}
-                        >
-                            Mark visible
-                        </button>
-                    )}
-                    {item.State !== "hidden" && (
-                        <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                                setMenuOpen(false);
-                                onMarkHidden();
-                            }}
-                        >
-                            Mark hidden
-                        </button>
-                    )}
-                    {item.State !== null && (
-                        <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                                setMenuOpen(false);
-                                onClearState();
-                            }}
-                        >
-                            Mark unset
-                        </button>
-                    )}
-                </div>
-            )}
+            <button
+                type="button"
+                className="browse-item-edit"
+                aria-label={`Edit ${item.Name}`}
+                onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onEdit();
+                }}
+            >
+                Edit
+            </button>
         </li>
     );
 }

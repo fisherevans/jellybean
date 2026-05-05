@@ -95,6 +95,11 @@ export default function PreviewModal({ itemId, itemName, onClose }: Props) {
         // Seek to 1/3 of runtime so the parent skips intro / studio logos
         // and lands somewhere recognizable.
         v.currentTime = v.duration / 3;
+        // Default to 50% audio. Browsers persist the muted attribute we
+        // set in JSX, so we explicitly unmute + set volume here. The
+        // modal is opened by a click, so autoplay-with-sound is allowed.
+        v.muted = false;
+        v.volume = 0.5;
     }
 
     return (
@@ -125,7 +130,6 @@ export default function PreviewModal({ itemId, itemName, onClose }: Props) {
                         ref={videoRef}
                         controls
                         autoPlay
-                        muted
                         onLoadedMetadata={onLoadedMetadata}
                         className="preview-video"
                     />

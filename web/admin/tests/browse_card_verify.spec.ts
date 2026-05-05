@@ -127,25 +127,14 @@ test("browse sort dropdown matches the input/button styling", async ({ page }) =
     expect(parseFloat(sortBorder)).toBeGreaterThan(0);
 });
 
-test("browse kebab menu shows full options without clipping", async ({ page }) => {
+test("browse cards have no kebab; only the Edit button", async ({ page }) => {
     await page.goto("/manage/browse");
     await page.waitForSelector(".browse-item", { timeout: 15_000 });
-    const kebab = page.locator(".browse-item-kebab").first();
-    await kebab.click();
-    const menu = page.locator(".browse-item-menu").first();
-    await expect(menu).toBeVisible();
-    // No "Clear state" wording.
-    expect(await menu.innerText()).not.toMatch(/Clear state/);
-    // Should mention Mark unset (when state is set), or at least
-    // visible/hidden affordances.
-    const text = await menu.innerText();
-    expect(text).toMatch(/Mark (visible|hidden|unset)/);
-    // The menu should be fully visible inside the viewport.
-    const menuBox = await menu.boundingBox();
-    const vp = page.viewportSize();
-    if (!menuBox || !vp) throw new Error("missing");
-    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(vp.width + 1);
-    expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(vp.height + 1);
+    expect(await page.locator(".browse-item-kebab").count()).toBe(0);
+    expect(await page.locator(".browse-item-menu").count()).toBe(0);
+    await expect(
+        page.locator(".browse-item .browse-item-edit").first(),
+    ).toBeVisible();
 });
 
 test("browse Edit button opens the item editor modal", async ({ page }) => {
@@ -440,9 +429,13 @@ test("categorize header: title + small switcher link", async ({ page }) => {
 
 test("swipe drops the misleading remaining count", async ({ page }) => {
     await page.goto("/manage/swipe");
-    // The page either renders .swipe-controls (active swipe) or
-    // the empty-state copy (all caught up). Either way, we just
-    // assert that no node on the page mentions a "remaining" count.
+    // Wait for the wrapper heading to render so React has finished
+    // mounting either the active swipe view or the all-caught-up
+    // empty state. Then scrape every node text and assert no
+    // surface still says "remaining".
+    await expect(
+        page.locator(".categorize-header h1").filter({ hasText: "Swipe" }),
+    ).toBeVisible({ timeout: 15_000 });
     await page.waitForLoadState("networkidle");
     const body = await page.locator(".categorize-shell").innerText();
     expect(body).not.toMatch(/\bremaining\b/i);
