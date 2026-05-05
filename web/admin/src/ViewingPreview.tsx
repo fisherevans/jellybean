@@ -69,17 +69,19 @@ export function buildDimFilter(dim: number): string {
 // actually suppresses the blue channel.
 export function buildWarmFilter(redShift: number): string {
     const r = clamp01(redShift / 100);
-    const sepia = 0.85 * r;
-    const saturate = 1 + 1.4 * r;
-    const hueRotate = -22 * r;
-    const contrast = 1 + 0.06 * r;
+    const sepia = 0.7 * r;
+    const saturate = 1 + 1.3 * r;
+    const hueRotate = -20 * r;
+    const contrast = 1 + 0.05 * r;
     return `sepia(${sepia}) saturate(${saturate}) hue-rotate(${hueRotate}deg) contrast(${contrast})`;
 }
 
 // buildWarmOverlay returns the inline style for the multiply-blended
 // orange layer. The color is fixed; alpha (via opacity) scales with
-// warm intensity. 0.55 cap at r=1 keeps the image legible; pushing
-// past that turns everything pure orange.
+// warm intensity. 0.42 cap at r=1 keeps natural colors recognisable
+// (Kermit still looks like Kermit, Miss Piggy's pink still reads as
+// pink) while still chopping enough blue to feel like Night Shift.
+// Bumping past ~0.5 turns everything visibly orange.
 export function buildWarmOverlay(redShift: number): {
     background: string;
     mixBlendMode: "multiply";
@@ -87,9 +89,9 @@ export function buildWarmOverlay(redShift: number): {
 } {
     const r = clamp01(redShift / 100);
     return {
-        background: "rgb(255, 130, 40)",
+        background: "rgb(255, 140, 55)",
         mixBlendMode: "multiply",
-        opacity: r * 0.55,
+        opacity: r * 0.42,
     };
 }
 
@@ -100,7 +102,7 @@ export function buildWarmOverlay(redShift: number): {
 // wrapper element.
 export function buildFilter(dim: number, redShift: number): string {
     const r = clamp01(redShift / 100);
-    return `${buildDimFilter(dim)} sepia(${0.85 * r}) saturate(${1 + 1.4 * r}) hue-rotate(${-22 * r}deg) contrast(${1 + 0.06 * r})`;
+    return `${buildDimFilter(dim)} sepia(${0.7 * r}) saturate(${1 + 1.3 * r}) hue-rotate(${-20 * r}deg) contrast(${1 + 0.05 * r})`;
 }
 
 function clamp01(x: number): number {

@@ -374,20 +374,20 @@ test("warm tint sweep: 0/50/100 produce visibly different output", async ({ page
             });
     }
 
-    // Sanity: at warm=100, the overlay opacity should be > 0.4
-    // (configured 0.55 cap in buildWarmOverlay) and the image
-    // should carry the strong sepia/saturate filter.
+    // Sanity: at warm=100 the overlay opacity hits the 0.42 cap
+    // and the image carries the warm filter.
     const overlay = page.locator(".viewing-preview-warm-overlay").first();
     const op = await overlay.evaluate(
         (el) => parseFloat(getComputedStyle(el).opacity),
     );
-    expect(op).toBeGreaterThan(0.4);
+    expect(op).toBeGreaterThan(0.39);
+    expect(op).toBeLessThan(0.45);
     const imgFilter = await page
         .locator(".viewing-preview-img")
         .first()
         .evaluate((el) => getComputedStyle(el).filter);
-    expect(imgFilter).toMatch(/sepia\(0\.85\)/);
-    expect(imgFilter).toMatch(/saturate\(2\.4\)/);
+    expect(imgFilter).toMatch(/sepia\(0\.7\)/);
+    expect(imgFilter).toMatch(/saturate\(2\.3\)/);
 });
 
 test("viewing preview backdrop fits inside the bezel", async ({ page }) => {
