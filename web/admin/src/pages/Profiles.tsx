@@ -5,6 +5,7 @@ import ProfileModal from "../ProfileModal";
 import ProfileTagFiltersModal from "../ProfileTagFiltersModal";
 import ProfileTimeLimitsModal from "../ProfileTimeLimitsModal";
 import ProfileBodyBreaksModal from "../ProfileBodyBreaksModal";
+import ProfileViewingControlsModal from "../ProfileViewingControlsModal";
 import Spinner from "../Spinner";
 
 type Modal =
@@ -13,7 +14,8 @@ type Modal =
     | { kind: "edit"; profile: Profile }
     | { kind: "tag-filters"; profile: Profile }
     | { kind: "time-limits"; profile: Profile }
-    | { kind: "body-breaks"; profile: Profile };
+    | { kind: "body-breaks"; profile: Profile }
+    | { kind: "viewing-controls"; profile: Profile };
 
 export default function Profiles() {
     const [profiles, setProfiles] = useState<Profile[] | null>(null);
@@ -147,6 +149,16 @@ export default function Profiles() {
                                     >
                                         Body breaks
                                     </button>
+                                    <button
+                                        onClick={() =>
+                                            setModal({
+                                                kind: "viewing-controls",
+                                                profile: p,
+                                            })
+                                        }
+                                    >
+                                        Viewing
+                                    </button>
                                     <button onClick={() => setModal({ kind: "edit", profile: p })}>
                                         Edit
                                     </button>
@@ -194,6 +206,12 @@ export default function Profiles() {
             )}
             {modal.kind === "body-breaks" && (
                 <ProfileBodyBreaksModal
+                    profile={modal.profile}
+                    onClose={() => setModal({ kind: "closed" })}
+                />
+            )}
+            {modal.kind === "viewing-controls" && (
+                <ProfileViewingControlsModal
                     profile={modal.profile}
                     onClose={() => setModal({ kind: "closed" })}
                 />

@@ -239,6 +239,15 @@ export type ProfileBodyBreaks = {
     updatedAt?: string;
 };
 
+export type ProfileViewingControls = {
+    profileId: number;
+    dimPercent: number;
+    redShiftPercent: number;
+    autoOffClockTime?: string;
+    autoOffOnTimeLimit: boolean;
+    updatedAt?: string;
+};
+
 export type APIKey = {
     id: number;
     name: string;
@@ -629,6 +638,22 @@ export const api = {
         request<void>(
             "PUT",
             `/api/admin/profiles/${profileId}/body-breaks`,
+            body,
+        ),
+
+    // --- M12: viewing controls ------------------------------------
+    getProfileViewingControls: (profileId: number) =>
+        request<ProfileViewingControls>(
+            "GET",
+            `/api/admin/profiles/${profileId}/viewing-controls`,
+        ),
+    setProfileViewingControls: (
+        profileId: number,
+        body: ProfileViewingControls,
+    ) =>
+        request<void>(
+            "PUT",
+            `/api/admin/profiles/${profileId}/viewing-controls`,
             body,
         ),
 };
