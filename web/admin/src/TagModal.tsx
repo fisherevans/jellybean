@@ -53,10 +53,9 @@ export default function TagModal({ mode, tag, onSaved, onClose }: Props) {
         <div className="modal-backdrop" onClick={() => !busy && onClose()}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
                 <h2>{mode === "create" ? "New tag" : `Rename "${tag?.name}"`}</h2>
-                {error && <div className="error">{error}</div>}
-                <form onSubmit={submit}>
-                    <label className="field">
-                        <span>Name</span>
+                <form className="modal-form" onSubmit={submit}>
+                    <label>
+                        Name
                         <input
                             type="text"
                             value={name}
@@ -67,16 +66,19 @@ export default function TagModal({ mode, tag, onSaved, onClose }: Props) {
                             placeholder="e.g. Adventure, Bedtime, Scary"
                         />
                     </label>
-                    <label className="field">
-                        <span>Description (optional)</span>
+                    <label>
+                        Description
                         <textarea
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
                             disabled={busy}
                             rows={3}
-                            placeholder="What kind of content this tag covers"
+                            placeholder="Optional"
                         />
                     </label>
+
+                    {error && <div className="error">{error}</div>}
+
                     <div className="modal-actions">
                         <button type="button" onClick={onClose} disabled={busy}>
                             Cancel
