@@ -256,8 +256,10 @@ export type Mode = {
     scheduleStartTime: string;
     scheduleEndTime: string;
     tagFiltersJson?: string;
+    requiredTagIds: number[];
     timeLimitsJson?: string;
     viewingControlsJson?: string;
+    layoutId?: number | null;
     themeKey: string;
     enterVoiceMessage?: string;
     exitVoiceMessage?: string;

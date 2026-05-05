@@ -9,6 +9,7 @@ package curation
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -23,8 +24,15 @@ type Mode struct {
 	ScheduleStartTime   string    `json:"scheduleStartTime"`
 	ScheduleEndTime     string    `json:"scheduleEndTime"`
 	TagFiltersJSON      string    `json:"tagFiltersJson,omitempty"`
+	// RequiredTagIDs: when non-empty, items must carry at least one
+	// of these tags to be visible during the mode. Stored as a JSON
+	// array of integers. Empty array = no extra tag requirement.
+	RequiredTagIDs      []int64   `json:"requiredTagIds"`
 	TimeLimitsJSON      string    `json:"timeLimitsJson,omitempty"`
 	ViewingControlsJSON string    `json:"viewingControlsJson,omitempty"`
+	// LayoutID: optional layout override used while the mode is
+	// active. nil / 0 = use the profile's normal layout.
+	LayoutID            *int64    `json:"layoutId,omitempty"`
 	ThemeKey            string    `json:"themeKey"`
 	EnterVoiceMessage   string    `json:"enterVoiceMessage,omitempty"`
 	ExitVoiceMessage    string    `json:"exitVoiceMessage,omitempty"`
@@ -44,7 +52,7 @@ func (s *Store) ListModes(ctx context.Context, profileID int64) ([]Mode, error) 
 		       schedule_end_time, tag_filters_json, COALESCE(time_limits_json, ''),
 		       COALESCE(viewing_controls_json, ''), theme_key,
 		       COALESCE(enter_voice_message, ''), COALESCE(exit_voice_message, ''),
-		       created_at, updated_at
+		       layout_id, required_tag_ids_json, created_at, updated_at
 		FROM profile_modes WHERE profile_id = ? ORDER BY name COLLATE NOCASE`, profileID)
 	if err != nil {
 		return nil, err
@@ -52,17 +60,11 @@ func (s *Store) ListModes(ctx context.Context, profileID int64) ([]Mode, error) 
 	defer rows.Close()
 	var out []Mode
 	for rows.Next() {
-		var m Mode
-		var ca, ua int64
-		if err := rows.Scan(&m.ID, &m.ProfileID, &m.Name, &m.ScheduleDays,
-			&m.ScheduleStartTime, &m.ScheduleEndTime, &m.TagFiltersJSON,
-			&m.TimeLimitsJSON, &m.ViewingControlsJSON, &m.ThemeKey,
-			&m.EnterVoiceMessage, &m.ExitVoiceMessage, &ca, &ua); err != nil {
+		m, err := scanMode(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		m.CreatedAt = time.Unix(ca, 0).UTC()
-		m.UpdatedAt = time.Unix(ua, 0).UTC()
-		out = append(out, m)
+		out = append(out, *m)
 	}
 	return out, rows.Err()
 }
@@ -73,21 +75,45 @@ func (s *Store) GetMode(ctx context.Context, id int64) (*Mode, error) {
 		       schedule_end_time, tag_filters_json, COALESCE(time_limits_json, ''),
 		       COALESCE(viewing_controls_json, ''), theme_key,
 		       COALESCE(enter_voice_message, ''), COALESCE(exit_voice_message, ''),
-		       created_at, updated_at
+		       layout_id, required_tag_ids_json, created_at, updated_at
 		FROM profile_modes WHERE id = ?`, id)
-	var m Mode
-	var ca, ua int64
-	if err := row.Scan(&m.ID, &m.ProfileID, &m.Name, &m.ScheduleDays,
-		&m.ScheduleStartTime, &m.ScheduleEndTime, &m.TagFiltersJSON,
-		&m.TimeLimitsJSON, &m.ViewingControlsJSON, &m.ThemeKey,
-		&m.EnterVoiceMessage, &m.ExitVoiceMessage, &ca, &ua); err != nil {
+	m, err := scanMode(row.Scan)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, sql.ErrNoRows
 		}
 		return nil, err
 	}
+	return m, nil
+}
+
+// scanMode pulls a row's columns into a Mode struct. Used by both
+// ListModes (rows.Scan) and GetMode (row.Scan).
+func scanMode(scan func(...any) error) (*Mode, error) {
+	var m Mode
+	var ca, ua int64
+	var layoutID sql.NullInt64
+	var reqTagsJSON string
+	if err := scan(&m.ID, &m.ProfileID, &m.Name, &m.ScheduleDays,
+		&m.ScheduleStartTime, &m.ScheduleEndTime, &m.TagFiltersJSON,
+		&m.TimeLimitsJSON, &m.ViewingControlsJSON, &m.ThemeKey,
+		&m.EnterVoiceMessage, &m.ExitVoiceMessage, &layoutID,
+		&reqTagsJSON, &ca, &ua); err != nil {
+		return nil, err
+	}
 	m.CreatedAt = time.Unix(ca, 0).UTC()
 	m.UpdatedAt = time.Unix(ua, 0).UTC()
+	if layoutID.Valid {
+		v := layoutID.Int64
+		m.LayoutID = &v
+	}
+	m.RequiredTagIDs = []int64{}
+	if reqTagsJSON != "" {
+		_ = json.Unmarshal([]byte(reqTagsJSON), &m.RequiredTagIDs)
+	}
+	if m.RequiredTagIDs == nil {
+		m.RequiredTagIDs = []int64{}
+	}
 	return &m, nil
 }
 
@@ -104,19 +130,26 @@ func (s *Store) CreateMode(ctx context.Context, m Mode) (*Mode, error) {
 	if m.TagFiltersJSON == "" {
 		m.TagFiltersJSON = "[]"
 	}
+	requiredTagsJSON := encodeIntArray(m.RequiredTagIDs)
+	var layoutID any
+	if m.LayoutID != nil && *m.LayoutID > 0 {
+		layoutID = *m.LayoutID
+	}
 	now := time.Now().UTC().Unix()
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO profile_modes
 		    (profile_id, name, schedule_days, schedule_start_time,
 		     schedule_end_time, tag_filters_json, time_limits_json,
 		     viewing_controls_json, theme_key, enter_voice_message,
-		     exit_voice_message, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		     exit_voice_message, layout_id, required_tag_ids_json,
+		     created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ProfileID, m.Name, m.ScheduleDays, m.ScheduleStartTime,
 		m.ScheduleEndTime, m.TagFiltersJSON,
 		nullableString(m.TimeLimitsJSON), nullableString(m.ViewingControlsJSON),
 		m.ThemeKey, nullableString(m.EnterVoiceMessage),
-		nullableString(m.ExitVoiceMessage), now, now)
+		nullableString(m.ExitVoiceMessage), layoutID, requiredTagsJSON,
+		now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +167,11 @@ func (s *Store) UpdateMode(ctx context.Context, id int64, m Mode) (*Mode, error)
 	if m.TagFiltersJSON == "" {
 		m.TagFiltersJSON = "[]"
 	}
+	requiredTagsJSON := encodeIntArray(m.RequiredTagIDs)
+	var layoutID any
+	if m.LayoutID != nil && *m.LayoutID > 0 {
+		layoutID = *m.LayoutID
+	}
 	now := time.Now().UTC().Unix()
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE profile_modes SET
@@ -141,17 +179,26 @@ func (s *Store) UpdateMode(ctx context.Context, id int64, m Mode) (*Mode, error)
 		    schedule_end_time = ?, tag_filters_json = ?,
 		    time_limits_json = ?, viewing_controls_json = ?,
 		    theme_key = ?, enter_voice_message = ?,
-		    exit_voice_message = ?, updated_at = ?
+		    exit_voice_message = ?, layout_id = ?,
+		    required_tag_ids_json = ?, updated_at = ?
 		WHERE id = ?`,
 		m.Name, m.ScheduleDays, m.ScheduleStartTime, m.ScheduleEndTime,
 		m.TagFiltersJSON, nullableString(m.TimeLimitsJSON),
 		nullableString(m.ViewingControlsJSON), m.ThemeKey,
 		nullableString(m.EnterVoiceMessage), nullableString(m.ExitVoiceMessage),
-		now, id)
+		layoutID, requiredTagsJSON, now, id)
 	if err != nil {
 		return nil, err
 	}
 	return s.GetMode(ctx, id)
+}
+
+func encodeIntArray(ids []int64) string {
+	if ids == nil {
+		ids = []int64{}
+	}
+	b, _ := json.Marshal(ids)
+	return string(b)
 }
 
 func (s *Store) DeleteMode(ctx context.Context, id int64) error {

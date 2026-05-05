@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, HttpError, type Mode } from "./api";
+import { api, HttpError, type Layout, type Mode, type Tag } from "./api";
 
 // Per-profile time-based modes. Each mode has a day-of-week + clock
 // schedule and can override tag filters / time limits / viewing
@@ -15,13 +15,21 @@ const THEMES = ["default", "bedtime", "morning", "focus"];
 
 export default function ProfileModesForm({ profileId }: Props) {
     const [modes, setModes] = useState<Mode[] | null>(null);
+    const [tags, setTags] = useState<Tag[]>([]);
+    const [layouts, setLayouts] = useState<Layout[]>([]);
     const [editing, setEditing] = useState<Mode | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     async function refresh() {
         try {
-            const got = await api.listProfileModes(profileId);
-            setModes(got.modes);
+            const [modesRes, tagsRes, layoutsRes] = await Promise.all([
+                api.listProfileModes(profileId),
+                api.listTags({ sort: "name" }),
+                api.listLayouts(),
+            ]);
+            setModes(modesRes.modes);
+            setTags(tagsRes.tags);
+            setLayouts(layoutsRes.layouts);
             setError(null);
         } catch (err) {
             setError(err instanceof HttpError ? err.message : String(err));
@@ -45,6 +53,8 @@ export default function ProfileModesForm({ profileId }: Props) {
         return (
             <ModeEditor
                 profileId={profileId}
+                tags={tags}
+                layouts={layouts}
                 mode={editing}
                 onCancel={() => setEditing(null)}
                 onSaved={async () => {
@@ -98,6 +108,7 @@ export default function ProfileModesForm({ profileId }: Props) {
                             scheduleStartTime: "20:00",
                             scheduleEndTime: "06:00",
                             tagFiltersJson: "[]",
+                            requiredTagIds: [],
                             themeKey: "default",
                         })
                     }
@@ -111,12 +122,21 @@ export default function ProfileModesForm({ profileId }: Props) {
 
 type EditorProps = {
     profileId: number;
+    tags: Tag[];
+    layouts: Layout[];
     mode: Mode;
     onCancel: () => void;
     onSaved: () => void;
 };
 
-function ModeEditor({ profileId, mode, onCancel, onSaved }: EditorProps) {
+function ModeEditor({
+    profileId,
+    tags,
+    layouts,
+    mode,
+    onCancel,
+    onSaved,
+}: EditorProps) {
     const [m, setM] = useState<Mode>(mode);
     const [error, setError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
@@ -128,6 +148,12 @@ function ModeEditor({ profileId, mode, onCancel, onSaved }: EditorProps) {
     function toggleDay(idx: number) {
         const bit = 1 << idx;
         set("scheduleDays", m.scheduleDays ^ bit);
+    }
+
+    function toggleRequiredTag(id: number) {
+        const cur = m.requiredTagIds ?? [];
+        const has = cur.includes(id);
+        set("requiredTagIds", has ? cur.filter((t) => t !== id) : [...cur, id]);
     }
 
     async function save() {
@@ -214,6 +240,58 @@ function ModeEditor({ profileId, mode, onCancel, onSaved }: EditorProps) {
                     ))}
                 </select>
             </label>
+            <label>
+                Layout while this mode is active
+                <select
+                    value={m.layoutId ?? 0}
+                    onChange={(e) => {
+                        const v = Number(e.target.value);
+                        set("layoutId", v > 0 ? v : null);
+                    }}
+                >
+                    <option value={0}>Use the profile's default layout</option>
+                    {layouts.map((l) => (
+                        <option key={l.id} value={l.id}>
+                            {l.name}
+                            {l.isDefault ? " (default)" : ""}
+                        </option>
+                    ))}
+                </select>
+                <span className="help">
+                    Use a stripped-down layout (e.g. Continue Watching only)
+                    while the mode is active. Leave on the default to keep
+                    the kid's normal browse screen.
+                </span>
+            </label>
+            <fieldset className="day-toggles">
+                <legend>
+                    Required tags ({(m.requiredTagIds ?? []).length} selected)
+                </legend>
+                {tags.length === 0 ? (
+                    <p className="muted">
+                        No tags defined yet. Items would be unrestricted on
+                        the tag axis. Create tags in the Tags page first.
+                    </p>
+                ) : (
+                    <div className="day-toggles-grid wide">
+                        {tags.map((t) => (
+                            <label key={t.id} className="day-toggle">
+                                <input
+                                    type="checkbox"
+                                    checked={(m.requiredTagIds ?? []).includes(t.id)}
+                                    onChange={() => toggleRequiredTag(t.id)}
+                                />
+                                <span>{t.name}</span>
+                            </label>
+                        ))}
+                    </div>
+                )}
+                <p className="help">
+                    When set, only items that carry at least one of these
+                    tags will be visible during the mode. Leave empty to
+                    skip the extra tag filter.
+                </p>
+            </fieldset>
             <label>
                 Enter voice message (optional)
                 <input
