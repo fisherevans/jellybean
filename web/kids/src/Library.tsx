@@ -15,6 +15,7 @@ import {
 } from "./libraryCache";
 import { useOnlineStatus } from "./onlineStatus";
 import TabPill from "./TabPill";
+import { shouldShowWatchMenu } from "./Watch";
 
 // Library is the kid's main browsing screen. Layout top-to-bottom:
 //
@@ -519,7 +520,10 @@ export default function Library() {
                                         focused={isFocused(focus, "cw", i)}
                                         onClick={() => {
                                             setFocus({ kind: "cw", index: i });
-                                            nav(`/play/${encodeURIComponent(it.Id)}${playSuffix}`);
+                                            const href = shouldShowWatchMenu(it)
+                                                ? `/watch/${encodeURIComponent(it.Id)}${playSuffix}`
+                                                : `/play/${encodeURIComponent(it.Id)}${playSuffix}`;
+                                            nav(href);
                                         }}
                                         onFocus={() => setFocus({ kind: "cw", index: i })}
                                         refCallback={(el) => (tileRefs.current[`cw:${i}`] = el)}
@@ -547,7 +551,10 @@ export default function Library() {
                                         focused={isFocused(focus, "grid", i)}
                                         onClick={() => {
                                             setFocus({ kind: "grid", index: i });
-                                            nav(`/play/${encodeURIComponent(it.Id)}${playSuffix}`);
+                                            const href = shouldShowWatchMenu(it)
+                                                ? `/watch/${encodeURIComponent(it.Id)}${playSuffix}`
+                                                : `/play/${encodeURIComponent(it.Id)}${playSuffix}`;
+                                            nav(href);
                                         }}
                                         onFocus={() => setFocus({ kind: "grid", index: i })}
                                         refCallback={(el) =>
@@ -661,7 +668,12 @@ function activate(
         return;
     }
     const target = f.kind === "cw" ? cw[f.index] : items[f.index];
-    if (target) nav(`/play/${encodeURIComponent(target.Id)}${playSuffix}`);
+    if (target) {
+        const href = shouldShowWatchMenu(target)
+            ? `/watch/${encodeURIComponent(target.Id)}${playSuffix}`
+            : `/play/${encodeURIComponent(target.Id)}${playSuffix}`;
+        nav(href);
+    }
     void filter;
 }
 

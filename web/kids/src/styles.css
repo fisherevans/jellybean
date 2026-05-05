@@ -1061,3 +1061,228 @@ a,
     font-size: 0.85rem;
     word-break: break-all;
 }
+
+/* M7 watch interstitial. Hero composition over a blurred backdrop;
+   series additionally render an episode-accordion below the hero.
+   Designed to be readable at TV viewing distance, so type sizes and
+   tap targets are deliberately oversized vs. the admin web app. */
+.watch-screen {
+    position: relative;
+    min-height: 100vh;
+    color: var(--fg);
+    overflow-y: auto;
+    padding: 1.5rem 2rem 4rem;
+}
+.watch-backdrop {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 60vh;
+    object-fit: cover;
+    z-index: 0;
+    filter: blur(20px) brightness(0.45);
+    transform: scale(1.05);
+}
+.watch-backdrop-fallback {
+    background: linear-gradient(135deg, #2a2a2a, #111);
+}
+.watch-back {
+    position: relative;
+    z-index: 2;
+    margin-bottom: 1.5rem;
+}
+.watch-back-link {
+    color: var(--fg);
+    text-decoration: none;
+    font-size: 1rem;
+    background: rgba(0, 0, 0, 0.45);
+    padding: 0.5rem 0.85rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+}
+.watch-back-link:focus {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+}
+.watch-hero {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 2rem;
+    align-items: end;
+    padding-bottom: 2rem;
+    min-height: 40vh;
+}
+.watch-poster {
+    width: 220px;
+    aspect-ratio: 2 / 3;
+    object-fit: cover;
+    border-radius: 12px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+    background: var(--card);
+}
+.watch-hero-text h1 {
+    font-size: 2.4rem;
+    margin: 0 0 0.4rem;
+    line-height: 1.1;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+.watch-hero-meta {
+    color: var(--muted);
+    margin: 0 0 1.25rem;
+    font-size: 1rem;
+}
+.watch-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+.watch-action {
+    background: var(--card);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.85rem 1.5rem;
+    font-size: 1.05rem;
+    cursor: pointer;
+    min-width: 140px;
+}
+.watch-action.primary {
+    background: var(--accent);
+    color: #111;
+    border-color: var(--accent);
+    font-weight: 600;
+}
+.watch-action:focus {
+    outline: 3px solid var(--accent);
+    outline-offset: 3px;
+}
+.watch-action:disabled {
+    opacity: 0.6;
+    cursor: progress;
+}
+
+.watch-accordion {
+    position: relative;
+    z-index: 1;
+    margin-top: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+}
+.watch-accordion .muted {
+    color: var(--muted);
+}
+.watch-season {
+    border-bottom: 1px solid var(--border);
+}
+.watch-season:last-child {
+    border-bottom: none;
+}
+.watch-season-head {
+    width: 100%;
+    background: transparent;
+    color: var(--fg);
+    border: none;
+    text-align: left;
+    padding: 0.85rem 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 1.1rem;
+    cursor: pointer;
+}
+.watch-season-head:focus {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 6px;
+}
+.watch-season-head.open {
+    color: var(--accent);
+}
+.watch-season-count {
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+.watch-episode-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-bottom: 0.85rem;
+}
+.watch-episode {
+    width: 100%;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--fg);
+    text-align: left;
+    padding: 0.6rem;
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    gap: 0.85rem;
+    align-items: center;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+}
+.watch-episode:focus {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+}
+.watch-episode-thumb {
+    width: 160px;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: 6px;
+    background: var(--bg);
+}
+.watch-episode-thumb.placeholder {
+    background: linear-gradient(135deg, #2a2a2a, #1a1a1a);
+}
+.watch-episode-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+}
+.watch-episode-title {
+    font-size: 1rem;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+.watch-episode-badge {
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    margin-right: 0.25rem;
+}
+.watch-episode-done {
+    color: var(--accent);
+    margin-left: 0.4rem;
+}
+.watch-episode-meta {
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+.watch-episode-progress {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 3px;
+    background: var(--accent);
+    border-radius: 0 2px 2px 0;
+    pointer-events: none;
+}
+

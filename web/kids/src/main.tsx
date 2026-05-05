@@ -6,6 +6,7 @@ import Browse from "./Browse";
 import Library from "./Library";
 import Login from "./Login";
 import Play from "./Play";
+import Watch from "./Watch";
 import { prefetchLibrary } from "./prefetch";
 import "./styles.css";
 
@@ -34,6 +35,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                 <Route path="/login" element={<Login />} />
                 <Route path="/browse" element={<Browse />} />
                 <Route path="/library" element={<Library />} />
+                <Route path="/watch/:itemId" element={<Watch />} />
                 <Route path="/play/:itemId" element={<Play />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

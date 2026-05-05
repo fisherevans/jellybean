@@ -44,11 +44,14 @@ test.describe("kids browse + tab pill", () => {
         await expect(libraryBtn).toHaveClass(/active/);
     });
 
-    test("clicking a tile navigates to /play", async ({ page }) => {
+    test("clicking a tile navigates to /play or /watch", async ({ page }) => {
+        // M7: Series + in-progress movies route to /watch; fresh
+        // movies still go straight to /play. Either is a valid
+        // outcome for "the first tile."
         await gotoKids(page, "/kids/browse?profileId=1");
         const firstTile = page.locator(".browse-tile").first();
         await expect(firstTile).toBeVisible({ timeout: 15_000 });
         await firstTile.click();
-        await expect(page).toHaveURL(/\/kids\/play\//);
+        await expect(page).toHaveURL(/\/kids\/(play|watch)\//);
     });
 });

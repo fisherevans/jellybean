@@ -795,6 +795,212 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 }
 
 
+// kidsItemResponse is the lightweight metadata payload for the M7
+// watch menu. Distinct from kidsStreamResponse: this endpoint does NOT
+// hit PostPlaybackInfo, so opening the watch menu doesn't kick off a
+// transcode session for content the kid hasn't decided to play yet.
+type kidsItemResponse struct {
+	ItemID         string                 `json:"itemId"`
+	ItemName       string                 `json:"itemName"`
+	ItemType       string                 `json:"itemType,omitempty"`
+	SeriesID       string                 `json:"seriesId,omitempty"`
+	SeriesName     string                 `json:"seriesName,omitempty"`
+	ProductionYear int                    `json:"productionYear,omitempty"`
+	RunTimeTicks   int64                  `json:"runtimeTicks,omitempty"`
+	UserData       *jellyfin.ItemUserData `json:"userData,omitempty"`
+}
+
+// handleKidsItem returns just the metadata for a single item -
+// driven by the M7 watch menu, which needs name + UserData to render
+// hero buttons (Play / Resume / Restart / Watch Again) without
+// triggering a transcode session.
+func (s *Server) handleKidsItem(w http.ResponseWriter, r *http.Request) {
+	kc := s.resolveKidsAuth(r)
+	if kc == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		http.Error(w, "item id required", http.StatusBadRequest)
+		return
+	}
+	ctx, _ := kidsRequestContext(r)
+	var (
+		item *jellyfin.Item
+		err  error
+	)
+	if kc.JellyfinToken != "" {
+		res, ferr := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{IDs: []string{id}}, kc.JellyfinToken)
+		if ferr == nil && len(res.Items) == 0 {
+			err = jellyfin.ErrNotFound
+		} else if ferr == nil {
+			item = &res.Items[0]
+		} else {
+			err = ferr
+		}
+	} else {
+		item, err = s.jellyfin.GetItem(ctx, id)
+	}
+	if err != nil {
+		if errors.Is(err, jellyfin.ErrNotFound) {
+			http.Error(w, "item not found", http.StatusNotFound)
+			return
+		}
+		s.logger.Error().Err(err).Str("id", id).Msg("kids item resolve")
+		http.Error(w, "failed to resolve item", http.StatusBadGateway)
+		return
+	}
+	resp := kidsItemResponse{
+		ItemID:         id,
+		ItemName:       item.Name,
+		ItemType:       item.Type,
+		SeriesID:       item.SeriesID,
+		SeriesName:     item.SeriesName,
+		ProductionYear: item.ProductionYear,
+		RunTimeTicks:   item.RunTimeTicks,
+		UserData:       item.UserData,
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleKidsSeriesEpisodes returns the full season + episode list for
+// a series, with per-episode UserData (resume position, watched flag,
+// played percentage) so the M7 watch menu's accordion can render
+// progress markers without a second round trip.
+//
+// Episodes are grouped by season number ascending; specials (season
+// 0) sort to the top per Jellyfin convention.
+func (s *Server) handleKidsSeriesEpisodes(w http.ResponseWriter, r *http.Request) {
+	kc := s.resolveKidsAuth(r)
+	if kc == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		http.Error(w, "series id required", http.StatusBadRequest)
+		return
+	}
+	ctx, _ := kidsRequestContext(r)
+
+	// Per-user fetch (kid path) brings UserData through; admin preview
+	// has no kid token, so the accordion renders structure-only with
+	// no progress markers. Both paths use the same items filter; only
+	// the auth differs.
+	useUser := kc.JellyfinToken != ""
+	fetch := func(f jellyfin.ItemsFilter) (*jellyfin.ItemsResult, error) {
+		if useUser {
+			return s.jellyfin.GetItemsAsUser(ctx, f, kc.JellyfinToken)
+		}
+		return s.jellyfin.GetItems(ctx, f)
+	}
+
+	// Resolve the series first so we can return the name + verify it's
+	// actually a Series (defensive against a kid hitting this with a
+	// movie id, which would 500 the items query otherwise).
+	res, err := fetch(jellyfin.ItemsFilter{IDs: []string{id}})
+	if err != nil {
+		s.logger.Error().Err(err).Msg("episodes: series lookup")
+		http.Error(w, "failed to load series", http.StatusBadGateway)
+		return
+	}
+	if len(res.Items) == 0 || res.Items[0].Type != "Series" {
+		http.Error(w, "series not found", http.StatusNotFound)
+		return
+	}
+	series := res.Items[0]
+
+	// Pull every episode of the series via Jellyfin's items endpoint.
+	// Limit=10000 is generous; no real series has more.
+	epRes, err := fetch(jellyfin.ItemsFilter{
+		IncludeItemTypes: []string{"Episode"},
+		Recursive:        true,
+		Limit:            10_000,
+		SortBy:           "ParentIndexNumber,IndexNumber",
+		SortOrder:        "Ascending",
+	})
+	if err != nil {
+		s.logger.Error().Err(err).Msg("episodes: list")
+		http.Error(w, "failed to load episodes", http.StatusBadGateway)
+		return
+	}
+	// Filter client-side to the series' episodes. Jellyfin's
+	// IncludeItemTypes=Episode + ParentId is more efficient when
+	// supported but our existing client doesn't have ParentId on
+	// the filter struct; the post-filter is fine for typical
+	// libraries.
+	episodes := make([]jellyfin.Item, 0, len(epRes.Items))
+	for _, ep := range epRes.Items {
+		if ep.SeriesID == id {
+			episodes = append(episodes, ep)
+		}
+	}
+
+	type episodeJSON struct {
+		ID           string                 `json:"id"`
+		IndexNumber  *int                   `json:"indexNumber,omitempty"`
+		Name         string                 `json:"name"`
+		RuntimeTicks int64                  `json:"runtimeTicks,omitempty"`
+		ImageTag     string                 `json:"imageTag,omitempty"`
+		UserData     *jellyfin.ItemUserData `json:"userData,omitempty"`
+	}
+	type seasonJSON struct {
+		SeasonNumber int           `json:"seasonNumber"`
+		Episodes     []episodeJSON `json:"episodes"`
+	}
+	bySeason := map[int]*seasonJSON{}
+	seasonOrder := []int{}
+	for _, ep := range episodes {
+		num := -1
+		if ep.ParentIndexNumber != nil {
+			num = *ep.ParentIndexNumber
+		}
+		s, ok := bySeason[num]
+		if !ok {
+			s = &seasonJSON{SeasonNumber: num}
+			bySeason[num] = s
+			seasonOrder = append(seasonOrder, num)
+		}
+		s.Episodes = append(s.Episodes, episodeJSON{
+			ID:           ep.ID,
+			IndexNumber:  ep.IndexNumber,
+			Name:         ep.Name,
+			RuntimeTicks: ep.RunTimeTicks,
+			ImageTag:     ep.ImageTags.Primary,
+			UserData:     ep.UserData,
+		})
+	}
+	sort.Slice(seasonOrder, func(i, j int) bool {
+		// Specials (0) at the top; -1 (no season) at the very bottom;
+		// other seasons ascending in between.
+		a, b := seasonOrder[i], seasonOrder[j]
+		if a == 0 {
+			return true
+		}
+		if b == 0 {
+			return false
+		}
+		if a == -1 {
+			return false
+		}
+		if b == -1 {
+			return true
+		}
+		return a < b
+	})
+	seasons := make([]seasonJSON, 0, len(seasonOrder))
+	for _, n := range seasonOrder {
+		seasons = append(seasons, *bySeason[n])
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"seriesId":   series.ID,
+		"seriesName": series.Name,
+		"seasons":    seasons,
+	})
+}
+
 // kidsPreferredAudioStreamIndex returns the audio-stream index that
 // matches the active profile's default language, when such a track
 // exists on the item. Returns 0 (= use Jellyfin's default selection)

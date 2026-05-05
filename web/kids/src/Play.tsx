@@ -104,6 +104,11 @@ export default function Play() {
     const nav = useNavigate();
     const location = useLocation();
     const libraryHref = `/library${location.search}`;
+    // M7 #44: hardware/back button on the player should land on the
+    // watch interstitial (paused) for the same content - movie -> its
+    // own watch menu, series episode -> the series watch menu (so the
+    // kid can pick another episode). Falls through to library when we
+    // don't yet know what we're playing (e.g. fetch error).
 
     const [status, dispatch] = useReducer(statusReducer, { kind: "fetching" });
     const [seriesLabel, setSeriesLabel] = useState<string | null>(null);
@@ -128,6 +133,14 @@ export default function Play() {
         }
     })();
 
+    // Back target for the player. Prefer the series page when we're on
+    // an episode so the kid lands on the episode picker, else the item
+    // itself. Falls through to library when stream isn't loaded yet.
+    const watchTarget = stream?.seriesId ?? stream?.itemId ?? itemId ?? "";
+    const watchHref = watchTarget
+        ? `/watch/${encodeURIComponent(watchTarget)}${location.search}`
+        : libraryHref;
+
     // Track the PlaySessionId of the currently-playing stream so we can
     // call stop-encoding on it before swapping to a new stream. Updated
     // whenever stream changes; consumed by handleNextEpisode + cleanup.
@@ -136,14 +149,15 @@ export default function Play() {
         playSessionRef.current = playSessionIdFromUrl(stream?.streamUrl);
     }, [stream?.streamUrl]);
 
-    // Esc -> back to library. Outside the transport's scope.
+    // Esc -> back to the watch menu (M7 #44). Outside the transport's
+    // scope.
     useEffect(() => {
         function onKey(e: KeyboardEvent) {
-            if (e.key === "Escape") nav(libraryHref);
+            if (e.key === "Escape") nav(watchHref);
         }
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [nav, libraryHref]);
+    }, [nav, watchHref]);
 
     // Resolve the stream URL for this itemId. Movies short-circuit;
     // Series resolve through /next-up to get an actual episode.
@@ -298,7 +312,7 @@ export default function Play() {
     function onEnded() {
         reportStopped();
         dispatch({ type: "ended" });
-        nav(libraryHref);
+        nav(watchHref);
     }
 
     const handleRestart = useCallback(() => {
@@ -451,10 +465,10 @@ export default function Play() {
             />
             <header className={`play-header ${headerVisible ? "visible" : "hidden"}`}>
                 <Link
-                    to={libraryHref}
+                    to={watchHref}
                     ref={backRef}
                     className="play-back"
-                    aria-label="Back to library"
+                    aria-label="Back"
                 >
                     <ArrowLeft weight="fill" size={32} aria-hidden />
                 </Link>
@@ -497,7 +511,7 @@ export default function Play() {
                 onRestart={handleRestart}
                 onNextEpisode={showNextEpisode ? handleNextEpisode : undefined}
                 onVisibleChange={setTransportVisible}
-                onBack={() => nav(libraryHref)}
+                onBack={() => nav(watchHref)}
                 backRef={backRef}
             />
         </div>

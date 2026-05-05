@@ -7,6 +7,7 @@ import {
 } from "./auth";
 import TabPill from "./TabPill";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
+import { shouldShowWatchMenu } from "./Watch";
 
 // Browse is the kid home (M8 #48). Renders a vertical stack of
 // horizontally-scrolling rows from /api/kids/browse. Each row's
@@ -168,7 +169,10 @@ export default function Browse() {
                 case " ": {
                     const item = row.items[focus.col];
                     if (item) {
-                        nav(`/play/${encodeURIComponent(item.Id)}${location.search}`);
+                        const target = shouldShowWatchMenu(item)
+                            ? `/watch/${encodeURIComponent(item.Id)}`
+                            : `/play/${encodeURIComponent(item.Id)}`;
+                        nav(`${target}${location.search}`);
                     }
                     e.preventDefault();
                     return;
@@ -246,11 +250,12 @@ export default function Browse() {
                                     type="button"
                                     role="listitem"
                                     tabIndex={focused ? 0 : -1}
-                                    onClick={() =>
-                                        nav(
-                                            `/play/${encodeURIComponent(item.Id)}${location.search}`,
-                                        )
-                                    }
+                                    onClick={() => {
+                                        const target = shouldShowWatchMenu(item)
+                                            ? `/watch/${encodeURIComponent(item.Id)}`
+                                            : `/play/${encodeURIComponent(item.Id)}`;
+                                        nav(`${target}${location.search}`);
+                                    }}
                                     onFocus={() =>
                                         setFocus({ kind: "tile", row: rIdx, col: cIdx })
                                     }

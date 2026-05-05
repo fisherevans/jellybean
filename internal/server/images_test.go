@@ -84,6 +84,70 @@ func TestImageProxyMaxAgeWithoutTag(t *testing.T) {
 	}
 }
 
+// TestImageProxyBackdropTypePropagates confirms M7 #41: ?type=Backdrop
+// is forwarded to Jellyfin verbatim (the watch menu uses this for the
+// blurred hero background). The ETag scheme key on imgType so a
+// Backdrop request and a Primary request for the same item return
+// distinct cache entries.
+func TestImageProxyBackdropTypePropagates(t *testing.T) {
+	var seen string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/Items/", func(w http.ResponseWriter, r *http.Request) {
+		seen = r.URL.Path
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("fake-backdrop"))
+	})
+	jfImgSrv := httptest.NewServer(mux)
+	t.Cleanup(jfImgSrv.Close)
+
+	srv, _ := kidsTestServer(t, nil, nil, nil)
+	srv.cfg.JellyfinURL = jfImgSrv.URL
+
+	rec := imageRequest(srv, "/api/kids/items/movie-1/image?type=Backdrop&width=1920", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.HasSuffix(seen, "/Items/movie-1/Images/Backdrop") {
+		t.Errorf("upstream path = %q, want suffix /Items/movie-1/Images/Backdrop", seen)
+	}
+	primary := imageRequest(srv, "/api/kids/items/movie-1/image", "")
+	if primary.Header().Get("ETag") == rec.Header().Get("ETag") {
+		t.Error("Primary + Backdrop ETags collided; cache key must include imgType")
+	}
+}
+
+// TestImageProxyBackdropMissingReturns404 confirms M7 #41: when
+// Jellyfin has no Backdrop for an item it returns 404, and we propagate
+// that as a 404 to the client (not 500). Watch.tsx renders the
+// gradient fallback when this happens.
+func TestImageProxyBackdropMissingReturns404(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/Items/", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "no image", http.StatusNotFound)
+	})
+	jfImgSrv := httptest.NewServer(mux)
+	t.Cleanup(jfImgSrv.Close)
+
+	srv, _ := kidsTestServer(t, nil, nil, nil)
+	srv.cfg.JellyfinURL = jfImgSrv.URL
+
+	rec := imageRequest(srv, "/api/kids/items/movie-1/image?type=Backdrop", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestImageProxyRejectsUnknownType keeps the type allowlist tight; the
+// watch menu only ever requests Primary or Backdrop.
+func TestImageProxyRejectsUnknownType(t *testing.T) {
+	srv, _ := imageProxyTestServer(t)
+	rec := imageRequest(srv, "/api/kids/items/movie-1/image?type=Logo", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestImageProxyIfNoneMatchRoundTrip(t *testing.T) {
 	srv, hits := imageProxyTestServer(t)
 

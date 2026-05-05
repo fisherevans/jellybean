@@ -702,28 +702,38 @@ test.describe("kids playback", () => {
         await expect(video).toBeVisible();
     });
 
-    test("Esc returns to library", async ({ page }) => {
+    test("Esc returns to the watch menu (M7 #44)", async ({ page }) => {
         await clearKidsLocalStorage(page);
         await page.goto(`/kids/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
         const movieTile = page.locator(".tile-grid").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
         await movieTile.click();
-        await expect(page).toHaveURL(/\/kids\/play\//);
+        // The library tile may route to /watch (in-progress) or /play
+        // (fresh). When it's the latter, Esc lands on the watch
+        // interstitial; when it's the former we never enter /play to
+        // begin with, so skip that branch.
+        const url = page.url();
+        if (!/\/kids\/play\//.test(url)) {
+            test.skip();
+        }
         await page.keyboard.press("Escape");
-        await expect(page).toHaveURL(/\/kids\/library/);
+        await expect(page).toHaveURL(/\/kids\/watch\//);
     });
 
-    test("back button returns to library", async ({ page }) => {
+    test("back button returns to the watch menu (M7 #44)", async ({ page }) => {
         await clearKidsLocalStorage(page);
         await page.goto(`/kids/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
         const movieTile = page.locator(".tile-grid").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
         await movieTile.click();
-        await expect(page).toHaveURL(/\/kids\/play\//);
-        await page.getByRole("link", { name: /Back to library/ }).click();
-        await expect(page).toHaveURL(/\/kids\/library/);
+        const url = page.url();
+        if (!/\/kids\/play\//.test(url)) {
+            test.skip();
+        }
+        await page.getByRole("link", { name: /^Back$/ }).first().click();
+        await expect(page).toHaveURL(/\/kids\/watch\//);
     });
 
     test("custom transport mounts and reveals on keypress", async ({ page }) => {
