@@ -14,6 +14,7 @@ import {
     set as cacheSet,
 } from "./libraryCache";
 import { useOnlineStatus } from "./onlineStatus";
+import TabPill from "./TabPill";
 
 // Library is the kid's main browsing screen. Layout top-to-bottom:
 //
@@ -439,6 +440,7 @@ export default function Library() {
 
     return (
         <div className="library" onKeyDown={onKey}>
+            <TabPill active="library" search={location.search} />
             {adminProfileId && !session && <AdminPreviewBanner />}
             <header className="library-header">
                 <div>

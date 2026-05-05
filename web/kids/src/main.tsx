@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { getSession } from "./auth";
+import Browse from "./Browse";
 import Library from "./Library";
 import Login from "./Login";
 import Play from "./Play";
@@ -20,7 +21,9 @@ import "./styles.css";
 function Index() {
     const signedIn = !!getSession();
     if (signedIn) prefetchLibrary();
-    return <Navigate to={signedIn ? "/library" : "/login"} replace />;
+    // M8: Browse is the kid's home. Library is still reachable via
+    // the tab pill at the top of either page.
+    return <Navigate to={signedIn ? "/browse" : "/login"} replace />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -29,6 +32,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Routes>
                 <Route path="/" element={<Index />} />
                 <Route path="/login" element={<Login />} />
+                <Route path="/browse" element={<Browse />} />
                 <Route path="/library" element={<Library />} />
                 <Route path="/play/:itemId" element={<Play />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
