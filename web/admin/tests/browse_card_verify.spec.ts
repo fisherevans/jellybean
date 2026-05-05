@@ -348,6 +348,48 @@ test("channel editor: search-and-add picker replaces textarea", async ({ page })
     await expect(results.first()).toBeVisible({ timeout: 5_000 });
 });
 
+test("warm tint sweep: 0/50/100 produce visibly different output", async ({ page }) => {
+    await page.goto("/manage/profiles");
+    await page.locator(".profile-card-link").first().click();
+    await page.getByRole("tab", { name: "Viewing" }).click();
+    await page.waitForSelector(".viewing-preview-bezel");
+    const dim = page
+        .locator(".snap-slider")
+        .filter({ hasText: /Dim/ })
+        .locator("input[type=number]");
+    const warm = page
+        .locator(".snap-slider")
+        .filter({ hasText: /Warm tint|Red shift/ })
+        .locator("input[type=number]");
+    await dim.fill("0");
+
+    for (const pct of [0, 50, 100]) {
+        await warm.fill(String(pct));
+        await page.waitForTimeout(200);
+        await page
+            .locator(".viewing-preview-bezel")
+            .first()
+            .screenshot({
+                path: resolve(SHOTS_DIR, `27-warm-${pct}.png`),
+            });
+    }
+
+    // Sanity: at warm=100, the overlay opacity should be > 0.4
+    // (configured 0.55 cap in buildWarmOverlay) and the image
+    // should carry the strong sepia/saturate filter.
+    const overlay = page.locator(".viewing-preview-warm-overlay").first();
+    const op = await overlay.evaluate(
+        (el) => parseFloat(getComputedStyle(el).opacity),
+    );
+    expect(op).toBeGreaterThan(0.4);
+    const imgFilter = await page
+        .locator(".viewing-preview-img")
+        .first()
+        .evaluate((el) => getComputedStyle(el).filter);
+    expect(imgFilter).toMatch(/sepia\(0\.85\)/);
+    expect(imgFilter).toMatch(/saturate\(2\.4\)/);
+});
+
 test("viewing preview backdrop fits inside the bezel", async ({ page }) => {
     await page.goto("/manage/profiles");
     await page.locator(".profile-card-link").first().click();

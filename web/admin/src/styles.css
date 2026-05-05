@@ -2942,16 +2942,34 @@ textarea:focus {
     overflow: hidden;
     box-sizing: border-box;
 }
-/* The preview backdrop is the muppets photo. Sized to fill the
-   bezel with its native 16:9 cropped from a wider source. Without
-   this rule the <img> renders at its intrinsic 768px width and
-   overflows the settings panel. */
+/* Frame is the inner area inside the bezel padding. Holds the
+   backdrop image plus the multiply-blend warm overlay. position:
+   relative so the overlay can absolutely-position over the image. */
+.viewing-preview-frame {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border-radius: 4px;
+    overflow: hidden;
+    isolation: isolate;
+}
 .viewing-preview-img {
     display: block;
     width: 100%;
     height: 100%;
     object-fit: cover;
-    border-radius: 4px;
+    transition: filter 0.15s ease;
+}
+/* Warm overlay sits over the backdrop with mix-blend-mode: multiply.
+   At full opacity multiplying by rgb(255, 130, 40) preserves red,
+   halves green, and reduces blue to ~16% - the macOS Night Shift
+   "blue filtered out" effect. Inline style controls the actual
+   opacity (scaled by warm tint percent). */
+.viewing-preview-warm-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
 }
 .viewing-preview-scene {
     position: relative;

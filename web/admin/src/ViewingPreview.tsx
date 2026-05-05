@@ -1,7 +1,18 @@
-// Live preview of dim + red-shift effects using a CSS filter on a
-// real photo (Muppets, supplied as the preview reference). Pure
-// visual preview - the kid SPA applies the same filter expression
-// at the document root.
+// Live preview of dim + warm-tint effects using a CSS filter on a
+// real photo. The warm effect targets macOS Night Shift fidelity at
+// 100%: orange-tinted with the blue channel substantially suppressed.
+//
+// The filter pipeline alone can't actually attenuate a single channel
+// (CSS filter has sepia/saturate/hue-rotate/contrast, no per-channel
+// matrix). To get the "blue filtered out" feel we stack a multiply-
+// blended orange overlay on top of the image - multiply with rgb
+// (255, 130, 40) preserves red, halves green, and chops blue to ~16%.
+// The overlay's alpha scales with warm intensity so 0% is identity
+// and 100% is full Night Shift.
+//
+// The kid SPA's eventual M12 implementation should mirror this
+// structure: <video> gets the filter, and a sibling div with the
+// multiply-blend overlay sits on top inside a wrapper.
 
 type Props = {
     dimPercent: number;
@@ -9,17 +20,30 @@ type Props = {
 };
 
 export default function ViewingPreview({ dimPercent, redShiftPercent }: Props) {
-    const filter = buildFilter(dimPercent, redShiftPercent);
+    const dimFilter = buildDimFilter(dimPercent);
+    const warmFilter = buildWarmFilter(redShiftPercent);
+    const overlayStyle = buildWarmOverlay(redShiftPercent);
     return (
         <div className="viewing-preview">
             <div className="viewing-preview-label">Preview</div>
             <div className="viewing-preview-tv" aria-hidden>
-                <div className="viewing-preview-bezel" style={{ filter }}>
-                    <img
-                        src="/manage/viewing-preview.jpg"
-                        alt=""
-                        className="viewing-preview-img"
-                    />
+                <div
+                    className="viewing-preview-bezel"
+                    style={{ filter: dimFilter }}
+                >
+                    <div className="viewing-preview-frame">
+                        <img
+                            src="/manage/viewing-preview.jpg"
+                            alt=""
+                            className="viewing-preview-img"
+                            style={{ filter: warmFilter }}
+                        />
+                        <div
+                            className="viewing-preview-warm-overlay"
+                            style={overlayStyle}
+                            aria-hidden
+                        />
+                    </div>
                 </div>
                 <div className="viewing-preview-stand" />
             </div>
@@ -32,25 +56,57 @@ export default function ViewingPreview({ dimPercent, redShiftPercent }: Props) {
     );
 }
 
-export function buildFilter(dim: number, redShift: number): string {
-    // Dim is straightforward: linear brightness reduction.
+// buildDimFilter just clamps the brightness multiplier. Decoupled
+// from warm so the two adjustments don't interfere.
+export function buildDimFilter(dim: number): string {
     const brightness = 1 - dim / 100;
-    // Red shift = warmer image, similar to f.lux / Night Shift. The
-    // CSS filter pipeline doesn't have a "color temperature" knob,
-    // so we build it from primitives:
-    //   - hue-rotate(-15deg) at 100% nudges blues toward red
-    //   - sepia(0.35) at 100% adds an amber tint
-    //   - saturate(1.2) at 100% keeps the image colourful instead
-    //     of going gray-amber the way pure sepia does
-    // The intermediate values scale linearly so 0% is no change and
-    // 100% is the full warm shift. Same expression goes onto the kid
-    // SPA's <html> element when the kid TV is in this mode, so what
-    // the admin sees here is what the kid sees.
-    const r = redShift / 100;
-    const hueRotate = -15 * r;
-    const sepia = 0.35 * r;
-    const saturate = 1 + 0.2 * r;
-    return `brightness(${brightness}) sepia(${sepia}) hue-rotate(${hueRotate}deg) saturate(${saturate})`;
+    return `brightness(${brightness})`;
+}
+
+// buildWarmFilter is the per-image filter half of the Night Shift
+// approximation: aggressive sepia + saturate + hue-rotate. The
+// multiply overlay (buildWarmOverlay) is the other half and is what
+// actually suppresses the blue channel.
+export function buildWarmFilter(redShift: number): string {
+    const r = clamp01(redShift / 100);
+    const sepia = 0.85 * r;
+    const saturate = 1 + 1.4 * r;
+    const hueRotate = -22 * r;
+    const contrast = 1 + 0.06 * r;
+    return `sepia(${sepia}) saturate(${saturate}) hue-rotate(${hueRotate}deg) contrast(${contrast})`;
+}
+
+// buildWarmOverlay returns the inline style for the multiply-blended
+// orange layer. The color is fixed; alpha (via opacity) scales with
+// warm intensity. 0.55 cap at r=1 keeps the image legible; pushing
+// past that turns everything pure orange.
+export function buildWarmOverlay(redShift: number): {
+    background: string;
+    mixBlendMode: "multiply";
+    opacity: number;
+} {
+    const r = clamp01(redShift / 100);
+    return {
+        background: "rgb(255, 130, 40)",
+        mixBlendMode: "multiply",
+        opacity: r * 0.55,
+    };
+}
+
+// buildFilter is kept around for any caller that wants the legacy
+// single-string filter expression (e.g. tests, or a future kid-side
+// implementation that can't add an overlay element). The single-
+// filter version is less faithful to Night Shift but doesn't need a
+// wrapper element.
+export function buildFilter(dim: number, redShift: number): string {
+    const r = clamp01(redShift / 100);
+    return `${buildDimFilter(dim)} sepia(${0.85 * r}) saturate(${1 + 1.4 * r}) hue-rotate(${-22 * r}deg) contrast(${1 + 0.06 * r})`;
+}
+
+function clamp01(x: number): number {
+    if (x < 0) return 0;
+    if (x > 1) return 1;
+    return x;
 }
 
 function describe(dim: number, red: number): string {
