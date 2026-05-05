@@ -4,12 +4,13 @@ import { api, type User } from "./api";
 import Layout from "./Layout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
-import Bulk from "./pages/Bulk";
-import Swipe from "./pages/Swipe";
 import Activity from "./pages/Activity";
 import Search from "./pages/Search";
 import Profiles from "./pages/Profiles";
 import ProfileSettings from "./pages/ProfileSettings";
+import Categorize from "./pages/Categorize";
+import AdminHub from "./pages/AdminHub";
+import Browse from "./pages/Browse";
 import Kids from "./pages/Kids";
 import Tags from "./pages/Tags";
 import TagDetail from "./pages/TagDetail";
@@ -72,8 +73,11 @@ export default function App() {
                             />
                         }
                     />
-                    <Route path="/bulk" element={<Bulk />} />
-                    <Route path="/swipe" element={<Swipe />} />
+                    <Route path="/bulk" element={<Categorize />} />
+                    <Route path="/swipe" element={<Categorize />} />
+                    <Route path="/categorize" element={<Categorize />} />
+                    <Route path="/browse" element={<Browse />} />
+                    <Route path="/admin" element={<AdminHub />} />
                     <Route path="/activity" element={<Activity />} />
                     <Route path="/search" element={<Search />} />
                     <Route path="/profiles" element={<Profiles />} />

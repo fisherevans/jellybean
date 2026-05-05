@@ -8,44 +8,62 @@ type Props = {
     onLogout: () => void;
 };
 
-type NavItem = { to: string; label: string; key?: "swipe" };
+type NavItem = {
+    to: string;
+    label: string;
+    key?: "categorize";
+    /** other paths whose match should also activate this link */
+    matchPrefixes?: string[];
+};
 
+// Top-level nav is intentionally short. Categorize wraps swipe + bulk;
+// Settings is a hub page that links to Profiles / Kids / Layouts / API
+// keys / Activity / General settings so the bar isn't cluttered.
 const links: NavItem[] = [
     { to: "/", label: "Home" },
-    { to: "/swipe", label: "Swipe", key: "swipe" },
-    { to: "/bulk", label: "Bulk categorize" },
-    { to: "/activity", label: "Activity" },
+    {
+        to: "/categorize",
+        label: "Categorize",
+        key: "categorize",
+        matchPrefixes: ["/categorize", "/swipe", "/bulk"],
+    },
+    { to: "/browse", label: "Browse" },
     { to: "/search", label: "Search" },
-    { to: "/tags", label: "Tags" },
-    { to: "/layouts", label: "Layouts" },
-    { to: "/profiles", label: "Profiles" },
-    { to: "/manage-kids", label: "Kids" },
-    { to: "/api-keys", label: "API keys" },
-    { to: "/settings", label: "Settings" },
+    { to: "/tags", label: "Tags", matchPrefixes: ["/tags"] },
+    {
+        to: "/admin",
+        label: "Settings",
+        matchPrefixes: [
+            "/admin",
+            "/profiles",
+            "/manage-kids",
+            "/layouts",
+            "/api-keys",
+            "/settings",
+            "/activity",
+        ],
+    },
 ];
 
 // Routes that operate on a single active profile. The profile picker is
-// only useful on these; on settings pages (/profiles, /manage-kids) it
-// just adds noise.
-const PROFILE_SCOPED_ROUTES = new Set([
+// only useful on these; on settings hub pages it just adds noise.
+const PROFILE_SCOPED_PATHS = [
     "/",
     "/swipe",
     "/bulk",
-    "/activity",
+    "/categorize",
+    "/browse",
     "/search",
     "/tags",
-]);
+];
 
 export default function Layout({ user, onLogout }: Props) {
     const { profile, profiles, setActive } = useActiveProfile();
     const location = useLocation();
-    // /tags has a detail route /tags/:id that also benefits from the
-    // picker (the detail page reads the visible-only items list scoped
-    // to the active profile). Treat /tags/* as profile-scoped via a
-    // prefix check rather than enumerating every detail variant.
-    const showProfilePicker =
-        PROFILE_SCOPED_ROUTES.has(location.pathname) ||
-        location.pathname.startsWith("/tags/");
+    const path = location.pathname;
+    const showProfilePicker = PROFILE_SCOPED_PATHS.some(
+        (p) => path === p || (p !== "/" && path.startsWith(p + "/")),
+    );
     const [unsetCount, setUnsetCount] = useState<number | null>(null);
 
     // Fetch the active profile's "needs review" count so the Swipe nav
@@ -100,18 +118,22 @@ export default function Layout({ user, onLogout }: Props) {
                 </Link>
                 <nav className="nav">
                     {links.map((l) => {
-                        const isSwipe = l.key === "swipe";
-                        const attention = isSwipe && (unsetCount ?? 0) > 0;
+                        const isCategorize = l.key === "categorize";
+                        const attention = isCategorize && (unsetCount ?? 0) > 0;
+                        const matched =
+                            l.matchPrefixes?.some((p) =>
+                                p === "/" ? path === "/" : path === p || path.startsWith(p + "/"),
+                            ) ?? path === l.to;
                         return (
                             <NavLink
                                 key={l.to}
                                 to={l.to}
                                 end={l.to === "/"}
-                                className={({ isActive }) =>
+                                className={() =>
                                     [
                                         "nav-link",
-                                        isActive && "active",
-                                        isSwipe && "nav-link-primary",
+                                        matched && "active",
+                                        isCategorize && "nav-link-primary",
                                         attention && "nav-link-attention",
                                     ]
                                         .filter(Boolean)

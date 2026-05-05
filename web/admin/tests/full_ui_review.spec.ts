@@ -226,4 +226,25 @@ test.describe("full admin UI review", () => {
         await page.waitForLoadState("networkidle");
         await page.screenshot({ path: shot("12-settings"), fullPage: true });
     });
+
+    test("settings hub", async ({ page }) => {
+        await page.goto("/admin");
+        await page.waitForLoadState("networkidle");
+        await page.screenshot({ path: shot("13-admin-hub"), fullPage: true });
+    });
+
+    test("categorize wrapper", async ({ page }) => {
+        await page.goto("/categorize");
+        await page.waitForLoadState("networkidle");
+        await page.screenshot({
+            path: shot("14-categorize"),
+            fullPage: true,
+        });
+    });
+
+    test("browse page", async ({ page }) => {
+        await page.goto("/browse");
+        await page.waitForLoadState("networkidle");
+        await page.screenshot({ path: shot("15-browse"), fullPage: true });
+    });
 });
