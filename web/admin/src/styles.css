@@ -3186,32 +3186,10 @@ textarea:focus {
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 0.5rem;
 }
-.browse-item {
-    display: flex;
-    flex-direction: column;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: hidden;
-}
-.browse-item-link {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    padding: 0.6rem 0.85rem;
-    color: var(--fg);
-    text-decoration: none;
-}
-.browse-item-link:hover {
-    background: rgba(255, 255, 255, 0.04);
-}
-.browse-item-name {
-    font-weight: 500;
-}
-.browse-item-type {
-    color: var(--muted);
-    font-size: 0.8rem;
-}
+/* Browse card rules live below at line ~3558. The old definitions
+   that used to live here have been consolidated there (see
+   .browse-item / .browse-item-link / .browse-item-name) so cards
+   render as poster-on-left + content-on-right. */
 
 /* Settings two-pane layout: sidebar left, content right. Wraps every
    admin / settings / profile / layout / kids / activity / api-keys /
@@ -3503,7 +3481,9 @@ textarea:focus {
 }
 .browse-filter-caret {
     color: var(--muted);
-    font-size: 0.7rem;
+    font-size: 1rem;
+    line-height: 1;
+    margin-left: 0.15rem;
 }
 .browse-filter-panel {
     background: var(--card);
@@ -3568,11 +3548,18 @@ textarea:focus {
 }
 .browse-item-link {
     display: flex;
+    flex-direction: row;
     gap: 0.85rem;
     padding: 0.6rem 0.85rem;
     color: var(--fg);
     text-decoration: none;
     align-items: stretch;
+}
+.browse-item-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
 }
 .browse-item-link:hover {
     background: rgba(255, 255, 255, 0.03);
