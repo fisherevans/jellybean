@@ -4,6 +4,7 @@ import { api, HttpError, type Layout, type Profile } from "../api";
 import ProfileModal from "../ProfileModal";
 import ProfileTagFiltersModal from "../ProfileTagFiltersModal";
 import ProfileTimeLimitsModal from "../ProfileTimeLimitsModal";
+import ProfileBodyBreaksModal from "../ProfileBodyBreaksModal";
 import Spinner from "../Spinner";
 
 type Modal =
@@ -11,7 +12,8 @@ type Modal =
     | { kind: "create" }
     | { kind: "edit"; profile: Profile }
     | { kind: "tag-filters"; profile: Profile }
-    | { kind: "time-limits"; profile: Profile };
+    | { kind: "time-limits"; profile: Profile }
+    | { kind: "body-breaks"; profile: Profile };
 
 export default function Profiles() {
     const [profiles, setProfiles] = useState<Profile[] | null>(null);
@@ -138,6 +140,13 @@ export default function Profiles() {
                                     >
                                         Time limits
                                     </button>
+                                    <button
+                                        onClick={() =>
+                                            setModal({ kind: "body-breaks", profile: p })
+                                        }
+                                    >
+                                        Body breaks
+                                    </button>
                                     <button onClick={() => setModal({ kind: "edit", profile: p })}>
                                         Edit
                                     </button>
@@ -179,6 +188,12 @@ export default function Profiles() {
             )}
             {modal.kind === "time-limits" && (
                 <ProfileTimeLimitsModal
+                    profile={modal.profile}
+                    onClose={() => setModal({ kind: "closed" })}
+                />
+            )}
+            {modal.kind === "body-breaks" && (
+                <ProfileBodyBreaksModal
                     profile={modal.profile}
                     onClose={() => setModal({ kind: "closed" })}
                 />

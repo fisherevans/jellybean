@@ -545,8 +545,12 @@ func (s *Server) handleKidsPlaybackProgress(w http.ResponseWriter, r *http.Reque
 	// M10: side-effect to maintain kid_watch_segments. Only kid path
 	// (admin preview has no kid id and no time tracking).
 	if kc.KidID > 0 {
-		if rerr := s.curation.RecordPlaybackProgress(ctx, kc.KidID, kc.ProfileID, p.ItemID, p.SeriesID, p.IsPaused, time.Now().UTC()); rerr != nil {
+		now := time.Now().UTC()
+		if rerr := s.curation.RecordPlaybackProgress(ctx, kc.KidID, kc.ProfileID, p.ItemID, p.SeriesID, p.IsPaused, now); rerr != nil {
 			s.logger.Warn().Err(rerr).Int64("kid", kc.KidID).Str("item", p.ItemID).Msg("watch segment record")
+		}
+		if berr := s.curation.RecordPlayActivity(ctx, kc.KidID, p.ItemID, p.SeriesID, p.IsPaused, now); berr != nil {
+			s.logger.Warn().Err(berr).Int64("kid", kc.KidID).Msg("body-break activity record")
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)

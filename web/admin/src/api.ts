@@ -229,6 +229,16 @@ export type TimeStatus = {
     perMovie: Record<string, MovieBucketStatus>;
 };
 
+export type ProfileBodyBreaks = {
+    profileId: number;
+    enabled: boolean;
+    playMinutes: number;
+    breakMinutes: number;
+    voiceMessageTemplate: string;
+    reasons: string[];
+    updatedAt?: string;
+};
+
 export type APIKey = {
     id: number;
     name: string;
@@ -608,6 +618,19 @@ export const api = {
         ),
     getKidTimeStatus: (kidId: number) =>
         request<TimeStatus>("GET", `/api/admin/kids/${kidId}/time-status`),
+
+    // --- M11: body breaks ------------------------------------------
+    getProfileBodyBreaks: (profileId: number) =>
+        request<ProfileBodyBreaks>(
+            "GET",
+            `/api/admin/profiles/${profileId}/body-breaks`,
+        ),
+    setProfileBodyBreaks: (profileId: number, body: ProfileBodyBreaks) =>
+        request<void>(
+            "PUT",
+            `/api/admin/profiles/${profileId}/body-breaks`,
+            body,
+        ),
 };
 
 export { HttpError };
