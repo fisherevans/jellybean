@@ -59,9 +59,9 @@ test.describe("profile settings UX", () => {
             ).toHaveCount(0);
         }
         // The row link itself takes you to the settings page.
-        await expect(defaultRow.locator(".profile-row-link")).toBeVisible();
+        await expect(defaultRow.locator(".profile-card-link")).toBeVisible();
         await expect(
-            defaultRow.locator(".profile-row-chevron"),
+            defaultRow.locator(".profile-card-chevron"),
         ).toContainText(/Settings/);
 
         await page.screenshot({ path: shot("01-profiles-list"), fullPage: true });
@@ -69,7 +69,7 @@ test.describe("profile settings UX", () => {
 
     test("clicking the row navigates to /profiles/:id with all tabs visible", async ({ page }) => {
         await page.goto("/profiles");
-        await page.locator(".profile-row-link").first().click();
+        await page.locator(".profile-card-link").first().click();
         await expect(page).toHaveURL(/\/profiles\/\d+/);
         await expect(
             page.getByRole("heading", { level: 1, name: "Default" }),
@@ -96,58 +96,59 @@ test.describe("profile settings UX", () => {
 
     test("Basic tab fields are editable + Save round trips", async ({ page }) => {
         await page.goto("/profiles");
-        await page.locator(".profile-row-link").first().click();
+        await page.locator(".profile-card-link").first().click();
         // Stays on Basic by default.
         await expect(page.getByLabel("Name")).toHaveValue("Default");
         await expect(page.getByLabel("Description")).toBeVisible();
         await expect(page.getByLabel("Default audio language")).toBeVisible();
         await expect(page.getByLabel("Browse layout")).toBeVisible();
-        // Stats are visible.
-        await expect(page.locator(".settings-stats")).toContainText(/visible/);
-        await expect(page.locator(".settings-stats")).toContainText(/hidden/);
+        // Stats are visible (now using the same .profile-stats class
+        // as the Profiles list page).
+        await expect(page.locator(".profile-stats")).toContainText(/visible/);
+        await expect(page.locator(".profile-stats")).toContainText(/hidden/);
     });
 
-    test("Time limits tab: Enable checkbox is visually checkable", async ({ page }) => {
+    test("Time limits tab: ToggleSwitch flips on click", async ({ page }) => {
         await page.goto("/profiles");
-        await page.locator(".profile-row-link").first().click();
+        await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Time limits" }).click();
+        await page.waitForSelector(".toggle-switch");
 
-        const enable = page.getByRole("checkbox", {
-            name: "Enable time limits for this profile",
-        });
-        // Native checkbox should NOT be hidden by appearance:none -
-        // i.e. it has a non-zero bounding box and a checked attr we
-        // can flip via uncheck/check.
-        const initial = await enable.isChecked();
-        await enable.click();
-        await expect(enable).toBeChecked({ checked: !initial });
-        await enable.click();
-        await expect(enable).toBeChecked({ checked: initial });
+        const toggle = page
+            .locator(".toggle-switch")
+            .filter({ hasText: "Enable time limits for this profile" });
+        const cb = toggle.locator("input[type=checkbox]");
+        const initial = await cb.isChecked();
+        await toggle.click();
+        await expect(cb).toBeChecked({ checked: !initial });
+        await toggle.click();
+        await expect(cb).toBeChecked({ checked: initial });
 
         await page.screenshot({ path: shot("03-time-limits"), fullPage: true });
     });
 
-    test("Modes tab: day-of-week checkboxes flip on click (the regression)", async ({ page }) => {
+    test("Modes tab: day-of-week pill toggles flip on click", async ({ page }) => {
         await page.goto("/profiles");
-        await page.locator(".profile-row-link").first().click();
+        await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Modes" }).click();
         await page.getByRole("button", { name: /Add mode/ }).click();
         await expect(page.getByText("New mode")).toBeVisible();
 
-        // Each day starts checked (initial state 0b1111111). Toggle
-        // every day off and back on to prove the click handler
-        // fires for every checkbox.
         const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
         for (const d of days) {
-            const cb = page.getByRole("checkbox", { name: d });
-            await expect(cb).toBeChecked();
-            await cb.evaluate((el: HTMLInputElement) => el.click());
-            await expect(cb).not.toBeChecked();
+            const pill = page
+                .locator(".pill-toggle")
+                .filter({ hasText: new RegExp(`^${d}$`) });
+            await expect(pill).toHaveAttribute("aria-pressed", "true");
+            await pill.click();
+            await expect(pill).toHaveAttribute("aria-pressed", "false");
         }
         for (const d of days) {
-            const cb = page.getByRole("checkbox", { name: d });
-            await cb.evaluate((el: HTMLInputElement) => el.click());
-            await expect(cb).toBeChecked();
+            const pill = page
+                .locator(".pill-toggle")
+                .filter({ hasText: new RegExp(`^${d}$`) });
+            await pill.click();
+            await expect(pill).toHaveAttribute("aria-pressed", "true");
         }
 
         await page.screenshot({ path: shot("04-modes-editor"), fullPage: true });
@@ -156,7 +157,7 @@ test.describe("profile settings UX", () => {
 
     test("Body breaks tab loads + textarea is editable", async ({ page }) => {
         await page.goto("/profiles");
-        await page.locator(".profile-row-link").first().click();
+        await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Body breaks" }).click();
         const reasons = page.getByLabel("Reasons (one per line)");
         await expect(reasons).toBeVisible();
@@ -165,20 +166,24 @@ test.describe("profile settings UX", () => {
         await page.screenshot({ path: shot("05-body-breaks"), fullPage: true });
     });
 
-    test("Viewing tab loads + numeric inputs editable", async ({ page }) => {
+    test("Viewing tab loads + sliders editable", async ({ page }) => {
         await page.goto("/profiles");
-        await page.locator(".profile-row-link").first().click();
+        await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Viewing" }).click();
-        const dim = page.getByLabel("Dim (% darker, 0-80)");
-        await expect(dim).toBeVisible();
-        await dim.fill("15");
-        await expect(dim).toHaveValue("15");
+        await page.waitForSelector(".viewing-preview");
+        const dimSlider = page
+            .locator(".snap-slider")
+            .filter({ hasText: "Dim" })
+            .locator("input[type=number]");
+        await expect(dimSlider).toBeVisible();
+        await dimSlider.fill("15");
+        await expect(dimSlider).toHaveValue("15");
         await page.screenshot({ path: shot("06-viewing"), fullPage: true });
     });
 
     test("Channels tab loads + Add Channel works", async ({ page }) => {
         await page.goto("/profiles");
-        await page.locator(".profile-row-link").first().click();
+        await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Channels" }).click();
         await page.getByRole("button", { name: /Add channel/ }).click();
         await expect(page.getByText("New channel")).toBeVisible();
@@ -187,7 +192,7 @@ test.describe("profile settings UX", () => {
 
     test("Tag rules tab loads + radios visible", async ({ page }) => {
         await page.goto("/profiles");
-        await page.locator(".profile-row-link").first().click();
+        await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Tag rules" }).click();
         // Either tags are present or "No tags yet" - both are valid
         // first-load states.
@@ -198,7 +203,7 @@ test.describe("profile settings UX", () => {
 
     test("no milestone references appear in user-visible text", async ({ page }) => {
         await page.goto("/profiles");
-        await page.locator(".profile-row-link").first().click();
+        await page.locator(".profile-card-link").first().click();
         for (const tab of [
             "Basic",
             "Tag rules",
@@ -221,7 +226,7 @@ test.describe("profile settings UX", () => {
 
     test("active-tab styling reflects which tab is focused", async ({ page }) => {
         await page.goto("/profiles");
-        await page.locator(".profile-row-link").first().click();
+        await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Modes" }).click();
         const modesTab = page.getByRole("tab", { name: "Modes" });
         await expect(modesTab).toHaveAttribute("aria-selected", "true");
