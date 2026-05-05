@@ -40,7 +40,14 @@ Milestones and tasks live in GitHub, not in this repo.
   `gh issue list --repo fisherevans/jellybean --milestone "M3: Kids client UI" --state open`
 - Single issue: `gh issue view <number> --repo fisherevans/jellybean`
 
-Current milestone: **M5: TV deployment**.
+Current focus: **TV-side player iteration** (the backend is now in
+the stable / cleanup phase; next work targets the kid client running
+on a Skyworth Android TV).
+
+Schema baseline lives at `internal/db/migrations/0001_baseline.sql`
+- the project squashed its 24 incremental migrations after the
+M1-M15 iteration loop because Jellybean is pre-v1 / never deployed.
+New migrations should be additive on top of that baseline.
 
 ### How to pick up an issue
 
@@ -225,11 +232,11 @@ for that milestone.
 ```
 cmd/jellybean/                # Go entrypoint, healthcheck subcommand
 internal/config/              # env var loading
-internal/server/              # HTTP routes, SPA handlers, admin/kids endpoints
+internal/server/              # HTTP routes (server.go + routes.go), SPA handlers, admin/kids endpoints
 internal/jellyfin/            # Jellyfin API client (auth, items, stream URL)
 internal/auth/                # session store, login handlers, middleware, rate limit
 internal/db/                  # SQLite connection + embedded migrations
-internal/db/migrations/       # NNNN_*.sql, embedded via go:embed
+internal/db/migrations/       # 0001_baseline.sql + any future additions, embedded via go:embed
 web/admin/                    # Vite + React parent curation app
 web/kids/                     # Vite + React kids streaming client
 static.go                     # package jellybean - root-level embed of web/{admin,kids}/dist
@@ -327,6 +334,10 @@ day-to-day work should not need to consult it.
 - Migration files live in `internal/db/migrations/` (they need to be there
   so the `internal/db` package can embed them via `go:embed`). Naming:
   `NNNN_short_description.sql`. Numbers are sequential, not timestamped.
+  The schema baseline is `0001_baseline.sql`; the project is pre-v1
+  local-dev so when a future schema iteration accumulates a long
+  tail of incremental migrations, it's fine to squash them back into
+  the baseline rather than preserving the history.
 
 ## Jellyfin quirks worth remembering
 
