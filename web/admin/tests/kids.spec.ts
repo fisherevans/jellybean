@@ -117,6 +117,27 @@ test.describe("kids library", () => {
         await expect(page).toHaveURL(/\/kids\/play\//);
     });
 
+    test("search box filters server-side via /api/kids/library?search= (M8 #49)", async ({
+        page,
+    }) => {
+        await clearKidsLocalStorage(page);
+        const searches: string[] = [];
+        await page.route("**/api/kids/library*", (route) => {
+            const url = new URL(route.request().url());
+            const s = url.searchParams.get("search");
+            if (s) searches.push(s);
+            route.continue();
+        });
+        await page.goto(`/kids/library?profileId=1`);
+        await expect(page.locator(".tile-grid").first()).toBeVisible({
+            timeout: 15_000,
+        });
+        await page.getByLabel("Search library").fill("scoo");
+        // Debounce is 300ms; allow up to a second for the request.
+        await page.waitForTimeout(800);
+        expect(searches).toContain("scoo");
+    });
+
     test("D-pad: ArrowDown from filter focuses a tile, Enter activates it", async ({ page }) => {
         await gotoLibrary(page, 1);
         // Wait for the grid to load.

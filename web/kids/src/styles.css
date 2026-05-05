@@ -1286,3 +1286,27 @@ a,
     pointer-events: none;
 }
 
+/* M8 #49 library search box. Server-side filter via the existing
+   /api/kids/library?search= query param. Sits above the type-filter
+   pills, full-width at TV viewing distance. */
+.library-controls {
+    margin: 0 0 0.75rem;
+}
+.library-search {
+    width: 100%;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--fg);
+    padding: 0.7rem 1.1rem;
+    font-size: 1.05rem;
+    outline: none;
+}
+.library-search:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(255, 188, 0, 0.25);
+}
+.library-search::placeholder {
+    color: var(--muted);
+}
+

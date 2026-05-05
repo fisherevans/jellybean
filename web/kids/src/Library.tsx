@@ -94,6 +94,15 @@ export default function Library() {
         const v = localStorage.getItem(FILTER_STORAGE);
         return TYPE_FILTERS.includes(v as TypeFilter) ? (v as TypeFilter) : "Both";
     });
+    // Search box (M8 #49). Server-side filter via /api/kids/library
+    // ?search=. Debounced through `searchDebounced` so each keystroke
+    // doesn't fire a request. Empty string means "no name filter."
+    const [searchInput, setSearchInput] = useState("");
+    const [searchDebounced, setSearchDebounced] = useState("");
+    useEffect(() => {
+        const id = window.setTimeout(() => setSearchDebounced(searchInput), 300);
+        return () => window.clearTimeout(id);
+    }, [searchInput]);
 
     const [continueItems, setContinueItems] = useState<LibraryItem[]>([]);
     const [items, setItems] = useState<LibraryItem[]>([]);
@@ -149,10 +158,16 @@ export default function Library() {
             if (startIndex > 0) {
                 url.searchParams.set("startIndex", String(startIndex));
             }
+            // Search applies to the main grid. Continue Watching is a
+            // small explicit list; filtering it would mostly produce
+            // empty rows, so leave it alone.
+            if (section === "all" && searchDebounced) {
+                url.searchParams.set("search", searchDebounced);
+            }
             if (adminProfileId) url.searchParams.set("profileId", adminProfileId);
             return url.toString();
         },
-        [filter, adminProfileId],
+        [filter, adminProfileId, searchDebounced],
     );
 
     // fetchSection issues the network request, optionally with an
@@ -189,8 +204,10 @@ export default function Library() {
     );
 
     // useCache: false in admin-preview (no session means no userId to key
-    // by). Admin previewing always does live fetches.
-    const useCache = !!session && !adminProfileId;
+    // by). Admin previewing always does live fetches. Search results
+    // also skip the cache - they're inherently transient and we don't
+    // want every keystroke seeded into IDB.
+    const useCache = !!session && !adminProfileId && !searchDebounced;
     const userId = session?.userId ?? "";
     const typeStr = filterToType(filter);
     const allKey = useCache
@@ -466,6 +483,17 @@ export default function Library() {
                     </Link>
                 )}
             </header>
+
+            <div className="library-controls">
+                <input
+                    type="search"
+                    className="library-search"
+                    placeholder="Search"
+                    aria-label="Search library"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                />
+            </div>
 
             <div className="filter-row" role="tablist">
                 {TYPE_FILTERS.map((f, i) => {
