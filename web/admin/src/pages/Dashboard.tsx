@@ -103,14 +103,14 @@ export default function Dashboard({ user, onLogout }: Props) {
                     label="Visible"
                     value={counts?.visible}
                     tone="ok"
-                    cta={{ to: "/search", label: "Search" }}
+                    cta={{ to: "/browse?state=visible", label: "Browse" }}
                     note="Approved for kids in this profile."
                 />
                 <CountCard
                     label="Hidden"
                     value={counts?.hidden}
                     tone="bad"
-                    cta={{ to: "/search", label: "Search" }}
+                    cta={{ to: "/browse?state=hidden", label: "Browse" }}
                     note="Excluded from this profile."
                 />
             </div>
