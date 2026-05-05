@@ -173,13 +173,12 @@ Current milestone: **M5: TV deployment**.
   (default / bedtime / morning / focus). Soft cap of 2 modes per
   profile. 7 issues defined; design in `docs/time-based-modes.md`
   (to be written as part of the milestone).
-- **M14: API keys for headless admin access** (defined, not
-  started) - bearer-token auth equivalent to admin cookie. Single
-  permission level (no scopes). Admin UI for create / name /
-  revoke / track last-used + an access log. Replaces the original
-  "MCP server for LLM curation" framing - simpler REST + key
-  model, can wrap with MCP later if there's demand. 3 issues
-  defined; design in `docs/api-keys.md`.
+- **M14: API keys for headless admin access** (closed) -
+  bearer-token auth equivalent to admin cookie. Single permission
+  level (no scopes). Admin UI at /admin/api-keys with create
+  (one-time plaintext reveal) / revoke / delete / per-key access
+  log. Async access logging via goroutine so the request hot path
+  stays unblocked. Design + usage in `docs/api-keys.md`.
 - **M15: Cable TV mode (channels)** (defined, not started) -
   per-profile channels (mix of tag membership + explicit item
   picks). Continuous shuffled playback via SPA-managed queue with
