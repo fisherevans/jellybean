@@ -9,6 +9,7 @@ import Swipe from "./pages/Swipe";
 import Activity from "./pages/Activity";
 import Search from "./pages/Search";
 import Profiles from "./pages/Profiles";
+import ProfileSettings from "./pages/ProfileSettings";
 import Kids from "./pages/Kids";
 import Tags from "./pages/Tags";
 import TagDetail from "./pages/TagDetail";
@@ -76,6 +77,7 @@ export default function App() {
                     <Route path="/activity" element={<Activity />} />
                     <Route path="/search" element={<Search />} />
                     <Route path="/profiles" element={<Profiles />} />
+                    <Route path="/profiles/:id" element={<ProfileSettings />} />
                     <Route path="/manage-kids" element={<Kids />} />
                     <Route path="/tags" element={<Tags />} />
                     <Route path="/tags/:tagId" element={<TagDetail />} />

@@ -2008,9 +2008,12 @@ button:disabled {
     color: var(--muted);
 }
 
-.modal-form input,
+.modal-form input:not([type="checkbox"]):not([type="radio"]),
 .modal-form select,
-.modal-form textarea {
+.modal-form textarea,
+.settings-form input:not([type="checkbox"]):not([type="radio"]),
+.settings-form select,
+.settings-form textarea {
     background: var(--bg);
     color: var(--fg);
     border: 1px solid var(--border);
@@ -2021,6 +2024,18 @@ button:disabled {
     -moz-appearance: none;
     appearance: none;
     font-family: inherit;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.modal-form input[type="checkbox"],
+.modal-form input[type="radio"],
+.settings-form input[type="checkbox"],
+.settings-form input[type="radio"] {
+    accent-color: var(--accent);
+    width: 1.1rem;
+    height: 1.1rem;
+    cursor: pointer;
 }
 
 .modal-form textarea {
@@ -2028,7 +2043,8 @@ button:disabled {
     min-height: 4em;
 }
 
-.modal-form select {
+.modal-form select,
+.settings-form select {
     background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
                       linear-gradient(135deg, var(--muted) 50%, transparent 50%);
     background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
@@ -2210,4 +2226,234 @@ button:disabled {
 .manage-item-tags input[type="checkbox"] {
     accent-color: var(--accent);
     transform: scale(1.2);
+}
+
+/* ProfileSettings page (replaces the per-section modals).
+   Tab strip across the top, single-column form panel below. */
+.profile-settings {
+    max-width: 720px;
+}
+.profile-settings-head {
+    margin-bottom: 1.25rem;
+}
+.profile-settings-head h1 {
+    margin: 0.25rem 0 0;
+}
+.profile-settings-back {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+.profile-settings-back:hover {
+    color: var(--fg);
+}
+
+.settings-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.25rem;
+}
+.settings-tab {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 0.6rem 0.9rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    font-size: 0.95rem;
+    border-radius: 0;
+    margin-bottom: -1px;
+}
+.settings-tab:hover {
+    color: var(--fg);
+}
+.settings-tab.active {
+    color: var(--fg);
+    border-bottom-color: var(--accent);
+    font-weight: 500;
+}
+
+.settings-panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.settings-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+.settings-form > .muted:first-child {
+    margin-top: -0.25rem;
+}
+.settings-form label:not(.checkbox):not(.day-toggle):not(.tag-filter-mode) {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+    align-items: stretch;
+    width: 100%;
+}
+.settings-form .help {
+    font-size: 0.8rem;
+    color: var(--muted);
+}
+.settings-form .help a,
+.settings-form .help a:visited {
+    color: var(--accent);
+    text-decoration: none;
+}
+.settings-form .help a:hover {
+    text-decoration: underline;
+}
+.settings-form .checkbox {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    color: var(--fg);
+    font-size: 0.95rem;
+    align-self: flex-start;
+}
+.settings-form .time-limits-preview {
+    align-self: stretch;
+}
+
+.settings-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.85rem;
+    width: 100%;
+    align-self: stretch;
+}
+.settings-row > label {
+    min-width: 0;
+}
+
+.settings-subhead {
+    margin: 0 0 0.25rem;
+    font-size: 1.1rem;
+    color: var(--fg);
+    text-align: left;
+    align-self: flex-start;
+}
+
+.settings-form > p,
+.settings-form > h3 {
+    align-self: stretch;
+}
+
+.settings-form > .settings-stats {
+    align-self: flex-start;
+}
+
+.settings-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    border-top: 1px solid var(--border);
+    padding-top: 1rem;
+}
+.settings-actions button.primary {
+    background: var(--accent);
+    color: #111;
+    border-color: var(--accent);
+    font-weight: 500;
+}
+
+.settings-stats {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+/* Day-of-week / tag toggle grids. Each toggle is a label wrapping
+   a native checkbox + a span - the native checkbox provides its own
+   visual state, the span is just the label text. */
+.day-toggles {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.6rem 0.85rem 0.85rem;
+    background: var(--bg);
+    width: 100%;
+    align-self: stretch;
+    box-sizing: border-box;
+    margin: 0;
+}
+.day-toggles legend {
+    color: var(--muted);
+    font-size: 0.8rem;
+    padding: 0 0.4rem;
+}
+.day-toggles-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 0.4rem;
+}
+.day-toggles-grid.wide {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+.day-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--fg);
+    font-size: 0.9rem;
+    cursor: pointer;
+    user-select: none;
+}
+
+/* Profile list: rows are clickable links into settings, with a
+   chevron + a separate action group on the right. */
+.profile-list li {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.profile-list li:hover {
+    border-color: var(--border-strong, #444);
+}
+.profile-row-link {
+    color: var(--fg);
+    text-decoration: none;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.6rem 0.85rem;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+}
+.profile-row-link:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+.profile-row-chevron {
+    color: var(--muted);
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
+.profile-row-link:hover .profile-row-chevron {
+    color: var(--accent);
+}
+.profile-list .profile-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.6rem 0.85rem;
+    border-left: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.15);
+    justify-content: center;
 }

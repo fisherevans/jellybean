@@ -122,12 +122,11 @@ test.describe("layouts admin UI", () => {
         await expect(deleteBtn).toBeDisabled();
     });
 
-    test("profile page shows the Browse layout dropdown", async ({ page }) => {
+    test("profile settings shows the Browse layout dropdown", async ({ page }) => {
         await gotoAndWaitReady(page, "/profiles");
-        await expect(page.getByRole("heading", { name: "Profiles" })).toBeVisible();
-        // Every profile row should have a Browse-layout select.
-        const selects = page.locator(".profile-layout select");
-        const count = await selects.count();
-        expect(count).toBeGreaterThan(0);
+        await page.getByRole("link", { name: /Default/ }).click();
+        await expect(page).toHaveURL(/\/profiles\/\d+/);
+        // Basic tab is the default; the Browse layout select lives there.
+        await expect(page.getByLabel("Browse layout")).toBeVisible();
     });
 });

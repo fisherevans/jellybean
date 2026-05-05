@@ -1,24 +1,24 @@
 import { test, expect } from "@playwright/test";
 
-// M15 #96: profile channels admin UI - list, create, persist, delete.
+// Profile channels via the new settings page.
 
 test.describe("profile channels", () => {
-    test("create + list + delete a channel", async ({ page }) => {
+    test("create + delete via settings page", async ({ page }) => {
         await page.goto("/profiles");
-        const defaultRow = page
-            .locator("li")
-            .filter({ has: page.locator(".profile-name", { hasText: /^Default$/ }) });
-        await defaultRow.getByRole("button", { name: "Channels" }).click();
-        await expect(page.getByRole("heading", { name: /^Channels/ })).toBeVisible();
+        await page.getByRole("link", { name: /Default/ }).click();
+        await page.getByRole("tab", { name: "Channels" }).click();
+
         await page.getByRole("button", { name: /Add channel/ }).click();
-        await expect(page.getByRole("heading", { name: /Add channel/ })).toBeVisible();
+        await expect(page.getByText("New channel")).toBeVisible();
 
         await page.getByLabel("Name").fill("Saturday Morning");
         await page.getByLabel("Sort order").selectOption("round_robin_tags");
         await page.getByLabel(/Explicit item ids/).fill("item-a\nitem-b");
-        await page.locator(".modal-actions button.primary").click();
+        await page.getByRole("button", { name: /^Save/ }).click();
 
-        await expect(page.locator(".modes-list-row")).toContainText("Saturday Morning");
+        await expect(page.locator(".modes-list-row")).toContainText(
+            "Saturday Morning",
+        );
 
         page.on("dialog", (d) => d.accept());
         await page

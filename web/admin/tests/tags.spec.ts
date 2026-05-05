@@ -132,8 +132,8 @@ test.describe("tags admin UI", () => {
         await expect(page.getByRole("link", { name: renamed })).toHaveCount(0);
     });
 
-    test("profile tag rules modal opens and lists tags", async ({ page }) => {
-        // Seed one tag so the modal has at least one row to render.
+    test("profile tag rules tab lists tags", async ({ page }) => {
+        // Seed one tag so the tab has at least one row to render.
         const tagName = uniqueName("Scary");
         await gotoAndWaitReady(page, "/tags");
         await page.getByRole("button", { name: "+ Add tag" }).click();
@@ -142,44 +142,30 @@ test.describe("tags admin UI", () => {
         await createModal.getByRole("button", { name: "Create" }).click();
         await expect(createModal).toBeHidden();
 
-        // Now open the rules modal on the Default profile. Scoping
-        // by `.profile-name` because every profile row's muted line
-        // contains "default lang eng" which would match a hasText
-        // filter on "Default" too.
         await page.goto("/profiles");
-        await expect(page.getByRole("heading", { name: "Profiles" })).toBeVisible();
-        const defaultRow = page
-            .locator(".profile-row")
-            .filter({ has: page.locator(".profile-name", { hasText: /^Default$/ }) });
-        await defaultRow.getByRole("button", { name: "Tag rules" }).click();
-        const rulesModal = page.locator(".modal");
-        await expect(
-            rulesModal.getByRole("heading", { name: "Tag rules for Default" }),
-        ).toBeVisible();
-        await expect(rulesModal.getByText(tagName)).toBeVisible();
+        await page.getByRole("link", { name: /Default/ }).click();
+        await page.getByRole("tab", { name: "Tag rules" }).click();
 
-        // Three radios per row: None | Always show | Always hide.
-        const row = rulesModal.locator(".tag-filter-row", { hasText: tagName });
+        const panel = page.locator(".settings-panel");
+        await expect(panel.getByText(tagName)).toBeVisible();
+
+        const row = panel.locator(".tag-filter-row", { hasText: tagName });
         await expect(row.getByText("None")).toBeVisible();
         await expect(row.getByText("Always show")).toBeVisible();
         await expect(row.getByText("Always hide")).toBeVisible();
 
-        // Default state is None.
         const noneRadio = row.locator(`input[value="none"]`);
         await expect(noneRadio).toBeChecked();
 
-        // Save button starts disabled (no changes yet).
-        await expect(rulesModal.getByRole("button", { name: "Save" })).toBeDisabled();
+        const saveBtn = panel.getByRole("button", { name: "Save" });
+        await expect(saveBtn).toBeDisabled();
 
         // Pick Always hide -> Save enables.
         await row.locator(`input[value="always_hidden"]`).check();
-        await expect(rulesModal.getByRole("button", { name: "Save" })).toBeEnabled();
-        await rulesModal.getByRole("button", { name: "Save" }).click();
-
-        // Re-read should keep the rule.
-        await expect(rulesModal.getByRole("button", { name: "Save" })).toBeDisabled();
-        await rulesModal.getByRole("button", { name: "Close" }).click();
-        await expect(rulesModal).toBeHidden();
+        await expect(saveBtn).toBeEnabled();
+        await saveBtn.click();
+        // After a successful save the form goes clean again -> Save disables.
+        await expect(saveBtn).toBeDisabled();
 
         // Cleanup the seeded tag (this also clears the filter via cascade).
         await page.goto("/tags");
