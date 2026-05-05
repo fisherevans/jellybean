@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type ProfileTimeLimits } from "./api";
-import SnapSlider from "./SnapSlider";
+import SnapSlider, { formatMinutesAsHM } from "./SnapSlider";
 import ToggleSwitch from "./ToggleSwitch";
 
 // Per-profile time-limits config. Daily cap + refill cadence + day
@@ -84,17 +84,19 @@ export default function ProfileTimeLimitsForm({ profileId }: Props) {
             <SnapSlider
                 label="Daily cap"
                 value={limits.dailyCapMinutes}
-                min={30}
-                max={1440}
-                step={5}
-                suffix="min"
+                min={15}
+                max={240}
+                customMax={1440}
+                step={15}
+                suffix="minutes"
+                format={formatMinutesAsHM}
+                allowCustom
                 snaps={[
                     { value: 30, label: "30m" },
                     { value: 60, label: "1h" },
                     { value: 120, label: "2h" },
                     { value: 180, label: "3h" },
                     { value: 240, label: "4h" },
-                    { value: 480, label: "8h" },
                 ]}
                 onChange={(v) => set("dailyCapMinutes", v)}
             />

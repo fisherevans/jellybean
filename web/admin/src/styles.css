@@ -556,6 +556,7 @@ button:disabled:hover {
 
 /* item card */
 .item-card {
+    position: relative;
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -566,13 +567,26 @@ button:disabled:hover {
     transition: transform 220ms ease-out, opacity 220ms ease-out, height 220ms ease-out, margin 220ms ease-out, padding 220ms ease-out, border-width 220ms ease-out;
     transform-origin: center;
 }
+/* Pull the tag-kebab out of the column flow so it sits in the
+   top-right of the card. The popover then extends downward without
+   being clipped by .item-card.fixed-height's overflow rule. */
+.item-card > .tag-kebab {
+    position: absolute;
+    top: 0.4rem;
+    right: 0.4rem;
+    margin-left: 0;
+    z-index: 5;
+}
 
 /* Fixed-height card used in bulk so the buttons sit at the same Y on
  * every row. Body grows to fill (flex: 1, min-height: 0); state control
  * anchors to the bottom; long studio / suggestion text is clipped. */
 .item-card.fixed-height {
     height: 200px;
-    overflow: hidden;
+    /* overflow: visible so the tag-kebab popover can extend below
+       the card edge. The inner .item-card-body already clips its
+       own text via ellipsis/line-clamp. */
+    overflow: visible;
 }
 
 .item-card.fixed-height .item-card-body {
@@ -580,6 +594,7 @@ button:disabled:hover {
     min-height: 0;
     overflow: hidden;
     align-items: stretch;
+    padding-right: 2rem; /* clear the absolute-positioned tag-kebab */
 }
 
 .item-card.fixed-height .item-card-text {
@@ -2667,9 +2682,12 @@ textarea:focus {
     color: var(--muted);
 }
 .snap-slider-current {
+    flex: 0 0 auto;
     color: var(--fg);
     font-weight: 600;
     font-size: 0.95rem;
+    min-width: 4rem;
+    text-align: right;
 }
 .snap-slider-row {
     display: flex;
@@ -2701,9 +2719,19 @@ textarea:focus {
     box-sizing: border-box !important;
 }
 .snap-slider-number {
-    flex: 0 0 5rem;
-    width: 5rem !important;
+    flex: 0 0 4.5rem;
+    width: 4.5rem !important;
     text-align: right;
+}
+.snap-slider-custom {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+.snap-slider-suffix {
+    color: var(--muted);
+    font-size: 0.85rem;
 }
 .snap-slider-snaps {
     display: flex;
@@ -3111,13 +3139,28 @@ textarea:focus {
     flex-direction: column;
     gap: 0.85rem;
 }
-.categorize-modes {
+/* Categorize header: page title + a small inline switcher link.
+   The two modes (Swipe / Bulk) are not equal weight in the UX so
+   they shouldn't look like a tab strip. The switcher is a quiet
+   link the user only notices when they need it. */
+.categorize-header {
     display: flex;
-    gap: 0.4rem;
+    align-items: baseline;
+    gap: 0.85rem;
     padding: 0 1.25rem;
 }
-.categorize-modes .pill-toggle {
-    flex: 0 0 auto;
+.categorize-header h1 {
+    margin: 0;
+}
+.categorize-switch {
+    color: var(--muted);
+    font-size: 0.9rem;
+    text-decoration: none;
+    border-bottom: 1px dashed transparent;
+}
+.categorize-switch:hover {
+    color: var(--fg);
+    border-bottom-color: var(--border);
 }
 
 /* ===== Settings hub ===== */
@@ -3867,12 +3910,20 @@ textarea:focus {
     line-height: 1.2;
     color: var(--fg);
 }
+/* The modal version of the visibility selector spans the modal's
+   full width and divides the three options evenly. The base
+   .tag-filter-modes rule above is inline-flex (shrink-to-content)
+   so we override to stretch + grow children. Layout-class first
+   (.tag-filter-modes), modifier last (.item-editor-state-row). */
 .item-editor-state-row {
-    display: flex;
+    display: flex !important;
     flex-direction: row;
-    flex-wrap: wrap;
-    gap: 0.45rem;
+    width: 100%;
     margin-bottom: 1.1rem;
+}
+.item-editor-state-row .tag-filter-mode {
+    flex: 1 1 0;
+    justify-content: center;
 }
 .item-editor-actions {
     margin-top: 1.25rem;

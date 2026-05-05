@@ -246,6 +246,17 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 			}
 			hasMore = startIndex+len(items) < total
 		} else {
+			// Pull one extra to know if there's a next page, plus the
+			// real total of categorized items for that state. The
+			// Jellyfin TotalRecordCount reflects the IDs we asked
+			// about, not the full library state, so we can't use it
+			// for the meta count.
+			countTotal, err := s.curation.CountItemIDsInState(r.Context(), profileID, st)
+			if err != nil {
+				s.logger.Error().Err(err).Msg("count state ids")
+				http.Error(w, "failed to load items", http.StatusInternalServerError)
+				return
+			}
 			ids, err := s.curation.ListItemIDsInState(r.Context(), profileID, st, limit+1, startIndex)
 			if err != nil {
 				s.logger.Error().Err(err).Msg("list state ids")
@@ -264,8 +275,8 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				items = res.Items
-				total = res.TotalRecordCount
 			}
+			total = countTotal
 		}
 
 	case filterUnset:
@@ -332,6 +343,7 @@ enrich:
 			"Genres":         it.Genres,
 			"Studios":        it.Studios,
 			"ProductionYear": it.ProductionYear,
+			"DateCreated":    it.DateCreated,
 			"ImageTags":      it.ImageTags,
 			"AudioLanguage":  it.PrimaryAudioLanguage(),
 			"AudioLanguages": it.AudioLanguages(),

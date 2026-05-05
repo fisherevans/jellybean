@@ -17,13 +17,12 @@ const PAGE_SIZE = 60;
 
 type StateFilter = "visible" | "hidden" | "unset" | "all";
 type TypeFilter = "all" | "Movie" | "Series";
-type SortKey = "name" | "added" | "year" | "rating";
+type SortKey = "name" | "added" | "year";
 
 const SORT_OPTIONS: Array<{ key: SortKey; label: string; jellyfin: string }> = [
     { key: "name", label: "Name", jellyfin: "SortName" },
     { key: "added", label: "Date added", jellyfin: "DateCreated" },
     { key: "year", label: "Year", jellyfin: "ProductionYear" },
-    { key: "rating", label: "Rating", jellyfin: "CommunityRating" },
 ];
 
 export default function Browse() {
@@ -438,24 +437,27 @@ function sortItems(items: Item[], key: SortKey, dir: "asc" | "desc"): Item[] {
             case "year":
                 cmp = (a.ProductionYear ?? 0) - (b.ProductionYear ?? 0);
                 break;
-            case "rating":
-                // Rating comes through as OfficialRating string; use the
-                // year as a tiebreaker since we don't have community
-                // rating numbers loaded.
-                cmp = (a.OfficialRating ?? "").localeCompare(
-                    b.OfficialRating ?? "",
-                );
-                break;
             case "added":
-                // The admin items endpoint doesn't return DateCreated
-                // yet, so "Date added" sort falls back to id (a stable
-                // proxy for insertion order).
-                cmp = a.Id.localeCompare(b.Id);
+                cmp =
+                    Date.parse(a.DateCreated ?? "0") -
+                    Date.parse(b.DateCreated ?? "0");
                 break;
         }
         return dir === "asc" ? cmp : -cmp;
     });
     return sorted;
+}
+
+function formatAddedDate(iso?: string): string | null {
+    if (!iso) return null;
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return null;
+    const d = new Date(t);
+    return d.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+    });
 }
 
 type CardProps = {
@@ -532,6 +534,14 @@ function BrowseCard({
                                 {item.ProductionYear ? ` · ${item.ProductionYear}` : ""}
                             </span>
                         </div>
+                        {(() => {
+                            const added = formatAddedDate(item.DateCreated);
+                            return added ? (
+                                <div className="muted browse-item-added">
+                                    Added {added}
+                                </div>
+                            ) : null;
+                        })()}
                     </div>
                     {item.Tags && item.Tags.length > 0 && (
                         <div className="browse-item-tags">

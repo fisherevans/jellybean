@@ -265,7 +265,7 @@ export default function Bulk() {
     if (!profile) {
         return (
             <div className="page">
-                <h1>Bulk categorize</h1>
+                {}
                 {profileLoading ? (
                     <Spinner block size={36} label="Loading profile…" />
                 ) : (
@@ -277,7 +277,7 @@ export default function Bulk() {
     if (!loaded) {
         return (
             <div className="page">
-                <h1>Bulk categorize</h1>
+                {}
                 {error ? (
                     <div className="error">{error}</div>
                 ) : (
@@ -289,7 +289,7 @@ export default function Bulk() {
 
     return (
         <div className="page bulk">
-            <h1>Bulk categorize</h1>
+            {}
             <div className="bulk-controls">
                 <TypeFilterPicker value={typeFilter} onChange={setTypeFilter} busy={busy} />
                 <span className="muted">

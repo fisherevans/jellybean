@@ -203,6 +203,20 @@ func (s *Store) GetStatesForItems(ctx context.Context, profileID int64, itemIDs 
 	return out, rows.Err()
 }
 
+// CountItemIDsInState returns the total number of items the given
+// profile has set to `state`, skipping orphan-tombstoned rows.
+func (s *Store) CountItemIDsInState(ctx context.Context, profileID int64, state State) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM categorizations
+		WHERE profile_id = ? AND state = ? AND orphan_at IS NULL`,
+		profileID, string(state)).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // ListItemIDsInState returns IDs whose stored state for the given profile
 // matches `state`, ordered by most-recently-set first. Orphan-tombstoned
 // rows are skipped.

@@ -76,7 +76,7 @@ test("browse card layout + interactions match feedback spec", async ({ page }) =
     expect(options.some((o) => /^Name/.test(o))).toBeTruthy();
     expect(options.some((o) => /^Date added/.test(o))).toBeTruthy();
     expect(options.some((o) => /^Year/.test(o))).toBeTruthy();
-    expect(options.some((o) => /^Rating/.test(o))).toBeTruthy();
+    expect(options.some((o) => /Rating/.test(o))).toBeFalsy();
 
     // Filter panel: tags multi-select. Open the panel and confirm
     // toggling two tags marks both as pressed AND that the
@@ -158,8 +158,22 @@ test("browse Edit button opens the item editor modal", async ({ page }) => {
 
     // Modal contains the movie poster.
     await expect(modal.locator(".item-editor-poster")).toBeVisible();
-    // Visibility radio group with the same style as tag rules.
-    await expect(modal.locator(".item-editor-state-row .tag-filter-mode")).toHaveCount(3);
+    // Visibility radio group with the same style as tag rules,
+    // sized to fill the modal width with even-sized segments.
+    const stateRow = modal.locator(".item-editor-state-row");
+    const segments = stateRow.locator(".tag-filter-mode");
+    await expect(segments).toHaveCount(3);
+    const rowBox = await stateRow.boundingBox();
+    if (!rowBox) throw new Error("state row missing");
+    const segBoxes = await Promise.all(
+        [0, 1, 2].map((i) => segments.nth(i).boundingBox()),
+    );
+    // All three segments should be roughly equal width (within 4px).
+    const widths = segBoxes.map((b) => (b ? b.width : 0));
+    expect(Math.max(...widths) - Math.min(...widths)).toBeLessThan(4);
+    // And together they should span (close to) the row width.
+    const sum = widths.reduce((a, b) => a + b, 0);
+    expect(sum).toBeGreaterThan(rowBox.width * 0.95);
     // Tag pill multi-select OR a "no tags" message.
     const pills = modal.locator(".pill-toggle");
     const hasTags = (await pills.count()) > 0;
@@ -273,23 +287,21 @@ test("time-limit snap slider has correct proportions", async ({ page }) => {
     }
     const row = page.locator(".snap-slider-row").first();
     const range = row.locator(".snap-slider-range");
-    const num = row.locator(".snap-slider-number");
+    const current = row.locator(".snap-slider-current");
     const r = await range.boundingBox();
-    const n = await num.boundingBox();
-    if (!r || !n) throw new Error("missing");
-    // The slider should be much wider than the number input so the
-    // user can actually drag the thumb.
-    expect(r.width).toBeGreaterThan(n.width * 1.5);
-    // Number input should be narrow.
-    expect(n.width).toBeLessThan(120);
-    // Drag the thumb and verify the number changes.
-    const before = await num.inputValue();
+    const c = await current.boundingBox();
+    if (!r || !c) throw new Error("missing");
+    // The slider should be much wider than the formatted-value
+    // span so the user can actually drag the thumb.
+    expect(r.width).toBeGreaterThan(c.width * 1.5);
+    // Drag the thumb and verify the formatted value changes.
+    const before = await current.innerText();
     await range.focus();
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("ArrowRight");
     await page.waitForTimeout(100);
-    const after = await num.inputValue();
+    const after = await current.innerText();
     expect(after).not.toBe(before);
     await page.screenshot({
         path: resolve(SHOTS_DIR, "24-snap-slider.png"),
@@ -348,23 +360,123 @@ test("channel editor: search-and-add picker replaces textarea", async ({ page })
     await expect(results.first()).toBeVisible({ timeout: 5_000 });
 });
 
+test("daily-cap slider shows hours/minutes + Custom pill flips to input", async ({ page }) => {
+    await page.goto("/manage/profiles");
+    await page.locator(".profile-card-link").first().click();
+    await page.getByRole("tab", { name: "Time limits" }).click();
+    await page.waitForSelector(".snap-slider");
+    const enabled = await page
+        .locator(".toggle-switch input[type=checkbox]")
+        .first()
+        .isChecked();
+    if (!enabled) {
+        await page.locator(".toggle-switch").first().click();
+        await page.waitForTimeout(150);
+    }
+    // Click the 4h pill (top of slider range) and confirm "4h" renders.
+    await page.getByRole("button", { name: "4h", exact: true }).click();
+    await page.waitForTimeout(80);
+    expect(
+        await page.locator(".snap-slider-current").first().innerText(),
+    ).toMatch(/^4h$/);
+    // 1h pill -> "1h"
+    await page.getByRole("button", { name: "1h", exact: true }).click();
+    await page.waitForTimeout(80);
+    expect(
+        await page.locator(".snap-slider-current").first().innerText(),
+    ).toMatch(/^1h$/);
+
+    // Slider's max is 240 (4h); confirm via the range input attribute.
+    const rangeMax = await page
+        .locator(".snap-slider-range")
+        .first()
+        .getAttribute("max");
+    expect(Number(rangeMax)).toBe(240);
+
+    // Custom pill flips the right side into a number input. The
+    // input's max should be 1440 (24h) so users can dial in beyond
+    // the slider's range.
+    await page.getByRole("button", { name: "Custom" }).click();
+    await page.waitForTimeout(80);
+    const numInput = page.locator(".snap-slider-custom .snap-slider-number");
+    await expect(numInput).toBeVisible();
+    expect(Number(await numInput.getAttribute("max"))).toBe(1440);
+    await expect(page.locator(".snap-slider-suffix")).toContainText("minutes");
+    // Type 720 minutes (12h) - past the slider max.
+    await numInput.fill("720");
+    await numInput.blur();
+    await page.waitForTimeout(80);
+    // Number input still shows 720; slider thumb is pinned at 240.
+    expect(await numInput.inputValue()).toBe("720");
+    expect(
+        await page.locator(".snap-slider-range").first().inputValue(),
+    ).toBe("240");
+
+    // Picking a snap pill closes Custom mode.
+    await page.getByRole("button", { name: "30m", exact: true }).click();
+    await page.waitForTimeout(80);
+    await expect(numInput).toHaveCount(0);
+    expect(
+        await page.locator(".snap-slider-current").first().innerText(),
+    ).toMatch(/^30m$/);
+    await page.screenshot({
+        path: resolve(SHOTS_DIR, "28-slider-hm.png"),
+        fullPage: true,
+    });
+});
+
+test("categorize header: title + small switcher link", async ({ page }) => {
+    await page.goto("/manage/swipe");
+    await page.waitForSelector(".categorize-header");
+    const head = page.locator(".categorize-header");
+    await expect(head.locator("h1")).toContainText("Swipe");
+    const switcher = head.locator(".categorize-switch");
+    await expect(switcher).toContainText(/Categorize in bulk/);
+    // Click it -> Bulk header
+    await switcher.click();
+    await expect(page.locator(".categorize-header h1")).toContainText("Bulk");
+    await expect(page.locator(".categorize-switch")).toContainText(/Back to swipe/);
+});
+
+test("swipe drops the misleading remaining count", async ({ page }) => {
+    await page.goto("/manage/swipe");
+    // The page either renders .swipe-controls (active swipe) or
+    // the empty-state copy (all caught up). Either way, we just
+    // assert that no node on the page mentions a "remaining" count.
+    await page.waitForLoadState("networkidle");
+    const body = await page.locator(".categorize-shell").innerText();
+    expect(body).not.toMatch(/\bremaining\b/i);
+});
+
+async function setSlider(page, hasText: RegExp, value: number) {
+    // Drive the range slider directly and dispatch input + change so
+    // React picks up the value. The Custom-mode number input is
+    // hidden by default in SnapSlider, so we can't fill that.
+    const range = page
+        .locator(".snap-slider")
+        .filter({ hasText })
+        .locator("input[type=range]");
+    await range.evaluate((el, v) => {
+        const input = el as HTMLInputElement;
+        const setter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype,
+            "value",
+        )?.set;
+        setter?.call(input, String(v));
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, value);
+}
+
 test("warm tint sweep: 0/50/100 produce visibly different output", async ({ page }) => {
     await page.goto("/manage/profiles");
     await page.locator(".profile-card-link").first().click();
     await page.getByRole("tab", { name: "Viewing" }).click();
     await page.waitForSelector(".viewing-preview-bezel");
-    const dim = page
-        .locator(".snap-slider")
-        .filter({ hasText: /Dim/ })
-        .locator("input[type=number]");
-    const warm = page
-        .locator(".snap-slider")
-        .filter({ hasText: /Warm tint|Red shift/ })
-        .locator("input[type=number]");
-    await dim.fill("0");
+    await setSlider(page, /Dim/, 0);
 
     for (const pct of [0, 50, 100]) {
-        await warm.fill(String(pct));
+        await setSlider(page, /Warm tint|Red shift/, pct);
         await page.waitForTimeout(200);
         await page
             .locator(".viewing-preview-bezel")
@@ -419,19 +531,12 @@ test("warm tint filter expression matches kid SPA target", async ({ page }) => {
     await page.locator(".profile-card-link").first().click();
     await page.getByRole("tab", { name: "Viewing" }).click();
     await page.waitForSelector(".viewing-preview-bezel");
-    // Move the warm-tint slider all the way up.
-    const warm = page
-        .locator(".snap-slider")
-        .filter({ hasText: /Warm tint|Red shift/ })
-        .locator("input[type=number]");
-    await warm.fill("100");
+    await setSlider(page, /Warm tint|Red shift/, 100);
     await page.waitForTimeout(150);
     const filter = await page
-        .locator(".viewing-preview-bezel")
+        .locator(".viewing-preview-img")
         .first()
         .evaluate((el) => getComputedStyle(el).filter);
-    // Should contain sepia, hue-rotate AND saturate now (the new
-    // formula). Old formula was sepia + hue-rotate only.
     expect(filter).toMatch(/sepia\(/);
     expect(filter).toMatch(/hue-rotate\(/);
     expect(filter).toMatch(/saturate\(/);

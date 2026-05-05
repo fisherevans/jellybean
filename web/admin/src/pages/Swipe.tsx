@@ -76,6 +76,12 @@ export default function Swipe() {
     const [previewItem, setPreviewItem] = useState<Item | null>(null);
     const dragRef = useRef<{ startX: number; startY: number } | null>(null);
 
+    // Small batches keep the first card visible quickly. We refill as
+    // soon as the user is within REFILL_WHEN_LEFT items of running
+    // out, so dragging never stalls waiting for the next page.
+    const BATCH_SIZE = 10;
+    const REFILL_WHEN_LEFT = 4;
+
     async function fetchBatch(startIndex: number) {
         if (!profile) return null;
         try {
@@ -83,7 +89,7 @@ export default function Swipe() {
                 profileId: profile.id,
                 state: "unset",
                 suggest: true,
-                limit: 50,
+                limit: BATCH_SIZE,
                 startIndex,
                 type: typeFilterParam(typeFilter),
             });
@@ -119,7 +125,12 @@ export default function Swipe() {
     const upcoming = queue[cursor + 1];
 
     const refillIfNeeded = useCallback(async () => {
-        if (cursor + 5 >= queue.length && queue.length > 0 && !busy && !exhausted) {
+        if (
+            cursor + REFILL_WHEN_LEFT >= queue.length &&
+            queue.length > 0 &&
+            !busy &&
+            !exhausted
+        ) {
             const res = await fetchBatch(serverCursor);
             if (res) {
                 const seen = new Set(queue.map((q) => q.Id));
@@ -265,7 +276,7 @@ export default function Swipe() {
     if (!profile) {
         return (
             <div className="page">
-                <h1>Swipe</h1>
+                
                 {profileLoading ? (
                     <Spinner block size={36} label="Loading profile…" />
                 ) : (
@@ -280,7 +291,7 @@ export default function Swipe() {
         if (!exhausted) {
             return (
                 <div className="page">
-                    <h1>Swipe</h1>
+                    
                     <Spinner
                         block
                         size={48}
@@ -291,7 +302,7 @@ export default function Swipe() {
         }
         return (
             <div className="page">
-                <h1>Swipe</h1>
+                
                 <p>All caught up for <strong>{profile.name}</strong>.{" "}
                 <Link to="/bulk">Bulk categorize</Link>.</p>
                 <p className="muted">{doneCount} item(s) categorized this session.</p>
@@ -318,8 +329,8 @@ export default function Swipe() {
             <div className="swipe-controls">
                 <TypeFilterPicker value={typeFilter} onChange={setTypeFilter} busy={busy} />
                 <span className="muted">
-                    Swiping for <strong>{profile.name}</strong> · {doneCount} done ·{" "}
-                    {queue.length - cursor} remaining
+                    Swiping for <strong>{profile.name}</strong>
+                    {doneCount > 0 ? ` · ${doneCount} done` : ""}
                 </span>
             </div>
 

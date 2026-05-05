@@ -26,6 +26,11 @@ export default function SettingsLayout() {
     const activeProfileId = onProfilesPage ? Number(params.id) || null : null;
     const activeLayoutId = onLayoutsPage ? Number(params.layoutId) || null : null;
 
+    // Refetch on every route change inside the settings layout so
+    // the sidebar reflects creates/deletes done on detail pages
+    // (e.g. deleting a profile from /profiles/5 navigates to
+    // /profiles, which retriggers this effect and removes the
+    // stale child entry).
     useEffect(() => {
         let cancelled = false;
         void (async () => {
@@ -45,7 +50,7 @@ export default function SettingsLayout() {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [path]);
 
     return (
         <div className="settings-layout">

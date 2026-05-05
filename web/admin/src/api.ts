@@ -23,6 +23,9 @@ export type Item = {
     Type: string;
     OfficialRating?: string;
     ProductionYear?: number;
+    /** ISO 8601 timestamp of when Jellyfin first indexed the item.
+     *  Used for sort=added in Browse. */
+    DateCreated?: string;
     Genres?: string[];
     Studios?: { Name: string; Id?: string }[];
     ImageTags?: { Primary?: string };
