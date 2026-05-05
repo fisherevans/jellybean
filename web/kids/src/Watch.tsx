@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { authHeaders, getSession, type Session } from "./auth";
+import OverrideModal, { useLongPressUp } from "./OverrideModal";
 
 // Watch menu (M7). Pre-playback interstitial that surfaces a hero
 // (poster + title + Play / Resume / Restart) over a blurred backdrop.
@@ -60,6 +61,21 @@ export default function Watch() {
     const [item, setItem] = useState<Item | null>(null);
     const [episodes, setEpisodes] = useState<EpisodesResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
+    // Adult override gesture (M9): long-press UP on /watch targets
+    // the watched item itself - the kid is reading its details so
+    // that's clearly what they'd want to edit.
+    const [override, setOverride] = useState<{
+        itemId: string;
+        itemName: string;
+    } | null>(null);
+    useLongPressUp(
+        () => {
+            if (!item || !session) return;
+            setOverride({ itemId: item.Id, itemName: item.Name });
+        },
+        !!item && !!session && override === null,
+        600,
+    );
 
     const adminProfileId = searchParams.get("profileId");
     useEffect(() => {
@@ -244,6 +260,13 @@ export default function Watch() {
                 <EpisodeAccordion
                     response={episodes}
                     onPlay={(epID) => goPlay(epID)}
+                />
+            )}
+            {override && (
+                <OverrideModal
+                    itemId={override.itemId}
+                    itemName={override.itemName}
+                    onClose={() => setOverride(null)}
                 />
             )}
         </div>

@@ -14,6 +14,7 @@ import {
     set as cacheSet,
 } from "./libraryCache";
 import { useOnlineStatus } from "./onlineStatus";
+import OverrideModal, { useLongPressUp } from "./OverrideModal";
 import TabPill from "./TabPill";
 import { shouldShowWatchMenu } from "./Watch";
 
@@ -129,6 +130,12 @@ export default function Library() {
     const [focus, setFocus] = useState<Focus>({ kind: "filter", index: 0 });
     const tileRefs = useRef<Record<string, HTMLButtonElement | null>>({});
     const sentinelRef = useRef<HTMLDivElement | null>(null);
+    // Adult-override gesture (M9): long-press UP on a focused tile
+    // opens the override modal targeting that item. Mirrors Browse.
+    const [override, setOverride] = useState<{
+        itemId: string;
+        itemName: string;
+    } | null>(null);
 
     useEffect(() => {
         probeAdmin().then(setAdmin);
@@ -445,6 +452,25 @@ export default function Library() {
         [continueItems, items, columns, filter, nav],
     );
 
+    // The currently-focused content tile (cw row or main grid),
+    // null when focus is on the type filter.
+    const focusedItem =
+        focus.kind === "cw"
+            ? continueItems[focus.index]
+            : focus.kind === "grid"
+              ? items[focus.index]
+              : undefined;
+    useLongPressUp(
+        () => {
+            if (!focusedItem || !session) return;
+            setOverride({ itemId: focusedItem.Id, itemName: focusedItem.Name });
+        },
+        (focus.kind === "cw" || focus.kind === "grid") &&
+            !!session &&
+            override === null,
+        600,
+    );
+
     if (admin === undefined) return <div className="screen">Loading...</div>;
 
     const heading = session
@@ -597,6 +623,13 @@ export default function Library() {
                         {loadingMore && <p className="library-state">Loading more...</p>}
                     </section>
                 </>
+            )}
+            {override && (
+                <OverrideModal
+                    itemId={override.itemId}
+                    itemName={override.itemName}
+                    onClose={() => setOverride(null)}
+                />
             )}
         </div>
     );
