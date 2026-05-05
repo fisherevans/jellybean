@@ -46,6 +46,22 @@ export default function ProfileBodyBreaksForm({ profileId }: Props) {
         setSaved(false);
     }
 
+    async function resetDefaults() {
+        if (!confirm("Reset voice message + reasons to the defaults? Your current values will be discarded.")) return;
+        setSaving(true);
+        setError(null);
+        try {
+            const fresh = await api.resetProfileBodyBreaks(profileId);
+            setCfg(fresh);
+            setReasonsRaw((fresh.reasons ?? []).join("\n"));
+            setSaved(true);
+        } catch (err) {
+            setError(err instanceof HttpError ? err.message : String(err));
+        } finally {
+            setSaving(false);
+        }
+    }
+
     async function save() {
         if (!cfg) return;
         const reasons = reasonsRaw
@@ -141,6 +157,12 @@ export default function ProfileBodyBreaksForm({ profileId }: Props) {
                     }}
                 />
             </label>
+
+            <div className="settings-actions-secondary">
+                <button type="button" onClick={resetDefaults} disabled={saving}>
+                    Reset to defaults
+                </button>
+            </div>
 
             {error && <p className="error">{error}</p>}
             {saved && !error && <p className="muted">Saved.</p>}

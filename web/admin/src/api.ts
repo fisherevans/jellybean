@@ -401,6 +401,11 @@ export const api = {
     me: () => request<User>("GET", "/api/auth/me"),
 
     listItems: (q: ItemsQuery) => request<ItemsResult>("GET", itemsURL(q)),
+    getAdminItem: (itemId: string, profileId: number) =>
+        request<Item>(
+            "GET",
+            `/api/admin/items/${encodeURIComponent(itemId)}?profileId=${profileId}`,
+        ),
 
     setState: (itemId: string, profileId: number, state: ItemState) =>
         request<void>("POST", `/api/admin/items/${itemId}/state`, { profileId, state }),
@@ -672,6 +677,11 @@ export const api = {
             "PUT",
             `/api/admin/profiles/${profileId}/body-breaks`,
             body,
+        ),
+    resetProfileBodyBreaks: (profileId: number) =>
+        request<ProfileBodyBreaks>(
+            "POST",
+            `/api/admin/profiles/${profileId}/body-breaks/reset`,
         ),
 
     // --- M12: viewing controls ------------------------------------

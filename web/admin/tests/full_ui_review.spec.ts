@@ -125,9 +125,7 @@ test.describe("full admin UI review", () => {
         await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Time limits" }).click();
-        await page
-            .getByRole("checkbox", { name: "Enable time limits for this profile" })
-            .check();
+        await page.waitForSelector(".snap-slider");
         await page.screenshot({
             path: shot("09c-settings-time-limits"),
             fullPage: true,

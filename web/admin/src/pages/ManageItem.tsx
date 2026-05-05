@@ -27,22 +27,12 @@ export default function ManageItem() {
     async function refresh() {
         if (!profile || !itemId) return;
         try {
-            const [items, t, all] = await Promise.all([
-                api.listItems({
-                    profileId: profile.id,
-                    limit: 1,
-                    type: "Movie,Series",
-                    search: "",
-                }),
+            const [it, t, all] = await Promise.all([
+                api.getAdminItem(itemId, profile.id),
                 api.getItemTags(itemId),
                 api.listTags(),
             ]);
-            // listItems doesn't filter to a single id - we have to
-            // ask for it via the same /api/admin/items endpoint with
-            // tagId / state combos, none of which are appropriate
-            // here. Instead, scan the small response for our id.
-            const found = items.Items.find((it) => it.Id === itemId) ?? null;
-            setItem(found);
+            setItem(it);
             setTags(t.tags);
             setAllTags(all.tags);
         } catch (err) {

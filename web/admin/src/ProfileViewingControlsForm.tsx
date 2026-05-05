@@ -90,7 +90,7 @@ export default function ProfileViewingControlsForm({ profileId }: Props) {
             />
 
             <SnapSlider
-                label="Red shift (warmer, 0-100%)"
+                label="Warm tint (cooler ↔ warmer)"
                 value={cfg.redShiftPercent}
                 min={0}
                 max={100}
@@ -122,10 +122,12 @@ export default function ProfileViewingControlsForm({ profileId }: Props) {
             </label>
 
             <ToggleSwitch
-                label="Also auto-off when the daily time limit hits zero"
-                description="Skips the locked-tile screen and goes straight to the lockout overlay when the kid runs out of minutes."
+                label="Auto-off at zero minutes"
+                description="When the kid's daily time limit hits zero, skip the locked-tile screen and go straight to the lockout overlay."
                 checked={cfg.autoOffOnTimeLimit}
                 onChange={(v) => set("autoOffOnTimeLimit", v)}
+                onLabel="Enabled"
+                offLabel="Disabled"
             />
 
             {error && <p className="error">{error}</p>}

@@ -10,6 +10,9 @@ type Props = {
     checked: boolean;
     onChange: (v: boolean) => void;
     disabled?: boolean;
+    /** State labels next to the track. Defaults to On / Off. */
+    onLabel?: string;
+    offLabel?: string;
 };
 
 export default function ToggleSwitch({
@@ -18,6 +21,8 @@ export default function ToggleSwitch({
     checked,
     onChange,
     disabled,
+    onLabel = "On",
+    offLabel = "Off",
 }: Props) {
     const id = useId();
     return (
@@ -48,7 +53,7 @@ export default function ToggleSwitch({
                     }`}
                     aria-hidden
                 >
-                    {checked ? "On" : "Off"}
+                    {checked ? onLabel : offLabel}
                 </span>
             </span>
         </label>

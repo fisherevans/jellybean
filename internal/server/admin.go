@@ -201,25 +201,71 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 		if wantState == filterHidden {
 			st = curation.StateHidden
 		}
-		ids, err := s.curation.ListItemIDsInState(r.Context(), profileID, st, limit+1, startIndex)
-		if err != nil {
-			s.logger.Error().Err(err).Msg("list state ids")
-			http.Error(w, "failed to load items", http.StatusInternalServerError)
-			return
-		}
-		hasMore = len(ids) > limit
-		if hasMore {
-			ids = ids[:limit]
-		}
-		if len(ids) > 0 {
-			res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{IDs: ids})
+		if search != "" {
+			// With a name search active, ignore the curation
+			// pagination and instead let Jellyfin do the substring
+			// match, then filter the result by the requested
+			// curation state. This is the path the Browse search
+			// box hits when a state filter is also applied.
+			res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{
+				IncludeItemTypes: itemTypes,
+				Recursive:        true,
+				Limit:            500,
+				SearchTerm:       search,
+				SortBy:           "SortName",
+				SortOrder:        "Ascending",
+			})
 			if err != nil {
-				s.logger.Error().Err(err).Msg("get items by ids")
-				http.Error(w, "failed to load items", http.StatusBadGateway)
+				s.logger.Error().Err(err).Msg("search items")
+				http.Error(w, "failed to search items", http.StatusBadGateway)
 				return
 			}
-			items = res.Items
-			total = res.TotalRecordCount
+			ids := make([]string, len(res.Items))
+			for i, it := range res.Items {
+				ids[i] = it.ID
+			}
+			states, err := s.curation.GetStatesForItems(r.Context(), profileID, ids)
+			if err != nil {
+				s.logger.Error().Err(err).Msg("get states")
+				http.Error(w, "failed to load states", http.StatusInternalServerError)
+				return
+			}
+			matching := make([]jellyfin.Item, 0, len(res.Items))
+			for _, it := range res.Items {
+				if string(states[it.ID]) == string(st) {
+					matching = append(matching, it)
+				}
+			}
+			total = len(matching)
+			if startIndex < len(matching) {
+				end := startIndex + limit
+				if end > len(matching) {
+					end = len(matching)
+				}
+				items = matching[startIndex:end]
+			}
+			hasMore = startIndex+len(items) < total
+		} else {
+			ids, err := s.curation.ListItemIDsInState(r.Context(), profileID, st, limit+1, startIndex)
+			if err != nil {
+				s.logger.Error().Err(err).Msg("list state ids")
+				http.Error(w, "failed to load items", http.StatusInternalServerError)
+				return
+			}
+			hasMore = len(ids) > limit
+			if hasMore {
+				ids = ids[:limit]
+			}
+			if len(ids) > 0 {
+				res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{IDs: ids})
+				if err != nil {
+					s.logger.Error().Err(err).Msg("get items by ids")
+					http.Error(w, "failed to load items", http.StatusBadGateway)
+					return
+				}
+				items = res.Items
+				total = res.TotalRecordCount
+			}
 		}
 
 	case filterUnset:
@@ -324,6 +370,58 @@ enrich:
 		"HasMore":          hasMore,
 		"ProfileId":        profileID,
 	})
+}
+
+// handleAdminGetItem returns a single decorated item (state + tags
+// + suggestion). Used by /items/:id (manage-item deep-link) which
+// needs to fetch by id rather than scanning a paginated list.
+func (s *Server) handleAdminGetItem(w http.ResponseWriter, r *http.Request) {
+	profileID, ok := requireProfileID(w, r)
+	if !ok {
+		return
+	}
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		http.Error(w, "item id required", http.StatusBadRequest)
+		return
+	}
+	item, err := s.jellyfin.GetItem(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, jellyfin.ErrNotFound) {
+			http.Error(w, "item not found", http.StatusNotFound)
+			return
+		}
+		s.logger.Error().Err(err).Str("id", id).Msg("get item")
+		http.Error(w, "failed to load item", http.StatusBadGateway)
+		return
+	}
+	states, _ := s.curation.GetStatesForItems(r.Context(), profileID, []string{id})
+	tagSets, _ := s.curation.GetTagsForItems(r.Context(), []string{id})
+	row := map[string]any{
+		"Id":             item.ID,
+		"Name":           item.Name,
+		"Type":           item.Type,
+		"OfficialRating": item.OfficialRating,
+		"Genres":         item.Genres,
+		"Studios":        item.Studios,
+		"ProductionYear": item.ProductionYear,
+		"ImageTags":      item.ImageTags,
+		"AudioLanguage":  item.PrimaryAudioLanguage(),
+		"AudioLanguages": item.AudioLanguages(),
+	}
+	if st, ok := states[id]; ok {
+		row["State"] = string(st)
+	} else {
+		row["State"] = nil
+	}
+	tagsJSON := make([]map[string]any, 0)
+	if tags, ok := tagSets[id]; ok {
+		for _, tg := range tags {
+			tagsJSON = append(tagsJSON, map[string]any{"id": tg.ID, "name": tg.Name})
+		}
+	}
+	row["Tags"] = tagsJSON
+	writeJSON(w, http.StatusOK, row)
 }
 
 // pageUnsetForProfile walks Jellyfin's catalog and returns items that have

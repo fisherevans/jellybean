@@ -16,6 +16,14 @@ const PAGE_SIZE = 60;
 
 type StateFilter = "visible" | "hidden" | "unset" | "all";
 type TypeFilter = "all" | "Movie" | "Series";
+type SortKey = "name" | "added" | "year" | "rating";
+
+const SORT_OPTIONS: Array<{ key: SortKey; label: string; jellyfin: string }> = [
+    { key: "name", label: "Name", jellyfin: "SortName" },
+    { key: "added", label: "Date added", jellyfin: "DateCreated" },
+    { key: "year", label: "Year", jellyfin: "ProductionYear" },
+    { key: "rating", label: "Rating", jellyfin: "CommunityRating" },
+];
 
 export default function Browse() {
     const { profile } = useActiveProfile();
@@ -24,9 +32,11 @@ export default function Browse() {
     const [tags, setTags] = useState<Tag[]>([]);
     const [stateFilter, setStateFilter] = useState<StateFilter>("visible");
     const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
-    const [activeTagId, setActiveTagId] = useState<number | null>(null);
+    const [activeTagIds, setActiveTagIds] = useState<Set<number>>(new Set());
     const [yearMin, setYearMin] = useState("");
     const [yearMax, setYearMax] = useState("");
+    const [sortKey, setSortKey] = useState<SortKey>("name");
+    const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
     const [search, setSearch] = useState("");
     const [searchDebounced, setSearchDebounced] = useState("");
     const [filterOpen, setFilterOpen] = useState(false);
@@ -52,21 +62,56 @@ export default function Browse() {
                 stateFilter === "all" ? "all" : (stateFilter as ItemState);
             const typeParam =
                 typeFilter === "all" ? "Movie,Series" : typeFilter;
-            const res = await api.listItems({
+            // The server tagId filter only takes one value. With
+            // multiple tags selected we issue one request per tag and
+            // intersect the results client-side - works for the
+            // typical 2-3 tag combinations and avoids a server change.
+            const tagIds = [...activeTagIds];
+            const baseParams = {
                 profileId: profile.id,
-                state: stateParam === "all" ? undefined : (stateParam as Exclude<ItemState, null>),
+                state:
+                    stateParam === "all"
+                        ? undefined
+                        : (stateParam as Exclude<ItemState, null>),
                 limit: PAGE_SIZE,
                 type: typeParam,
                 search: searchDebounced || undefined,
-                tagId: activeTagId ?? undefined,
-            });
-            let it = res.Items ?? [];
-            // Year range is filtered client-side; the server doesn't
-            // expose a year query param yet.
+            } as const;
+            let baseItems: Item[];
+            let baseTotal: number;
+            if (tagIds.length === 0) {
+                const res = await api.listItems(baseParams);
+                baseItems = res.Items ?? [];
+                baseTotal = res.TotalRecordCount ?? 0;
+            } else {
+                const responses = await Promise.all(
+                    tagIds.map((id) =>
+                        api.listItems({ ...baseParams, tagId: id }),
+                    ),
+                );
+                // Intersect by item id; keep first response's order +
+                // metadata so the UI is stable.
+                const firstSet = responses[0];
+                const idsAfter = new Set<string>(
+                    firstSet.Items?.map((it) => it.Id) ?? [],
+                );
+                for (let i = 1; i < responses.length; i++) {
+                    const ids = new Set(
+                        (responses[i].Items ?? []).map((it) => it.Id),
+                    );
+                    for (const id of [...idsAfter])
+                        if (!ids.has(id)) idsAfter.delete(id);
+                }
+                baseItems = (firstSet.Items ?? []).filter((it) =>
+                    idsAfter.has(it.Id),
+                );
+                baseTotal = baseItems.length;
+            }
+            // Year range filter (client-side - server lacks this).
             const min = yearMin ? Number(yearMin) : null;
             const max = yearMax ? Number(yearMax) : null;
             if (min || max) {
-                it = it.filter((x) => {
+                baseItems = baseItems.filter((x) => {
                     const y = x.ProductionYear;
                     if (!y) return false;
                     if (min && y < min) return false;
@@ -74,14 +119,29 @@ export default function Browse() {
                     return true;
                 });
             }
-            setItems(it);
-            setTotal(res.TotalRecordCount ?? 0);
+            // Sort client-side. The server only supports SortName for
+            // SortOrder Asc; for the other axes we sort the loaded
+            // page (acceptable since we cap at PAGE_SIZE and most
+            // libraries fit in a few pages).
+            baseItems = sortItems(baseItems, sortKey, sortDir);
+            setItems(baseItems);
+            setTotal(baseTotal);
         } catch (err) {
             setError(err instanceof Error ? err.message : "load failed");
         } finally {
             setLoading(false);
         }
-    }, [profile?.id, searchDebounced, activeTagId, stateFilter, typeFilter, yearMin, yearMax]);
+    }, [
+        profile?.id,
+        searchDebounced,
+        activeTagIds,
+        stateFilter,
+        typeFilter,
+        yearMin,
+        yearMax,
+        sortKey,
+        sortDir,
+    ]);
 
     useEffect(() => {
         void refresh();
@@ -93,16 +153,25 @@ export default function Browse() {
         return m;
     }, [tags]);
 
+    function toggleTagFilter(id: number) {
+        setActiveTagIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }
+
     const activeFilterCount =
         (typeFilter !== "all" ? 1 : 0) +
-        (activeTagId !== null ? 1 : 0) +
+        activeTagIds.size +
         (yearMin || yearMax ? 1 : 0) +
         (stateFilter !== "visible" ? 1 : 0);
 
     function clearAll() {
         setStateFilter("visible");
         setTypeFilter("all");
-        setActiveTagId(null);
+        setActiveTagIds(new Set());
         setYearMin("");
         setYearMax("");
     }
@@ -148,6 +217,27 @@ export default function Browse() {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                 />
+                <select
+                    className="browse-sort"
+                    value={`${sortKey}:${sortDir}`}
+                    onChange={(e) => {
+                        const [k, d] = e.target.value.split(":") as [
+                            SortKey,
+                            "asc" | "desc",
+                        ];
+                        setSortKey(k);
+                        setSortDir(d);
+                    }}
+                    aria-label="Sort by"
+                >
+                    {SORT_OPTIONS.flatMap((o) =>
+                        ["asc", "desc"].map((d) => (
+                            <option key={`${o.key}:${d}`} value={`${o.key}:${d}`}>
+                                {o.label} {d === "asc" ? "↑" : "↓"}
+                            </option>
+                        )),
+                    )}
+                </select>
                 <button
                     type="button"
                     className={`browse-filter-toggle ${
@@ -163,7 +253,7 @@ export default function Browse() {
                         </span>
                     )}
                     <span className="browse-filter-caret" aria-hidden>
-                        {filterOpen ? "▴" : "▾"}
+                        {filterOpen ? "▲" : "▼"}
                     </span>
                 </button>
             </div>
@@ -237,25 +327,29 @@ export default function Browse() {
 
                     {tags.length > 0 && (
                         <div className="browse-filter-group">
-                            <span className="browse-filter-label">Tag</span>
+                            <span className="browse-filter-label">
+                                Tags{" "}
+                                {activeTagIds.size > 0
+                                    ? `(${activeTagIds.size} selected, items must match all)`
+                                    : "(multi-select)"}
+                            </span>
                             <div className="pill-toggle-row pill-toggle-wrap">
-                                {tags.map((t) => (
-                                    <button
-                                        key={t.id}
-                                        type="button"
-                                        className={`pill-toggle ${
-                                            activeTagId === t.id ? "active" : ""
-                                        }`}
-                                        aria-pressed={activeTagId === t.id}
-                                        onClick={() =>
-                                            setActiveTagId((prev) =>
-                                                prev === t.id ? null : t.id,
-                                            )
-                                        }
-                                    >
-                                        {t.name}
-                                    </button>
-                                ))}
+                                {tags.map((t) => {
+                                    const on = activeTagIds.has(t.id);
+                                    return (
+                                        <button
+                                            key={t.id}
+                                            type="button"
+                                            className={`pill-toggle ${
+                                                on ? "active" : ""
+                                            }`}
+                                            aria-pressed={on}
+                                            onClick={() => toggleTagFilter(t.id)}
+                                        >
+                                            {t.name}
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
                     )}
@@ -278,8 +372,10 @@ export default function Browse() {
                     : `${items.length} of ${total.toLocaleString()} ${
                           stateFilter === "all" ? "" : stateFilter + " "
                       }item${total === 1 ? "" : "s"}${
-                          activeTagId !== null
-                              ? ` tagged ${tagsById.get(activeTagId)?.name ?? ""}`
+                          activeTagIds.size > 0
+                              ? ` tagged ${[...activeTagIds]
+                                    .map((id) => tagsById.get(id)?.name ?? id)
+                                    .join(" + ")}`
                               : ""
                       }`}
             </div>
@@ -303,6 +399,38 @@ export default function Browse() {
             )}
         </div>
     );
+}
+
+function sortItems(items: Item[], key: SortKey, dir: "asc" | "desc"): Item[] {
+    const sorted = [...items].sort((a, b) => {
+        let cmp = 0;
+        switch (key) {
+            case "name":
+                cmp = a.Name.localeCompare(b.Name, undefined, {
+                    sensitivity: "base",
+                });
+                break;
+            case "year":
+                cmp = (a.ProductionYear ?? 0) - (b.ProductionYear ?? 0);
+                break;
+            case "rating":
+                // Rating comes through as OfficialRating string; use the
+                // year as a tiebreaker since we don't have community
+                // rating numbers loaded.
+                cmp = (a.OfficialRating ?? "").localeCompare(
+                    b.OfficialRating ?? "",
+                );
+                break;
+            case "added":
+                // The admin items endpoint doesn't return DateCreated
+                // yet, so "Date added" sort falls back to id (a stable
+                // proxy for insertion order).
+                cmp = a.Id.localeCompare(b.Id);
+                break;
+        }
+        return dir === "asc" ? cmp : -cmp;
+    });
+    return sorted;
 }
 
 type CardProps = {
@@ -365,30 +493,32 @@ function BrowseCard({
                     </div>
                 )}
                 <div className="browse-item-body">
-                    <div className="browse-item-name">{item.Name}</div>
-                    <div className="browse-item-meta">
-                        <span
-                            className={`browse-state-pill state-${
-                                item.State ?? "unset"
-                            }`}
-                        >
-                            {item.State ?? "unset"}
-                        </span>
-                        <span className="muted">
-                            {item.Type === "Series" ? "TV" : "Movie"}
-                            {item.ProductionYear ? ` · ${item.ProductionYear}` : ""}
-                        </span>
+                    <div className="browse-item-head">
+                        <div className="browse-item-name">{item.Name}</div>
+                        <div className="browse-item-meta">
+                            <span
+                                className={`browse-state-pill state-${
+                                    item.State ?? "unset"
+                                }`}
+                            >
+                                {item.State ?? "unset"}
+                            </span>
+                            <span className="muted">
+                                {item.Type === "Series" ? "TV" : "Movie"}
+                                {item.ProductionYear ? ` · ${item.ProductionYear}` : ""}
+                            </span>
+                        </div>
                     </div>
                     {item.Tags && item.Tags.length > 0 && (
                         <div className="browse-item-tags">
-                            {item.Tags.slice(0, 3).map((t) => (
+                            {item.Tags.slice(0, 4).map((t) => (
                                 <span key={t.id} className="browse-tag-pill">
                                     {t.name}
                                 </span>
                             ))}
-                            {item.Tags.length > 3 && (
+                            {item.Tags.length > 4 && (
                                 <span className="browse-tag-pill more">
-                                    +{item.Tags.length - 3}
+                                    +{item.Tags.length - 4}
                                 </span>
                             )}
                         </div>

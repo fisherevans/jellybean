@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type Layout } from "./api";
+import {
+    api,
+    ROW_TYPE_LABELS,
+    type Layout,
+    type LayoutRow,
+    type Tag,
+} from "./api";
 
 // Quick preview of a layout's row list. Used from the profile Basic
 // tab so an admin can confirm what's about to be served on the kid
@@ -16,14 +22,20 @@ type Props = {
 
 export default function LayoutPreviewModal({ layoutId, onClose }: Props) {
     const [layout, setLayout] = useState<Layout | null>(null);
+    const [tags, setTags] = useState<Tag[]>([]);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         let cancelled = false;
         void (async () => {
             try {
-                const got = await api.getLayout(layoutId);
-                if (!cancelled) setLayout(got);
+                const [got, tagRes] = await Promise.all([
+                    api.getLayout(layoutId),
+                    api.listTags({ sort: "name" }),
+                ]);
+                if (cancelled) return;
+                setLayout(got);
+                setTags(tagRes.tags);
             } catch (err) {
                 if (!cancelled) setError(err instanceof Error ? err.message : "load failed");
             }
@@ -32,6 +44,8 @@ export default function LayoutPreviewModal({ layoutId, onClose }: Props) {
             cancelled = true;
         };
     }, [layoutId]);
+
+    const tagsById = new Map(tags.map((t) => [t.id, t]));
 
     useEffect(() => {
         function onKey(e: KeyboardEvent) {
@@ -75,10 +89,10 @@ export default function LayoutPreviewModal({ layoutId, onClose }: Props) {
                                         </span>
                                         <div>
                                             <div className="layout-preview-title">
-                                                {row.title || row.type}
+                                                {row.title || ROW_TYPE_LABELS[row.type]}
                                             </div>
                                             <div className="muted">
-                                                {row.type}
+                                                {summarizeRow(row, tagsById)}
                                             </div>
                                         </div>
                                     </li>
@@ -99,4 +113,75 @@ export default function LayoutPreviewModal({ layoutId, onClose }: Props) {
             </div>
         </div>
     );
+}
+
+// Build a human-readable summary line for a layout row. Pulls
+// type-specific fields out of row.config (loosely-typed) and falls
+// back to the friendly type label when there's nothing extra to
+// say. Tag names are resolved against the global tag list passed
+// in - tag_fanout shows "all tags" or the explicit tag id list.
+function summarizeRow(row: LayoutRow, tagsById: Map<number, Tag>): string {
+    const cfg = (row.config ?? {}) as Record<string, unknown>;
+    const max = typeof cfg.max === "number" ? cfg.max : undefined;
+    switch (row.type) {
+        case "continue_watching":
+            return max ? `${max} most recent` : "Most recent in-progress items";
+        case "favorites":
+            return max ? `${max} most recent favorites` : "Recently favorited items";
+        case "tag": {
+            const id = typeof cfg.tagId === "number" ? cfg.tagId : undefined;
+            const tag = id ? tagsById.get(id)?.name : undefined;
+            const sort = typeof cfg.sort === "string" ? cfg.sort : "random";
+            return [
+                tag ? `Tag: ${tag}` : "Tag (none picked)",
+                sort,
+                max ? `${max} max` : null,
+            ]
+                .filter(Boolean)
+                .join(" · ");
+        }
+        case "tag_fanout": {
+            const ids = Array.isArray(cfg.tagIds)
+                ? (cfg.tagIds as unknown[]).filter(
+                      (x): x is number => typeof x === "number",
+                  )
+                : [];
+            const order =
+                typeof cfg.rowOrder === "string" ? cfg.rowOrder : "alpha";
+            const within =
+                typeof cfg.within === "string" ? cfg.within : "random";
+            const tagSummary =
+                ids.length === 0
+                    ? "all tags"
+                    : ids.length <= 3
+                      ? ids
+                            .map((id) => tagsById.get(id)?.name ?? `tag ${id}`)
+                            .join(", ")
+                      : `${ids.length} tags`;
+            return [
+                tagSummary,
+                `rows ${order}`,
+                `within ${within}`,
+                max ? `${max} per row` : null,
+            ]
+                .filter(Boolean)
+                .join(" · ");
+        }
+        case "recently_added": {
+            const lookback =
+                typeof cfg.lookbackDays === "number" ? cfg.lookbackDays : undefined;
+            return [
+                lookback ? `last ${lookback} days` : "all time",
+                max ? `${max} items` : null,
+            ]
+                .filter(Boolean)
+                .join(" · ");
+        }
+        case "random_unwatched":
+            return max ? `${max} random unwatched` : "Random unwatched picks";
+        case "watch_again":
+            return max ? `${max} recently completed` : "Recently completed items";
+        default:
+            return ROW_TYPE_LABELS[row.type] ?? row.type;
+    }
 }

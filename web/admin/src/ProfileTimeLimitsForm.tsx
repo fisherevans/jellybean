@@ -73,10 +73,12 @@ export default function ProfileTimeLimitsForm({ profileId }: Props) {
             </p>
 
             <ToggleSwitch
-                label="Enable time limits for this profile"
+                label="Time limits"
                 description="Disable to let the kid watch without restriction."
                 checked={limits.enabled}
                 onChange={(v) => set("enabled", v)}
+                onLabel="Enabled"
+                offLabel="Disabled"
             />
 
             <SnapSlider

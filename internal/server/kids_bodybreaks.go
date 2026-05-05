@@ -78,6 +78,28 @@ func (s *Server) handleAdminProfileBodyBreaks(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, cfg)
 }
 
+// handleAdminResetProfileBodyBreaks rewrites the row to the canonical
+// defaults. Triggered by the "Reset to defaults" button on the body-
+// breaks settings tab.
+func (s *Server) handleAdminResetProfileBodyBreaks(w http.ResponseWriter, r *http.Request) {
+	if auth.SessionFromContext(r.Context()) == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	idStr := mux.Vars(r)["id"]
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	defaults := curation.DefaultProfileBodyBreaks(id)
+	if err := s.curation.UpsertProfileBodyBreaks(r.Context(), *defaults); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, defaults)
+}
+
 // handleAdminUpdateProfileBodyBreaks PUTs new config.
 func (s *Server) handleAdminUpdateProfileBodyBreaks(w http.ResponseWriter, r *http.Request) {
 	if auth.SessionFromContext(r.Context()) == nil {

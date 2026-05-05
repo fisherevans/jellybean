@@ -2428,7 +2428,7 @@ textarea:focus {
 .settings-form > .muted:first-child {
     margin-top: -0.25rem;
 }
-.settings-form label:not(.checkbox):not(.day-toggle):not(.tag-filter-mode) {
+.settings-form label:not(.checkbox):not(.day-toggle):not(.tag-filter-mode):not(.toggle-switch) {
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
@@ -2734,16 +2734,22 @@ textarea:focus {
 /* ToggleSwitch: iOS-style toggle with text label on the left and
    the switch on the right. Used for Enable/Disable settings. */
 .toggle-switch {
-    display: flex;
+    display: flex !important;
+    flex-direction: row !important;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
+    gap: 2.5rem;
     cursor: pointer;
-    padding: 0.6rem 0.85rem;
+    padding: 0.95rem 1.15rem;
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 6px;
     align-self: stretch;
+}
+.toggle-switch > .toggle-switch-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    align-items: flex-start;
 }
 .toggle-switch.disabled {
     opacity: 0.5;
@@ -2767,6 +2773,9 @@ textarea:focus {
 .toggle-switch-control {
     position: relative;
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
 }
 .toggle-switch-control input {
     position: absolute;

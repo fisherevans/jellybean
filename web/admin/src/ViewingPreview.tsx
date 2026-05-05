@@ -33,10 +33,24 @@ export default function ViewingPreview({ dimPercent, redShiftPercent }: Props) {
 }
 
 export function buildFilter(dim: number, redShift: number): string {
+    // Dim is straightforward: linear brightness reduction.
     const brightness = 1 - dim / 100;
-    const sepia = redShift / 100;
-    const hueRotate = -10 * (redShift / 100);
-    return `brightness(${brightness}) sepia(${sepia}) hue-rotate(${hueRotate}deg)`;
+    // Red shift = warmer image, similar to f.lux / Night Shift. The
+    // CSS filter pipeline doesn't have a "color temperature" knob,
+    // so we build it from primitives:
+    //   - hue-rotate(-15deg) at 100% nudges blues toward red
+    //   - sepia(0.35) at 100% adds an amber tint
+    //   - saturate(1.2) at 100% keeps the image colourful instead
+    //     of going gray-amber the way pure sepia does
+    // The intermediate values scale linearly so 0% is no change and
+    // 100% is the full warm shift. Same expression goes onto the kid
+    // SPA's <html> element when the kid TV is in this mode, so what
+    // the admin sees here is what the kid sees.
+    const r = redShift / 100;
+    const hueRotate = -15 * r;
+    const sepia = 0.35 * r;
+    const saturate = 1 + 0.2 * r;
+    return `brightness(${brightness}) sepia(${sepia}) hue-rotate(${hueRotate}deg) saturate(${saturate})`;
 }
 
 function describe(dim: number, red: number): string {

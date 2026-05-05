@@ -25,6 +25,26 @@ const (
 	defaultBreakReason = "a stretch"
 )
 
+// DefaultProfileBodyBreaks returns the canonical default config for
+// a new profile, matching the SQL DEFAULT in the migration so reset-
+// to-defaults from the admin UI lands on the same values that fresh
+// profiles start with.
+func DefaultProfileBodyBreaks(profileID int64) *ProfileBodyBreaks {
+	return &ProfileBodyBreaks{
+		ProfileID:            profileID,
+		Enabled:              false,
+		PlayMinutes:          30,
+		BreakMinutes:         5,
+		VoiceMessageTemplate: "Time for a break! {reason}",
+		Reasons: []string{
+			"Do you need some water?",
+			"Now is a good time to try the potty.",
+			"Move your body, do a dance!",
+			"Can we clean up our toys while we wait?",
+		},
+	}
+}
+
 // ProfileBodyBreaks is the per-profile cadence configuration.
 type ProfileBodyBreaks struct {
 	ProfileID            int64     `json:"profileId"`
@@ -64,19 +84,7 @@ func (s *Store) GetProfileBodyBreaks(ctx context.Context, profileID int64) (*Pro
 	err := row.Scan(&out.ProfileID, &enabled, &out.PlayMinutes, &out.BreakMinutes,
 		&out.VoiceMessageTemplate, &reasonsJSON, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return &ProfileBodyBreaks{
-			ProfileID:            profileID,
-			Enabled:              false,
-			PlayMinutes:          30,
-			BreakMinutes:         5,
-			VoiceMessageTemplate: "Time for a break. {reason}",
-			Reasons: []string{
-				"Go grab a glass of water.",
-				"Stand up and stretch.",
-				"Take a quick bathroom break.",
-				"Grab a healthy snack.",
-			},
-		}, nil
+		return DefaultProfileBodyBreaks(profileID), nil
 	}
 	if err != nil {
 		return nil, err

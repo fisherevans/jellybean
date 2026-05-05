@@ -19,7 +19,7 @@ export default function Settings() {
         lockedForSeconds: number;
     } | null>(null);
     const [pin, setPin] = useState("");
-    const [pinConfirm, setPinConfirm] = useState("");
+    const [editingPIN, setEditingPIN] = useState(false);
     const [publicUrl, setPublicUrl] = useState("");
     const [pubBaseline, setPubBaseline] = useState("");
     const [busy, setBusy] = useState(false);
@@ -50,11 +50,7 @@ export default function Settings() {
     async function savePIN(e: React.FormEvent) {
         e.preventDefault();
         if (pin.length < 4) {
-            setError("PIN must be at least 4 digits.");
-            return;
-        }
-        if (pin !== pinConfirm) {
-            setError("PINs don't match.");
+            setError("PIN must be 4 digits.");
             return;
         }
         setBusy(true);
@@ -63,7 +59,7 @@ export default function Settings() {
         try {
             await api.setOverridePIN(pin);
             setPin("");
-            setPinConfirm("");
+            setEditingPIN(false);
             setNotice("PIN saved.");
             await refresh();
         } catch (err) {
@@ -162,33 +158,35 @@ export default function Settings() {
                     </>
                 ) : null}
             </p>
-            <form className="settings-form" onSubmit={savePIN}>
-                <label>
-                    {override.pinSet ? "New PIN" : "PIN"}
-                    <PinInput
-                        value={pin}
-                        onChange={setPin}
-                        disabled={busy}
-                        autoFocus={!override.pinSet}
-                    />
-                </label>
-                <label>
-                    Confirm
-                    <PinInput
-                        value={pinConfirm}
-                        onChange={setPinConfirm}
-                        disabled={busy}
-                    />
-                </label>
-                <div className="settings-actions">
-                    <button
-                        type="submit"
-                        className="primary"
-                        disabled={busy || pin.length < 4}
-                    >
-                        {busy ? "Saving…" : override.pinSet ? "Update PIN" : "Set PIN"}
-                    </button>
-                    {override.pinSet ? (
+            {override.pinSet && !editingPIN ? (
+                <div className="settings-form">
+                    <label>
+                        Current PIN
+                        {/* Show the configured PIN as four masked
+                            cells so the layout is consistent with
+                            the edit-mode input. The actual digits
+                            stay server-side; the read view only
+                            confirms one is set. */}
+                        <div className="pin-input">
+                            {[0, 1, 2, 3].map((i) => (
+                                <div key={i} className="pin-input-cell readonly">
+                                    •
+                                </div>
+                            ))}
+                        </div>
+                    </label>
+                    <div className="settings-actions">
+                        <button
+                            type="button"
+                            className="primary"
+                            onClick={() => {
+                                setPin("");
+                                setEditingPIN(true);
+                            }}
+                            disabled={busy}
+                        >
+                            Edit PIN
+                        </button>
                         <button
                             type="button"
                             onClick={clearPIN}
@@ -196,14 +194,54 @@ export default function Settings() {
                         >
                             Clear PIN
                         </button>
-                    ) : null}
-                    {override.lockedForSeconds > 0 ? (
-                        <button type="button" onClick={clearLockout}>
-                            Clear lockout
-                        </button>
-                    ) : null}
+                        {override.lockedForSeconds > 0 ? (
+                            <button type="button" onClick={clearLockout}>
+                                Clear lockout
+                            </button>
+                        ) : null}
+                    </div>
                 </div>
-            </form>
+            ) : (
+                <form className="settings-form" onSubmit={savePIN}>
+                    <label>
+                        {override.pinSet ? "New PIN" : "PIN"}
+                        <PinInput
+                            value={pin}
+                            onChange={setPin}
+                            disabled={busy}
+                            autoFocus
+                            onComplete={() => {
+                                /* let the user click Save deliberately */
+                            }}
+                        />
+                    </label>
+                    <div className="settings-actions">
+                        <button
+                            type="submit"
+                            className="primary"
+                            disabled={busy || pin.length < 4}
+                        >
+                            {busy
+                                ? "Saving…"
+                                : override.pinSet
+                                  ? "Update PIN"
+                                  : "Set PIN"}
+                        </button>
+                        {override.pinSet ? (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setEditingPIN(false);
+                                    setPin("");
+                                }}
+                                disabled={busy}
+                            >
+                                Cancel
+                            </button>
+                        ) : null}
+                    </div>
+                </form>
+            )}
 
             <h2 className="section-title">Public URL</h2>
             <p className="muted">
