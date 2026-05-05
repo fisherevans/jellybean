@@ -1,8 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { getSession } from "./auth";
 import Browse from "./Browse";
+import KidOverlays from "./KidOverlays";
 import Library from "./Library";
 import Login from "./Login";
 import Play from "./Play";
@@ -27,9 +28,16 @@ function Index() {
     return <Navigate to={signedIn ? "/browse" : "/login"} replace />;
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-    <React.StrictMode>
-        <BrowserRouter basename="/player">
+// AppShell wraps the routed page in the cross-cutting kid overlay
+// surface (lockout, body break, viewing filter, mode theme). The
+// overlays poll their server endpoints internally and render only
+// when their respective conditions fire. activelyPlaying tells the
+// body-break poll to use a faster cadence on /play.
+function AppShell() {
+    const location = useLocation();
+    const onPlay = location.pathname.startsWith("/play");
+    return (
+        <>
             <Routes>
                 <Route path="/" element={<Index />} />
                 <Route path="/login" element={<Login />} />
@@ -39,6 +47,15 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                 <Route path="/play/:itemId" element={<Play />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            <KidOverlays activelyPlaying={onPlay} />
+        </>
+    );
+}
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+        <BrowserRouter basename="/player">
+            <AppShell />
         </BrowserRouter>
     </React.StrictMode>,
 );

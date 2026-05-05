@@ -882,11 +882,20 @@ cmd_e2e() {
         ( cd "$ROOT_DIR/web/admin" && npx playwright install chromium )
     fi
 
+    # Optional kid creds for tests that exercise the /player flow.
+    # Stored separately so the kid bearer login works without the
+    # admin path doing double duty.
+    local kid_username kid_password
+    kid_username="$(kc_get JELLYBEAN_KID_USERNAME 2>/dev/null || true)"
+    kid_password="$(kc_get JELLYBEAN_KID_PASSWORD 2>/dev/null || true)"
+
     local port; port="$(get_port)"
     cd "$ROOT_DIR/web/admin"
     JB_BASE_URL="http://127.0.0.1:${port}" \
     JELLYFIN_USERNAME="$username" \
     JELLYFIN_PASSWORD="$password" \
+    JELLYBEAN_KID_USERNAME="$kid_username" \
+    JELLYBEAN_KID_PASSWORD="$kid_password" \
         npx playwright test "$@"
 }
 
