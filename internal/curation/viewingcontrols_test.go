@@ -19,38 +19,54 @@ func newViewingStore(t *testing.T) (*Store, int64, int64) {
 	return store, kidID, profileID
 }
 
+// makeAlwaysOnMode creates a mode whose schedule covers every day +
+// the entire 24h window, so it's always active for the kid.
+func makeAlwaysOnMode(t *testing.T, store *Store, profileID int64, dim, warm int) *Mode {
+	t.Helper()
+	m, err := store.CreateMode(context.Background(), Mode{
+		ProfileID:         profileID,
+		Name:              "always-on",
+		ScheduleDays:      0b1111111,
+		ScheduleStartTime: "00:00",
+		ScheduleEndTime:   "23:59",
+		TagFiltersJSON:    "[]",
+		RequiredTagIDs:    []int64{},
+		DimPercent:        dim,
+		WarmTintPercent:   warm,
+		ThemeKey:          "default",
+	})
+	if err != nil {
+		t.Fatalf("CreateMode: %v", err)
+	}
+	return m
+}
+
 func TestViewingControlsDefaults(t *testing.T) {
 	store, kidID, profileID := newViewingStore(t)
 	st, err := store.GetViewingState(context.Background(), kidID, profileID, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.DimPercent != 0 || st.RedShiftPercent != 0 {
-		t.Errorf("got dim=%d rs=%d, want 0/0", st.DimPercent, st.RedShiftPercent)
+	if st.DimPercent != 0 || st.WarmTintPercent != 0 {
+		t.Errorf("got dim=%d warm=%d, want 0/0", st.DimPercent, st.WarmTintPercent)
 	}
 	if st.AutoOffActive {
 		t.Error("AutoOffActive default true")
 	}
 }
 
-func TestProfileBaselineApplies(t *testing.T) {
+func TestActiveModeDimAndWarmApply(t *testing.T) {
 	store, kidID, profileID := newViewingStore(t)
-	if err := store.UpsertProfileViewingControls(context.Background(), ProfileViewingControls{
-		ProfileID: profileID, DimPercent: 30, RedShiftPercent: 50,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	makeAlwaysOnMode(t, store, profileID, 30, 50)
 	st, _ := store.GetViewingState(context.Background(), kidID, profileID, time.Now())
-	if st.DimPercent != 30 || st.RedShiftPercent != 50 {
-		t.Errorf("got %+v, want dim=30 rs=50", st)
+	if st.DimPercent != 30 || st.WarmTintPercent != 50 {
+		t.Errorf("got %+v, want dim=30 warm=50", st)
 	}
 }
 
-func TestPerKidOverrideOverridesProfile(t *testing.T) {
+func TestPerKidOverrideOverridesMode(t *testing.T) {
 	store, kidID, profileID := newViewingStore(t)
-	_ = store.UpsertProfileViewingControls(context.Background(), ProfileViewingControls{
-		ProfileID: profileID, DimPercent: 30,
-	})
+	makeAlwaysOnMode(t, store, profileID, 30, 0)
 	now := time.Now().UTC()
 	if err := store.SetViewingOverride(context.Background(), kidID, "dim", 60, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
@@ -61,16 +77,24 @@ func TestPerKidOverrideOverridesProfile(t *testing.T) {
 	}
 }
 
-func TestExpiredOverrideFallsBackToProfile(t *testing.T) {
+func TestExpiredOverrideFallsBackToMode(t *testing.T) {
 	store, kidID, profileID := newViewingStore(t)
-	_ = store.UpsertProfileViewingControls(context.Background(), ProfileViewingControls{
-		ProfileID: profileID, DimPercent: 30,
-	})
+	makeAlwaysOnMode(t, store, profileID, 30, 0)
 	now := time.Now().UTC()
 	_ = store.SetViewingOverride(context.Background(), kidID, "dim", 60, now.Add(-time.Hour))
 	st, _ := store.GetViewingState(context.Background(), kidID, profileID, now)
 	if st.DimPercent != 30 {
 		t.Errorf("DimPercent = %d, want 30 (override expired)", st.DimPercent)
+	}
+}
+
+func TestNoActiveModeMeansZeroBaseline(t *testing.T) {
+	store, kidID, profileID := newViewingStore(t)
+	// No mode exists, so baseline must be 0.
+	now := time.Now().UTC()
+	st, _ := store.GetViewingState(context.Background(), kidID, profileID, now)
+	if st.DimPercent != 0 || st.WarmTintPercent != 0 {
+		t.Errorf("got %+v, want zero baseline (no active mode)", st)
 	}
 }
 
@@ -108,17 +132,10 @@ func TestCancelAutoOffClearsState(t *testing.T) {
 	if err := store.CancelAutoOff(context.Background(), kidID); err != nil {
 		t.Fatal(err)
 	}
-	// Re-check at 21:31 - clock-based auto-off would re-fire if we
-	// didn't track explicit cancellation. To match user expectation
-	// "I cleared it, leave me alone for now", the cancellation lasts
-	// only until the next state change (clock crossing). The current
-	// engine WILL re-fire; documented as known limitation.
-	// For this test, assert immediate state right after cancel:
+	// Re-read - clock cutoff is still past, so the engine immediately
+	// re-fires. Documented limitation; the test just confirms the
+	// cancel path runs without error.
 	st, _ := store.GetViewingState(context.Background(), kidID, profileID, now)
-	// May re-fire on the same now since the clock cutoff is still
-	// past. Check at least that the row was reset (active flag was
-	// cleared in CancelAutoOff and re-set by the immediate read
-	// since now > cutoff). Acceptable behavior.
 	_ = st
 }
 

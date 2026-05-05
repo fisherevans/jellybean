@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, HttpError, type Layout, type Mode, type Tag } from "./api";
 import LayoutPreviewModal from "./LayoutPreviewModal";
@@ -19,34 +19,6 @@ type Props = {
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const THEMES = ["default", "bedtime", "morning", "focus"];
-
-type ViewingOverride = {
-    dimPercent?: number;
-    warmTintPercent?: number;
-};
-
-function parseViewing(json?: string): ViewingOverride {
-    if (!json) return {};
-    try {
-        const parsed = JSON.parse(json);
-        return {
-            dimPercent: typeof parsed.dimPercent === "number" ? parsed.dimPercent : undefined,
-            warmTintPercent:
-                typeof parsed.warmTintPercent === "number" ? parsed.warmTintPercent : undefined,
-        };
-    } catch {
-        return {};
-    }
-}
-
-function serializeViewing(v: ViewingOverride): string | undefined {
-    const out: ViewingOverride = {};
-    if (v.dimPercent && v.dimPercent > 0) out.dimPercent = v.dimPercent;
-    if (v.warmTintPercent && v.warmTintPercent > 0)
-        out.warmTintPercent = v.warmTintPercent;
-    if (Object.keys(out).length === 0) return undefined;
-    return JSON.stringify(out);
-}
 
 export default function ProfileModesForm({ profileId }: Props) {
     const [modes, setModes] = useState<Mode[] | null>(null);
@@ -107,16 +79,15 @@ export default function ProfileModesForm({ profileId }: Props) {
                         const layoutName = layouts.find(
                             (l) => l.id === m.layoutId,
                         )?.name;
-                        const viewing = parseViewing(m.viewingControlsJson);
                         const summaryParts = [
                             scheduleSummary(m),
                             `theme ${m.themeKey}`,
                         ];
                         if (layoutName) summaryParts.push(`layout ${layoutName}`);
-                        if (viewing.dimPercent)
-                            summaryParts.push(`dim ${viewing.dimPercent}%`);
-                        if (viewing.warmTintPercent)
-                            summaryParts.push(`warm ${viewing.warmTintPercent}%`);
+                        if (m.dimPercent)
+                            summaryParts.push(`dim ${m.dimPercent}%`);
+                        if (m.warmTintPercent)
+                            summaryParts.push(`warm ${m.warmTintPercent}%`);
                         return (
                             <li key={m.id} className="modes-card">
                                 <div className="modes-card-head">
@@ -157,6 +128,8 @@ export default function ProfileModesForm({ profileId }: Props) {
                             scheduleEndTime: "06:00",
                             tagFiltersJson: "[]",
                             requiredTagIds: [],
+                            dimPercent: 0,
+                            warmTintPercent: 0,
                             themeKey: "default",
                         })
                     }
@@ -203,18 +176,8 @@ function ModeEditorModal({
     const [saving, setSaving] = useState(false);
     const [previewLayoutId, setPreviewLayoutId] = useState<number | null>(null);
 
-    const viewing = useMemo(
-        () => parseViewing(m.viewingControlsJson),
-        [m.viewingControlsJson],
-    );
-
     function set<K extends keyof Mode>(key: K, v: Mode[K]) {
         setM((x) => ({ ...x, [key]: v }));
-    }
-
-    function setViewing(patch: Partial<ViewingOverride>) {
-        const next = { ...viewing, ...patch };
-        set("viewingControlsJson", serializeViewing(next));
     }
 
     function toggleDay(idx: number) {
@@ -382,12 +345,12 @@ function ModeEditorModal({
                         is active. Leave at 0 for no change.
                     </p>
                     <ViewingPreview
-                        dimPercent={viewing.dimPercent ?? 0}
-                        redShiftPercent={viewing.warmTintPercent ?? 0}
+                        dimPercent={m.dimPercent}
+                        redShiftPercent={m.warmTintPercent}
                     />
                     <SnapSlider
                         label="Dim (darker, 0-80%)"
-                        value={viewing.dimPercent ?? 0}
+                        value={m.dimPercent}
                         min={0}
                         max={80}
                         step={5}
@@ -399,11 +362,11 @@ function ModeEditorModal({
                             { value: 50, label: "50%" },
                             { value: 80, label: "80%" },
                         ]}
-                        onChange={(v) => setViewing({ dimPercent: v })}
+                        onChange={(v) => set("dimPercent", v)}
                     />
                     <SnapSlider
                         label="Warm tint (cooler ↔ warmer)"
-                        value={viewing.warmTintPercent ?? 0}
+                        value={m.warmTintPercent}
                         min={0}
                         max={100}
                         step={5}
@@ -415,7 +378,7 @@ function ModeEditorModal({
                             { value: 75, label: "75%" },
                             { value: 100, label: "Max" },
                         ]}
-                        onChange={(v) => setViewing({ warmTintPercent: v })}
+                        onChange={(v) => set("warmTintPercent", v)}
                     />
 
                     <fieldset className="pill-fieldset">

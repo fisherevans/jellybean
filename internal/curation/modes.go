@@ -17,27 +17,30 @@ import (
 )
 
 type Mode struct {
-	ID                  int64     `json:"id"`
-	ProfileID           int64     `json:"profileId"`
-	Name                string    `json:"name"`
-	ScheduleDays        int       `json:"scheduleDays"` // bitmask: bit 0 = Mon ... bit 6 = Sun
-	ScheduleStartTime   string    `json:"scheduleStartTime"`
-	ScheduleEndTime     string    `json:"scheduleEndTime"`
-	TagFiltersJSON      string    `json:"tagFiltersJson,omitempty"`
+	ID                int64  `json:"id"`
+	ProfileID         int64  `json:"profileId"`
+	Name              string `json:"name"`
+	ScheduleDays      int    `json:"scheduleDays"` // bitmask: bit 0 = Mon ... bit 6 = Sun
+	ScheduleStartTime string `json:"scheduleStartTime"`
+	ScheduleEndTime   string `json:"scheduleEndTime"`
+	TagFiltersJSON    string `json:"tagFiltersJson,omitempty"`
 	// RequiredTagIDs: when non-empty, items must carry at least one
 	// of these tags to be visible during the mode. Stored as a JSON
 	// array of integers. Empty array = no extra tag requirement.
-	RequiredTagIDs      []int64   `json:"requiredTagIds"`
-	TimeLimitsJSON      string    `json:"timeLimitsJson,omitempty"`
-	ViewingControlsJSON string    `json:"viewingControlsJson,omitempty"`
+	RequiredTagIDs []int64 `json:"requiredTagIds"`
+	TimeLimitsJSON string  `json:"timeLimitsJson,omitempty"`
+	// DimPercent / WarmTintPercent: viewing-effect overrides applied
+	// while the mode is active. 0 means "no change."
+	DimPercent      int `json:"dimPercent"`
+	WarmTintPercent int `json:"warmTintPercent"`
 	// LayoutID: optional layout override used while the mode is
 	// active. nil / 0 = use the profile's normal layout.
-	LayoutID            *int64    `json:"layoutId,omitempty"`
-	ThemeKey            string    `json:"themeKey"`
-	EnterVoiceMessage   string    `json:"enterVoiceMessage,omitempty"`
-	ExitVoiceMessage    string    `json:"exitVoiceMessage,omitempty"`
-	CreatedAt           time.Time `json:"createdAt"`
-	UpdatedAt           time.Time `json:"updatedAt"`
+	LayoutID          *int64    `json:"layoutId,omitempty"`
+	ThemeKey          string    `json:"themeKey"`
+	EnterVoiceMessage string    `json:"enterVoiceMessage,omitempty"`
+	ExitVoiceMessage  string    `json:"exitVoiceMessage,omitempty"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 }
 
 type ActiveMode struct {
@@ -50,7 +53,7 @@ func (s *Store) ListModes(ctx context.Context, profileID int64) ([]Mode, error) 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, profile_id, name, schedule_days, schedule_start_time,
 		       schedule_end_time, tag_filters_json, COALESCE(time_limits_json, ''),
-		       COALESCE(viewing_controls_json, ''), theme_key,
+		       dim_percent, warm_tint_percent, theme_key,
 		       COALESCE(enter_voice_message, ''), COALESCE(exit_voice_message, ''),
 		       layout_id, required_tag_ids_json, created_at, updated_at
 		FROM profile_modes WHERE profile_id = ? ORDER BY name COLLATE NOCASE`, profileID)
@@ -73,7 +76,7 @@ func (s *Store) GetMode(ctx context.Context, id int64) (*Mode, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, profile_id, name, schedule_days, schedule_start_time,
 		       schedule_end_time, tag_filters_json, COALESCE(time_limits_json, ''),
-		       COALESCE(viewing_controls_json, ''), theme_key,
+		       dim_percent, warm_tint_percent, theme_key,
 		       COALESCE(enter_voice_message, ''), COALESCE(exit_voice_message, ''),
 		       layout_id, required_tag_ids_json, created_at, updated_at
 		FROM profile_modes WHERE id = ?`, id)
@@ -96,7 +99,7 @@ func scanMode(scan func(...any) error) (*Mode, error) {
 	var reqTagsJSON string
 	if err := scan(&m.ID, &m.ProfileID, &m.Name, &m.ScheduleDays,
 		&m.ScheduleStartTime, &m.ScheduleEndTime, &m.TagFiltersJSON,
-		&m.TimeLimitsJSON, &m.ViewingControlsJSON, &m.ThemeKey,
+		&m.TimeLimitsJSON, &m.DimPercent, &m.WarmTintPercent, &m.ThemeKey,
 		&m.EnterVoiceMessage, &m.ExitVoiceMessage, &layoutID,
 		&reqTagsJSON, &ca, &ua); err != nil {
 		return nil, err
@@ -136,17 +139,20 @@ func (s *Store) CreateMode(ctx context.Context, m Mode) (*Mode, error) {
 		layoutID = *m.LayoutID
 	}
 	now := time.Now().UTC().Unix()
+	if err := validateModeViewing(m); err != nil {
+		return nil, err
+	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO profile_modes
 		    (profile_id, name, schedule_days, schedule_start_time,
 		     schedule_end_time, tag_filters_json, time_limits_json,
-		     viewing_controls_json, theme_key, enter_voice_message,
+		     dim_percent, warm_tint_percent, theme_key, enter_voice_message,
 		     exit_voice_message, layout_id, required_tag_ids_json,
 		     created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ProfileID, m.Name, m.ScheduleDays, m.ScheduleStartTime,
 		m.ScheduleEndTime, m.TagFiltersJSON,
-		nullableString(m.TimeLimitsJSON), nullableString(m.ViewingControlsJSON),
+		nullableString(m.TimeLimitsJSON), m.DimPercent, m.WarmTintPercent,
 		m.ThemeKey, nullableString(m.EnterVoiceMessage),
 		nullableString(m.ExitVoiceMessage), layoutID, requiredTagsJSON,
 		now, now)
@@ -173,24 +179,37 @@ func (s *Store) UpdateMode(ctx context.Context, id int64, m Mode) (*Mode, error)
 		layoutID = *m.LayoutID
 	}
 	now := time.Now().UTC().Unix()
+	if err := validateModeViewing(m); err != nil {
+		return nil, err
+	}
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE profile_modes SET
 		    name = ?, schedule_days = ?, schedule_start_time = ?,
 		    schedule_end_time = ?, tag_filters_json = ?,
-		    time_limits_json = ?, viewing_controls_json = ?,
+		    time_limits_json = ?, dim_percent = ?, warm_tint_percent = ?,
 		    theme_key = ?, enter_voice_message = ?,
 		    exit_voice_message = ?, layout_id = ?,
 		    required_tag_ids_json = ?, updated_at = ?
 		WHERE id = ?`,
 		m.Name, m.ScheduleDays, m.ScheduleStartTime, m.ScheduleEndTime,
 		m.TagFiltersJSON, nullableString(m.TimeLimitsJSON),
-		nullableString(m.ViewingControlsJSON), m.ThemeKey,
+		m.DimPercent, m.WarmTintPercent, m.ThemeKey,
 		nullableString(m.EnterVoiceMessage), nullableString(m.ExitVoiceMessage),
 		layoutID, requiredTagsJSON, now, id)
 	if err != nil {
 		return nil, err
 	}
 	return s.GetMode(ctx, id)
+}
+
+func validateModeViewing(m Mode) error {
+	if m.DimPercent < 0 || m.DimPercent > 80 {
+		return fmt.Errorf("dimPercent %d out of range (0-80)", m.DimPercent)
+	}
+	if m.WarmTintPercent < 0 || m.WarmTintPercent > 100 {
+		return fmt.Errorf("warmTintPercent %d out of range (0-100)", m.WarmTintPercent)
+	}
+	return nil
 }
 
 func encodeIntArray(ids []int64) string {

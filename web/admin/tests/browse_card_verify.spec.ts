@@ -283,7 +283,11 @@ test("time-limit snap slider has correct proportions", async ({ page }) => {
     // The slider should be much wider than the formatted-value
     // span so the user can actually drag the thumb.
     expect(r.width).toBeGreaterThan(c.width * 1.5);
-    // Drag the thumb and verify the formatted value changes.
+    // Drag the thumb and verify the formatted value changes. Click
+    // the 1h pill first so we have headroom to arrow-right (the
+    // slider may already be at max from a prior test).
+    await page.getByRole("button", { name: "1h", exact: true }).click();
+    await page.waitForTimeout(60);
     const before = await current.innerText();
     await range.focus();
     await page.keyboard.press("ArrowRight");

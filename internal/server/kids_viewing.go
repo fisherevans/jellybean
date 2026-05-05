@@ -127,8 +127,6 @@ func (s *Server) handleAdminUpdateProfileViewingControls(w http.ResponseWriter, 
 		return
 	}
 	var body struct {
-		DimPercent       int    `json:"dimPercent"`
-		RedShiftPercent  int    `json:"redShiftPercent"`
 		AutoOffClockTime string `json:"autoOffClockTime"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -137,8 +135,6 @@ func (s *Server) handleAdminUpdateProfileViewingControls(w http.ResponseWriter, 
 	}
 	in := curation.ProfileViewingControls{
 		ProfileID:        id,
-		DimPercent:       body.DimPercent,
-		RedShiftPercent:  body.RedShiftPercent,
 		AutoOffClockTime: body.AutoOffClockTime,
 	}
 	if err := s.curation.UpsertProfileViewingControls(r.Context(), in); err != nil {

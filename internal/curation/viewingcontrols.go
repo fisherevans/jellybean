@@ -15,35 +15,34 @@ import (
 	"time"
 )
 
+// ProfileViewingControls is now just the bedtime hard cutoff. Dim
+// + warm tint moved onto profile_modes (see Mode.DimPercent /
+// WarmTintPercent).
 type ProfileViewingControls struct {
 	ProfileID        int64     `json:"profileId"`
-	DimPercent       int       `json:"dimPercent"`
-	RedShiftPercent  int       `json:"redShiftPercent"`
 	AutoOffClockTime string    `json:"autoOffClockTime,omitempty"` // "HH:MM" 24h
 	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 type ViewingState struct {
-	DimPercent           int       `json:"dimPercent"`
-	RedShiftPercent      int       `json:"redShiftPercent"`
-	AutoOffActive        bool      `json:"autoOffActive"`
-	AutoOffReason        string    `json:"autoOffReason,omitempty"` // "clock" | "sleep_timer"
-	SleepTimerAt         time.Time `json:"sleepTimerAt,omitempty"`
+	DimPercent            int       `json:"dimPercent"`
+	WarmTintPercent       int       `json:"warmTintPercent"`
+	AutoOffActive         bool      `json:"autoOffActive"`
+	AutoOffReason         string    `json:"autoOffReason,omitempty"` // "clock" | "sleep_timer"
+	SleepTimerAt          time.Time `json:"sleepTimerAt,omitempty"`
 	NextOverrideExpiresAt time.Time `json:"nextOverrideExpiresAt,omitempty"`
 }
 
 // GetProfileViewingControls returns the row, falling back to defaults.
 func (s *Store) GetProfileViewingControls(ctx context.Context, profileID int64) (*ProfileViewingControls, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT profile_id, dim_percent, red_shift_percent,
-		       COALESCE(auto_off_clock_time, ''), updated_at
+		SELECT profile_id, COALESCE(auto_off_clock_time, ''), updated_at
 		FROM profile_viewing_controls WHERE profile_id = ?`, profileID)
 	var (
 		out     ProfileViewingControls
 		updated int64
 	)
-	err := row.Scan(&out.ProfileID, &out.DimPercent, &out.RedShiftPercent,
-		&out.AutoOffClockTime, &updated)
+	err := row.Scan(&out.ProfileID, &out.AutoOffClockTime, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return &ProfileViewingControls{ProfileID: profileID}, nil
 	}
@@ -58,29 +57,17 @@ func (s *Store) UpsertProfileViewingControls(ctx context.Context, p ProfileViewi
 	if p.ProfileID <= 0 {
 		return errors.New("profileID required")
 	}
-	if p.DimPercent < 0 || p.DimPercent > 80 {
-		return fmt.Errorf("dim_percent %d out of range (0-80)", p.DimPercent)
-	}
-	if p.RedShiftPercent < 0 || p.RedShiftPercent > 100 {
-		return fmt.Errorf("red_shift_percent %d out of range (0-100)", p.RedShiftPercent)
-	}
-	if p.AutoOffClockTime != "" {
-		if !validHHMM(p.AutoOffClockTime) {
-			return fmt.Errorf("auto_off_clock_time %q must be HH:MM 24h", p.AutoOffClockTime)
-		}
+	if p.AutoOffClockTime != "" && !validHHMM(p.AutoOffClockTime) {
+		return fmt.Errorf("auto_off_clock_time %q must be HH:MM 24h", p.AutoOffClockTime)
 	}
 	clock := nullableString(p.AutoOffClockTime)
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO profile_viewing_controls
-		    (profile_id, dim_percent, red_shift_percent, auto_off_clock_time,
-		     updated_at)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO profile_viewing_controls (profile_id, auto_off_clock_time, updated_at)
+		VALUES (?, ?, ?)
 		ON CONFLICT(profile_id) DO UPDATE SET
-		    dim_percent = excluded.dim_percent,
-		    red_shift_percent = excluded.red_shift_percent,
 		    auto_off_clock_time = excluded.auto_off_clock_time,
 		    updated_at = excluded.updated_at`,
-		p.ProfileID, p.DimPercent, p.RedShiftPercent, clock, time.Now().Unix())
+		p.ProfileID, clock, time.Now().Unix())
 	return err
 }
 
@@ -147,17 +134,30 @@ func (s *Store) CancelAutoOff(ctx context.Context, kidID int64) error {
 	return err
 }
 
-// GetViewingState returns the rendered effective state. Reads
-// profile defaults + per-kid overrides; checks clock-based auto-off
-// and sleep timer; flips auto_off_active when those fire.
+// GetViewingState returns the rendered effective state.
+//
+// Resolution order for dim + warm tint:
+//   1. Start at 0 (no effect).
+//   2. If a mode is currently active for this kid, use that mode's
+//      dim_percent / warm_tint_percent as the baseline.
+//   3. If a per-kid override is set and unexpired, replace the
+//      baseline with the override.
+//
+// Auto-off (lockout overlay) is independent of dim/warm and fires
+// from one of three triggers: clock cutoff, sleep timer override,
+// or already-flagged active.
 func (s *Store) GetViewingState(ctx context.Context, kidID, profileID int64, now time.Time) (*ViewingState, error) {
 	prof, err := s.GetProfileViewingControls(ctx, profileID)
 	if err != nil {
 		return nil, err
 	}
-	out := &ViewingState{
-		DimPercent:      prof.DimPercent,
-		RedShiftPercent: prof.RedShiftPercent,
+	out := &ViewingState{}
+
+	// Apply active mode's dim/warm as the baseline.
+	active, err := s.ResolveActiveMode(ctx, kidID, profileID, now)
+	if err == nil && active != nil && active.Mode != nil {
+		out.DimPercent = active.Mode.DimPercent
+		out.WarmTintPercent = active.Mode.WarmTintPercent
 	}
 
 	// Per-kid overrides.
@@ -167,13 +167,13 @@ func (s *Store) GetViewingState(ctx context.Context, kidID, profileID int64, now
 		       sleep_timer_at, auto_off_active, COALESCE(auto_off_reason, '')
 		FROM kid_viewing_overrides WHERE kid_id = ?`, kidID)
 	var (
-		dimOv          sql.NullInt64
-		dimUntil       sql.NullInt64
-		rsOv           sql.NullInt64
-		rsUntil        sql.NullInt64
-		sleepTimer     sql.NullInt64
-		autoOffActive  int
-		autoOffReason  string
+		dimOv         sql.NullInt64
+		dimUntil      sql.NullInt64
+		rsOv          sql.NullInt64
+		rsUntil       sql.NullInt64
+		sleepTimer    sql.NullInt64
+		autoOffActive int
+		autoOffReason string
 	)
 	err = row.Scan(&dimOv, &dimUntil, &rsOv, &rsUntil, &sleepTimer, &autoOffActive, &autoOffReason)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -197,7 +197,7 @@ func (s *Store) GetViewingState(ctx context.Context, kidID, profileID int64, now
 		set(int(value.Int64))
 	}
 	apply(dimOv, dimUntil, func(v int) { out.DimPercent = v })
-	apply(rsOv, rsUntil, func(v int) { out.RedShiftPercent = v })
+	apply(rsOv, rsUntil, func(v int) { out.WarmTintPercent = v })
 	out.NextOverrideExpiresAt = nextExpiry
 
 	// Auto-off: if already flagged active, surface it.

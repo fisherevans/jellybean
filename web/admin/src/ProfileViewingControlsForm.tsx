@@ -49,14 +49,7 @@ export default function ProfileViewingControlsForm({ profileId }: Props) {
         setSaving(true);
         setError(null);
         try {
-            // Force dim + warm to zero from the profile UI; modes own
-            // them now. The fields are still on the wire because the
-            // resolver hasn't been migrated yet.
-            await api.setProfileViewingControls(profileId, {
-                ...cfg,
-                dimPercent: 0,
-                redShiftPercent: 0,
-            });
+            await api.setProfileViewingControls(profileId, cfg);
             setSaved(true);
         } catch (err) {
             setError(err instanceof HttpError ? err.message : String(err));

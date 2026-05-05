@@ -244,12 +244,6 @@ export type ProfileBodyBreaks = {
 
 export type ProfileViewingControls = {
     profileId: number;
-    /** Kept on the wire for backwards compatibility with the
-     *  resolver but no longer surfaced in the profile UI - dim
-     *  + warm tint live on modes now. Always 0 from the admin. */
-    dimPercent: number;
-    /** See dimPercent. */
-    redShiftPercent: number;
     autoOffClockTime?: string;
     updatedAt?: string;
 };
@@ -264,7 +258,11 @@ export type Mode = {
     tagFiltersJson?: string;
     requiredTagIds: number[];
     timeLimitsJson?: string;
-    viewingControlsJson?: string;
+    /** Viewing-effect baselines applied while this mode is active.
+     *  0 means "no effect." Replaces the previous viewingControlsJson
+     *  blob - dim + warm tint live as real columns now. */
+    dimPercent: number;
+    warmTintPercent: number;
     layoutId?: number | null;
     themeKey: string;
     enterVoiceMessage?: string;
