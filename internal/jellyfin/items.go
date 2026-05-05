@@ -52,6 +52,9 @@ func (c *Client) getItemsWith(ctx context.Context, f ItemsFilter, userToken stri
 	if len(f.Filters) > 0 {
 		q.Set("Filters", strings.Join(f.Filters, ","))
 	}
+	if f.ParentID != "" {
+		q.Set("ParentId", f.ParentID)
+	}
 	// Always ask for the metadata fields we use; UserData only meaningful
 	// when authenticated as a user. MediaStreams carries audio language
 	// info the admin curation UI uses to flag non-default-language items.

@@ -925,11 +925,13 @@ func (s *Server) handleKidsSeriesEpisodes(w http.ResponseWriter, r *http.Request
 	}
 	series := res.Items[0]
 
-	// Pull every episode of the series via Jellyfin's items endpoint.
-	// Limit=10000 is generous; no real series has more.
+	// Pull every episode of the series via Jellyfin's items endpoint,
+	// scoped to the series id server-side via ParentId so the
+	// payload is tight even for large libraries.
 	epRes, err := fetch(jellyfin.ItemsFilter{
 		IncludeItemTypes: []string{"Episode"},
 		Recursive:        true,
+		ParentID:         id,
 		Limit:            10_000,
 		SortBy:           "ParentIndexNumber,IndexNumber",
 		SortOrder:        "Ascending",

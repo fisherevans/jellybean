@@ -169,4 +169,9 @@ type ItemsFilter struct {
 	// browse resolver for "IsUnplayed" (PlayCount = 0). Other
 	// useful values: IsPlayed, IsResumable, IsFavorite.
 	Filters []string
+	// ParentID restricts results to a single parent (series id for
+	// episode listings, library id for items). When set, Jellyfin
+	// scopes the query server-side so we don't have to filter
+	// 10000-row payloads client-side.
+	ParentID string
 }
