@@ -185,6 +185,24 @@ export type Layout = {
     updatedAt: number;
 };
 
+// API key (M14). Bearer-token auth equivalent to admin cookie.
+export type APIKey = {
+    id: number;
+    name: string;
+    createdAt: number;
+    lastUsedAt?: number;
+    revokedAt?: number;
+};
+
+export type APIAccessLogEntry = {
+    id: number;
+    keyId?: number;
+    method: string;
+    path: string;
+    status: number;
+    occurredAt: number;
+};
+
 // BrowseRow is what the admin preview / kid browse endpoint returns.
 export type BrowseRow = {
     rowId: number;
@@ -472,6 +490,30 @@ export const api = {
         request<BrowseResponse>(
             "GET",
             `/api/kids/browse?profileId=${profileId}`,
+        ),
+
+    // --- M14: API keys ---------------------------------------------
+    listAPIKeys: () =>
+        request<{ keys: APIKey[] }>("GET", `/api/admin/api-keys`),
+    createAPIKey: (name: string) =>
+        request<{ token: string; key: APIKey }>(
+            "POST",
+            `/api/admin/api-keys`,
+            { name },
+        ),
+    revokeAPIKey: (id: number) =>
+        request<void>("POST", `/api/admin/api-keys/${id}/revoke`),
+    deleteAPIKey: (id: number) =>
+        request<void>("DELETE", `/api/admin/api-keys/${id}`),
+    listAPIKeyAccessLog: (id: number, limit = 100) =>
+        request<{ entries: APIAccessLogEntry[] }>(
+            "GET",
+            `/api/admin/api-keys/${id}/log?limit=${limit}`,
+        ),
+    listAPIAccessLog: (limit = 200) =>
+        request<{ entries: APIAccessLogEntry[] }>(
+            "GET",
+            `/api/admin/api-access-log?limit=${limit}`,
         ),
 };
 

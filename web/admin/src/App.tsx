@@ -14,6 +14,7 @@ import Tags from "./pages/Tags";
 import TagDetail from "./pages/TagDetail";
 import Layouts from "./pages/Layouts";
 import LayoutDetail from "./pages/LayoutDetail";
+import APIKeys from "./pages/APIKeys";
 import Spinner from "./Spinner";
 
 type AuthState =
@@ -78,6 +79,7 @@ export default function App() {
                     <Route path="/tags/:tagId" element={<TagDetail />} />
                     <Route path="/layouts" element={<Layouts />} />
                     <Route path="/layouts/:layoutId" element={<LayoutDetail />} />
+                    <Route path="/api-keys" element={<APIKeys />} />
                 </Route>
             ) : (
                 <Route path="*" element={<RedirectToLogin />} />

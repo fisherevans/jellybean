@@ -19,11 +19,15 @@ const (
 // Handlers holds the auth-related HTTP handlers and exports a middleware for
 // gating /api/admin/* routes.
 type Handlers struct {
-	Sessions   *SessionStore
-	Jellyfin   *jellyfin.Client
-	Logger     zerolog.Logger
-	RateLimit  *RateLimiter
+	Sessions      *SessionStore
+	Jellyfin      *jellyfin.Client
+	Logger        zerolog.Logger
+	RateLimit     *RateLimiter
 	SecureCookies bool // set true in production (HTTPS only)
+	// Bearer is the M14 API-key verifier. nil disables bearer auth
+	// entirely (cookie-only mode). When set, Middleware tries the
+	// bearer path after cookie auth fails.
+	Bearer BearerVerifier
 }
 
 type loginRequest struct {

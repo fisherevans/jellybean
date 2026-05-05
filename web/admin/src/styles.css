@@ -2041,3 +2041,86 @@ button:disabled {
     gap: 0.5rem;
     margin-top: 0.75rem;
 }
+
+/* M14 API keys page. */
+.apikey-create {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-end;
+    margin-bottom: 0.75rem;
+}
+.apikey-create label {
+    flex: 1;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+.apikey-create input {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.45rem 0.6rem;
+    font-size: 0.95rem;
+}
+.apikey-revealed {
+    background: rgba(128, 132, 255, 0.12);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 0.75rem;
+}
+.apikey-token {
+    display: block;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.5rem 0.7rem;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-size: 0.95rem;
+    margin: 0.5rem 0;
+    word-break: break-all;
+}
+.apikey-revealed-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+.apikey-revoked-pill {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.55rem;
+    font-size: 0.7rem;
+    background: rgba(255, 90, 90, 0.18);
+    color: #ff8a8a;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    vertical-align: middle;
+}
+.apikey-log {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+.apikey-log th,
+.apikey-log td {
+    border-bottom: 1px solid var(--border);
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+}
+.apikey-log th {
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.7rem;
+}
+.apikey-log-path {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+.apikey-log-scope {
+    font-weight: 400;
+}

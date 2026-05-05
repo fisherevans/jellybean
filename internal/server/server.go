@@ -6,6 +6,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"io/fs"
@@ -48,12 +49,14 @@ type Options struct {
 func New(opts Options) *Server {
 	sessions := auth.NewSessionStore(opts.DB, opts.Config.SessionSecret)
 	rl := auth.NewRateLimiter(5, 5*time.Minute)
+	curStore := curation.NewStore(opts.DB)
 	authH := &auth.Handlers{
 		Sessions:      sessions,
 		Jellyfin:      opts.Jellyfin,
 		Logger:        opts.Logger,
 		RateLimit:     rl,
 		SecureCookies: !opts.Config.IsDev(),
+		Bearer:        &bearerAdapter{store: curStore},
 	}
 
 	s := &Server{
@@ -62,7 +65,7 @@ func New(opts Options) *Server {
 		jellyfin:        opts.Jellyfin,
 		db:              opts.DB,
 		auth:            authH,
-		curation:        curation.NewStore(opts.DB),
+		curation:        curStore,
 		router:          mux.NewRouter(),
 		jellyfinVersion: opts.JellyfinVersion,
 		adminAssets:     opts.AdminAssets,
@@ -129,6 +132,12 @@ func (s *Server) routes() {
 	admin.HandleFunc("/layouts/{id}/rows/{rowId}", s.handleAdminUpdateRow).Methods(http.MethodPatch)
 	admin.HandleFunc("/layouts/{id}/rows/{rowId}", s.handleAdminDeleteRow).Methods(http.MethodDelete)
 	admin.HandleFunc("/dev/refresh-layout-cache", s.handleAdminRefreshLayoutCache).Methods(http.MethodPost)
+	admin.HandleFunc("/api-keys", s.handleAdminListAPIKeys).Methods(http.MethodGet)
+	admin.HandleFunc("/api-keys", s.handleAdminCreateAPIKey).Methods(http.MethodPost)
+	admin.HandleFunc("/api-keys/{id}", s.handleAdminDeleteAPIKey).Methods(http.MethodDelete)
+	admin.HandleFunc("/api-keys/{id}/revoke", s.handleAdminRevokeAPIKey).Methods(http.MethodPost)
+	admin.HandleFunc("/api-keys/{id}/log", s.handleAdminListAccessLog).Methods(http.MethodGet)
+	admin.HandleFunc("/api-access-log", s.handleAdminListAccessLog).Methods(http.MethodGet)
 
 	// Kids API. /auth/login is unauthenticated (it IS the auth flow); the
 	// rest accept either an admin session cookie (parent previewing) or
@@ -178,4 +187,27 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// bearerAdapter satisfies auth.BearerVerifier by delegating to the
+// curation store. We keep curation out of the auth package by going
+// through this small interface adapter.
+type bearerAdapter struct {
+	store *curation.Store
+}
+
+func (b *bearerAdapter) VerifyBearer(ctx context.Context, token string) (*auth.APIKeyContext, error) {
+	key, err := b.store.VerifyAPIKey(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	// Bumping last_used_at on every successful auth keeps the admin
+	// UI honest. Errors here aren't fatal - the request still
+	// proceeds; we just log.
+	_ = b.store.UpdateAPIKeyLastUsed(ctx, key.ID)
+	return &auth.APIKeyContext{ID: key.ID, Name: key.Name}, nil
+}
+
+func (b *bearerAdapter) NoteBearerUsed(keyID int64, method, path string, status int) {
+	b.store.LogAPIAccess(keyID, method, path, status)
 }
