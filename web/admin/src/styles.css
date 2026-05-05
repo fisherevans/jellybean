@@ -2606,3 +2606,442 @@ textarea:focus {
     background: rgba(0, 0, 0, 0.15);
     align-items: center;
 }
+
+/* ===== shared form components ===== */
+
+/* settings-input-row puts a select / input next to one or more
+   adjacent buttons (Preview / Edit). Stretches the input to fill
+   leftover space. */
+.settings-input-row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: stretch;
+}
+.settings-input-row > select,
+.settings-input-row > input {
+    flex: 1;
+    min-width: 0;
+}
+.settings-input-row > button,
+.settings-input-row > .button-link {
+    flex-shrink: 0;
+}
+
+/* button-link makes a react-router <Link> render visually as a
+   bordered button, so secondary "Edit" / "Open editor" affordances
+   match the surrounding button toolbar. */
+.button-link,
+.button-link:visited {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.45rem 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--fg);
+    text-decoration: none;
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.1s ease, border-color 0.1s ease;
+    line-height: 1.2;
+}
+.button-link:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: var(--border-strong, #555);
+}
+
+/* SnapSlider: range slider + number input + a row of pill snap
+   buttons. Use inside settings forms. */
+.snap-slider {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    align-self: stretch;
+}
+.snap-slider-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+.snap-slider-current {
+    color: var(--fg);
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+.snap-slider-row {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+}
+.snap-slider-range {
+    flex: 1;
+    accent-color: var(--accent);
+    height: 4px;
+    cursor: pointer;
+}
+.snap-slider-number {
+    width: 6.5rem;
+    text-align: right;
+}
+.snap-slider-snaps {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+}
+.snap-pill {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 0.3rem 0.7rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.snap-pill:hover {
+    color: var(--fg);
+    border-color: var(--border-strong, #555);
+}
+.snap-pill.active {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+}
+
+/* ToggleSwitch: iOS-style toggle with text label on the left and
+   the switch on the right. Used for Enable/Disable settings. */
+.toggle-switch {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    cursor: pointer;
+    padding: 0.6rem 0.85rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    align-self: stretch;
+}
+.toggle-switch.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.toggle-switch-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+}
+.toggle-switch-label {
+    color: var(--fg);
+    font-size: 0.95rem;
+    font-weight: 500;
+}
+.toggle-switch-desc {
+    color: var(--muted);
+    font-size: 0.8rem;
+}
+.toggle-switch-control {
+    position: relative;
+    flex-shrink: 0;
+}
+.toggle-switch-control input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
+.toggle-switch-track {
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+    position: relative;
+    transition: background 0.15s ease;
+    vertical-align: middle;
+}
+.toggle-switch-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.15s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.toggle-switch-control input:checked ~ .toggle-switch-track {
+    background: var(--accent);
+}
+.toggle-switch-control input:checked ~ .toggle-switch-track .toggle-switch-thumb {
+    transform: translateX(16px);
+}
+.toggle-switch-control input:focus-visible ~ .toggle-switch-track {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* pill-fieldset + pill-toggle: button-style multi-select used for
+   day-of-week toggles, required-tag selection, channel sort order. */
+.pill-fieldset {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.7rem 0.95rem 0.85rem;
+    background: var(--bg);
+    align-self: stretch;
+    margin: 0;
+}
+.pill-fieldset legend {
+    color: var(--muted);
+    font-size: 0.8rem;
+    padding: 0 0.4rem;
+    font-weight: 500;
+}
+.pill-toggle-row {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: nowrap;
+}
+.pill-toggle-wrap {
+    flex-wrap: wrap;
+}
+.pill-toggle {
+    flex: 1;
+    min-width: max-content;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 0.5rem 0.85rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.pill-toggle:hover {
+    color: var(--fg);
+    border-color: var(--border-strong, #555);
+}
+.pill-toggle.active {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+}
+.pill-toggle-wrap .pill-toggle {
+    flex: 0 0 auto;
+}
+
+/* refill-preview: replaces the bullet list with a tabular preview. */
+.refill-preview {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.85rem 1rem;
+    align-self: stretch;
+}
+.refill-preview h4 {
+    margin: 0 0 0.5rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+    font-weight: 500;
+}
+.refill-preview table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.refill-preview th,
+.refill-preview td {
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.85rem;
+}
+.refill-preview th {
+    color: var(--muted);
+    font-weight: 500;
+    border-bottom: 1px solid var(--border);
+}
+.refill-preview td:nth-child(1) {
+    width: 40%;
+}
+.refill-preview td:nth-child(2) {
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+}
+.refill-preview td:nth-child(3) {
+    color: var(--fg);
+    font-variant-numeric: tabular-nums;
+}
+
+/* viewing-preview: a small mock TV showing dim/red-shift CSS filter
+   applied to a gradient sky scene. */
+.viewing-preview {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+.viewing-preview-label {
+    align-self: flex-start;
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+.viewing-preview-tv {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.viewing-preview-bezel {
+    width: 320px;
+    height: 180px;
+    background: #000;
+    border-radius: 12px;
+    padding: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    transition: filter 0.15s ease;
+}
+.viewing-preview-scene {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    border-radius: 4px;
+}
+.viewing-preview-scene .vp-sky {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        to bottom,
+        #ff8c69 0%,
+        #ffaa7a 25%,
+        #ffd6a5 55%,
+        #d8e4f0 90%,
+        #94b3d8 100%
+    );
+}
+.viewing-preview-scene .vp-sun {
+    position: absolute;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #fff5b8 0%, #ffd770 60%, transparent 100%);
+    top: 24px;
+    right: 60px;
+    filter: blur(2px);
+}
+.viewing-preview-scene .vp-mountain {
+    position: absolute;
+    bottom: 35%;
+    width: 100%;
+    height: 50%;
+    clip-path: polygon(0% 100%, 15% 60%, 30% 80%, 45% 30%, 60% 70%, 80% 50%, 100% 100%);
+}
+.viewing-preview-scene .vp-mountain-back {
+    background: #5a4565;
+    transform: scaleX(0.95);
+}
+.viewing-preview-scene .vp-mountain-front {
+    bottom: 30%;
+    background: #3a2a48;
+    clip-path: polygon(0% 100%, 20% 70%, 50% 40%, 75% 65%, 100% 100%);
+}
+.viewing-preview-scene .vp-foreground {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    height: 30%;
+    background: linear-gradient(to bottom, #2a1f30 0%, #1a1320 100%);
+}
+.viewing-preview-scene .vp-tree {
+    position: absolute;
+    bottom: 25%;
+    width: 12px;
+    height: 30px;
+    background: #0d0610;
+    clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+}
+.viewing-preview-scene .vp-tree-1 {
+    left: 30%;
+    width: 16px;
+    height: 36px;
+}
+.viewing-preview-scene .vp-tree-2 {
+    left: 70%;
+    width: 14px;
+    height: 32px;
+    bottom: 27%;
+}
+.viewing-preview-stand {
+    width: 80px;
+    height: 8px;
+    background: #1a1a1a;
+    border-radius: 0 0 4px 4px;
+    margin-top: -1px;
+}
+.viewing-preview-summary {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+}
+
+/* layout-preview modal contents */
+.modal-wide {
+    max-width: 720px;
+}
+.layout-preview-rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+.layout-preview-rows li {
+    display: flex;
+    gap: 0.85rem;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+.layout-preview-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.6rem;
+    height: 1.6rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+.layout-preview-title {
+    font-weight: 600;
+    color: var(--fg);
+}
+
+/* Make the tag-filter row left-aligned content-wise so the segmented
+   control sits next to the name with a comfortable gap, instead of
+   being pushed all the way to the right edge. */
+.tag-filter-row {
+    justify-content: flex-start;
+    gap: 1.25rem;
+}
+.tag-filter-name {
+    flex: 0 1 240px;
+}

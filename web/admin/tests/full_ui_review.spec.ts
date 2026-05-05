@@ -138,8 +138,20 @@ test.describe("full admin UI review", () => {
         await page.goto("/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Body breaks" }).click();
+        await page.waitForSelector(".snap-slider", { timeout: 5_000 });
         await page.screenshot({
             path: shot("09d-settings-body-breaks"),
+            fullPage: true,
+        });
+    });
+
+    test("profile settings - time limits steady state", async ({ page }) => {
+        await page.goto("/profiles");
+        await page.locator(".profile-card-link").first().click();
+        await page.getByRole("tab", { name: "Time limits" }).click();
+        await page.waitForSelector(".snap-slider", { timeout: 5_000 });
+        await page.screenshot({
+            path: shot("09c2-settings-time-limits-loaded"),
             fullPage: true,
         });
     });
@@ -148,6 +160,7 @@ test.describe("full admin UI review", () => {
         await page.goto("/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Viewing" }).click();
+        await page.waitForSelector(".viewing-preview", { timeout: 5_000 });
         await page.screenshot({
             path: shot("09e-settings-viewing"),
             fullPage: true,

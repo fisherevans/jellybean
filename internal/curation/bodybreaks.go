@@ -69,8 +69,13 @@ func (s *Store) GetProfileBodyBreaks(ctx context.Context, profileID int64) (*Pro
 			Enabled:              false,
 			PlayMinutes:          30,
 			BreakMinutes:         5,
-			VoiceMessageTemplate: "Time to take a break. How about some {reason}?",
-			Reasons:              []string{"water", "stretching", "a bathroom break", "a snack"},
+			VoiceMessageTemplate: "Time for a break. {reason}",
+			Reasons: []string{
+				"Go grab a glass of water.",
+				"Stand up and stretch.",
+				"Take a quick bathroom break.",
+				"Grab a healthy snack.",
+			},
 		}, nil
 	}
 	if err != nil {
@@ -96,7 +101,7 @@ func (s *Store) UpsertProfileBodyBreaks(ctx context.Context, p ProfileBodyBreaks
 		return fmt.Errorf("break_minutes %d out of range", p.BreakMinutes)
 	}
 	if p.VoiceMessageTemplate == "" {
-		p.VoiceMessageTemplate = "Time to take a break. How about some {reason}?"
+		p.VoiceMessageTemplate = "Time for a break. {reason}"
 	}
 	if len(p.Reasons) == 0 {
 		p.Reasons = []string{defaultBreakReason}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, HttpError, type Layout, type Profile } from "./api";
+import LayoutPreviewModal from "./LayoutPreviewModal";
 
 // Basic profile metadata: name, description, default audio language,
 // and the assigned browse layout. Non-destructive edits only -
@@ -32,6 +33,7 @@ export default function ProfileBasicForm({ profile, onSaved }: Props) {
     );
     const [layoutId, setLayoutId] = useState<number>(profile.layoutId ?? 0);
     const [layouts, setLayouts] = useState<Layout[]>([]);
+    const [layoutPreview, setLayoutPreview] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [saved, setSaved] = useState(false);
@@ -124,30 +126,37 @@ export default function ProfileBasicForm({ profile, onSaved }: Props) {
 
             <label>
                 Browse layout
-                <select
-                    value={layoutId}
-                    onChange={(e) => {
-                        setLayoutId(Number(e.target.value));
-                        setSaved(false);
-                    }}
-                >
-                    {layouts.map((l) => (
-                        <option key={l.id} value={l.id}>
-                            {l.name}
-                            {l.isDefault ? " (default)" : ""}
-                        </option>
-                    ))}
-                </select>
-                {layoutId > 0 && (
-                    <span className="help">
-                        <Link to={`/layouts/${layoutId}`}>
-                            Edit this layout
+                <div className="settings-input-row">
+                    <select
+                        value={layoutId}
+                        onChange={(e) => {
+                            setLayoutId(Number(e.target.value));
+                            setSaved(false);
+                        }}
+                    >
+                        {layouts.map((l) => (
+                            <option key={l.id} value={l.id}>
+                                {l.name}
+                                {l.isDefault ? " (default)" : ""}
+                            </option>
+                        ))}
+                    </select>
+                    <button
+                        type="button"
+                        onClick={() => layoutId > 0 && setLayoutPreview(true)}
+                        disabled={layoutId <= 0}
+                    >
+                        Preview
+                    </button>
+                    {layoutId > 0 && (
+                        <Link to={`/layouts/${layoutId}`} className="button-link">
+                            Edit
                         </Link>
-                    </span>
-                )}
+                    )}
+                </div>
             </label>
 
-            <div className="settings-stats">
+            <div className="profile-stats">
                 <span className="stat stat-visible">
                     {profile.visibleCount.toLocaleString()} visible
                 </span>
@@ -158,6 +167,13 @@ export default function ProfileBasicForm({ profile, onSaved }: Props) {
                     {profile.kidCount} kid{profile.kidCount === 1 ? "" : "s"}
                 </span>
             </div>
+
+            {layoutPreview && layoutId > 0 && (
+                <LayoutPreviewModal
+                    layoutId={layoutId}
+                    onClose={() => setLayoutPreview(false)}
+                />
+            )}
 
             {error && <div className="error">{error}</div>}
             {saved && !error && <p className="muted">Saved.</p>}

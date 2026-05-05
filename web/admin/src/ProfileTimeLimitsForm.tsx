@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type ProfileTimeLimits } from "./api";
+import SnapSlider from "./SnapSlider";
+import ToggleSwitch from "./ToggleSwitch";
 
 // Per-profile time-limits config. Daily cap + refill cadence + day
 // start anchor + optional per-show / per-movie defaults.
@@ -70,103 +72,120 @@ export default function ProfileTimeLimitsForm({ profileId }: Props) {
                 the override modal on the TV).
             </p>
 
-            <label className="checkbox">
-                <input
-                    type="checkbox"
-                    checked={limits.enabled}
-                    onChange={(e) => set("enabled", e.target.checked)}
-                />
-                Enable time limits for this profile
-            </label>
+            <ToggleSwitch
+                label="Enable time limits for this profile"
+                description="Disable to let the kid watch without restriction."
+                checked={limits.enabled}
+                onChange={(v) => set("enabled", v)}
+            />
 
-            <label>
-                Daily cap (minutes)
-                <input
-                    type="number"
-                    min={30}
-                    max={1440}
-                    step={30}
-                    value={limits.dailyCapMinutes}
-                    onChange={(e) =>
-                        set("dailyCapMinutes", Number(e.target.value))
-                    }
-                />
-            </label>
+            <SnapSlider
+                label="Daily cap"
+                value={limits.dailyCapMinutes}
+                min={30}
+                max={1440}
+                step={5}
+                suffix="min"
+                snaps={[
+                    { value: 30, label: "30m" },
+                    { value: 60, label: "1h" },
+                    { value: 120, label: "2h" },
+                    { value: 180, label: "3h" },
+                    { value: 240, label: "4h" },
+                    { value: 480, label: "8h" },
+                ]}
+                onChange={(v) => set("dailyCapMinutes", v)}
+            />
 
-            <label>
-                Refill interval
-                <select
-                    value={limits.refillIntervalHours}
-                    onChange={(e) =>
-                        set("refillIntervalHours", Number(e.target.value))
-                    }
-                >
-                    {REFILL_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>
-                            {o.label}
-                        </option>
-                    ))}
-                </select>
-            </label>
+            <div className="settings-row">
+                <label>
+                    Refill interval
+                    <select
+                        value={limits.refillIntervalHours}
+                        onChange={(e) =>
+                            set("refillIntervalHours", Number(e.target.value))
+                        }
+                    >
+                        {REFILL_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>
+                                {o.label}
+                            </option>
+                        ))}
+                    </select>
+                </label>
+                <label>
+                    Day starts at
+                    <select
+                        value={limits.dayStartHour}
+                        onChange={(e) =>
+                            set("dayStartHour", Number(e.target.value))
+                        }
+                    >
+                        {Array.from({ length: 24 }, (_, h) => (
+                            <option key={h} value={h}>
+                                {formatHour(h)}
+                            </option>
+                        ))}
+                    </select>
+                </label>
+            </div>
 
-            <label>
-                Day starts at
-                <select
-                    value={limits.dayStartHour}
-                    onChange={(e) =>
-                        set("dayStartHour", Number(e.target.value))
-                    }
-                >
-                    {Array.from({ length: 24 }, (_, h) => (
-                        <option key={h} value={h}>
-                            {formatHour(h)}
-                        </option>
-                    ))}
-                </select>
-            </label>
-
-            <label>
-                Per-show daily cap (minutes, optional)
-                <input
-                    type="number"
-                    min={1}
-                    max={1440}
-                    value={limits.defaultShowCapMinutes ?? ""}
-                    placeholder="leave blank to disable"
-                    onChange={(e) =>
-                        set(
-                            "defaultShowCapMinutes",
-                            e.target.value === "" ? null : Number(e.target.value),
-                        )
-                    }
-                />
-            </label>
-
-            <label>
-                Per-movie daily starts (optional)
-                <input
-                    type="number"
-                    min={1}
-                    max={20}
-                    value={limits.defaultMovieStarts ?? ""}
-                    placeholder="leave blank to disable"
-                    onChange={(e) =>
-                        set(
-                            "defaultMovieStarts",
-                            e.target.value === "" ? null : Number(e.target.value),
-                        )
-                    }
-                />
-            </label>
+            <div className="settings-row">
+                <label>
+                    Per-show daily cap (minutes, optional)
+                    <input
+                        type="number"
+                        min={1}
+                        max={1440}
+                        value={limits.defaultShowCapMinutes ?? ""}
+                        placeholder="leave blank to disable"
+                        onChange={(e) =>
+                            set(
+                                "defaultShowCapMinutes",
+                                e.target.value === "" ? null : Number(e.target.value),
+                            )
+                        }
+                    />
+                </label>
+                <label>
+                    Per-movie daily starts (optional)
+                    <input
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={limits.defaultMovieStarts ?? ""}
+                        placeholder="leave blank to disable"
+                        onChange={(e) =>
+                            set(
+                                "defaultMovieStarts",
+                                e.target.value === "" ? null : Number(e.target.value),
+                            )
+                        }
+                    />
+                </label>
+            </div>
 
             {previewLines.length > 0 && (
-                <div className="time-limits-preview">
-                    <h4>Refill preview</h4>
-                    <ul>
-                        {previewLines.map((line, i) => (
-                            <li key={i}>{line}</li>
-                        ))}
-                    </ul>
+                <div className="refill-preview">
+                    <h4>Refill schedule</h4>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>When</th>
+                                <th>Adds</th>
+                                <th>Running cap</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {previewLines.map((row, i) => (
+                                <tr key={i}>
+                                    <td>{row.when}</td>
+                                    <td>+{row.added} min</td>
+                                    <td>{row.running} min</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
                 </div>
             )}
 
@@ -189,17 +208,19 @@ function formatHour(h: number): string {
     return `${h - 12}:00 PM`;
 }
 
-function previewRefills(l: ProfileTimeLimits): string[] {
+type RefillRow = { when: string; added: number; running: number };
+
+function previewRefills(l: ProfileTimeLimits): RefillRow[] {
     if (!l.enabled) return [];
     const refillsPerDay = 24 / l.refillIntervalHours;
     const stepMin = Math.round(l.dailyCapMinutes / refillsPerDay);
-    const out: string[] = [];
-    for (let i = 0; i < Math.min(refillsPerDay, 6); i++) {
+    const out: RefillRow[] = [];
+    let running = 0;
+    const cap = Math.min(refillsPerDay, 8);
+    for (let i = 0; i < cap; i++) {
         const hour = (l.dayStartHour + i * l.refillIntervalHours) % 24;
-        out.push(`${formatHour(hour)}: +${stepMin} min`);
-    }
-    if (refillsPerDay > 6) {
-        out.push(`...continues every ${l.refillIntervalHours}h until ${formatHour(l.dayStartHour)}`);
+        running = Math.min(running + stepMin, l.dailyCapMinutes);
+        out.push({ when: formatHour(hour), added: stepMin, running });
     }
     return out;
 }

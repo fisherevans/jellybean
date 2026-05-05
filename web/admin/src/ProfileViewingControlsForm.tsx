@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type ProfileViewingControls } from "./api";
+import SnapSlider from "./SnapSlider";
+import ToggleSwitch from "./ToggleSwitch";
+import ViewingPreview from "./ViewingPreview";
 
 // Per-profile viewing controls: dim, red-shift, clock-based auto-off.
 // Effective values are baseline + per-kid overrides resolved at read
@@ -64,52 +67,66 @@ export default function ProfileViewingControlsForm({ profileId }: Props) {
                 adult-override gesture on the TV.
             </p>
 
-            <label>
-                Dim (% darker, 0-80)
-                <input
-                    type="number"
-                    min={0}
-                    max={80}
-                    value={cfg.dimPercent}
-                    onChange={(e) => set("dimPercent", Number(e.target.value))}
-                />
-            </label>
+            <ViewingPreview
+                dimPercent={cfg.dimPercent}
+                redShiftPercent={cfg.redShiftPercent}
+            />
+
+            <SnapSlider
+                label="Dim (darker, 0-80%)"
+                value={cfg.dimPercent}
+                min={0}
+                max={80}
+                step={5}
+                suffix="%"
+                snaps={[
+                    { value: 0, label: "Off" },
+                    { value: 15, label: "15%" },
+                    { value: 30, label: "30%" },
+                    { value: 50, label: "50%" },
+                    { value: 80, label: "80%" },
+                ]}
+                onChange={(v) => set("dimPercent", v)}
+            />
+
+            <SnapSlider
+                label="Red shift (warmer, 0-100%)"
+                value={cfg.redShiftPercent}
+                min={0}
+                max={100}
+                step={5}
+                suffix="%"
+                snaps={[
+                    { value: 0, label: "Off" },
+                    { value: 25, label: "25%" },
+                    { value: 50, label: "50%" },
+                    { value: 75, label: "75%" },
+                    { value: 100, label: "Max" },
+                ]}
+                onChange={(v) => set("redShiftPercent", v)}
+            />
 
             <label>
-                Red shift (% warm, 0-100)
+                Auto-off at clock time
                 <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={cfg.redShiftPercent}
-                    onChange={(e) =>
-                        set("redShiftPercent", Number(e.target.value))
-                    }
-                />
-            </label>
-
-            <label>
-                Auto-off at clock time (HH:MM 24h, blank to disable)
-                <input
-                    type="text"
-                    placeholder="20:30"
+                    type="time"
                     value={cfg.autoOffClockTime ?? ""}
                     onChange={(e) =>
                         set("autoOffClockTime", e.target.value)
                     }
                 />
+                <span className="help">
+                    Locks the kid client out at this time each day.
+                    Leave blank to disable.
+                </span>
             </label>
 
-            <label className="checkbox">
-                <input
-                    type="checkbox"
-                    checked={cfg.autoOffOnTimeLimit}
-                    onChange={(e) =>
-                        set("autoOffOnTimeLimit", e.target.checked)
-                    }
-                />
-                Auto-off when the daily time limit hits zero
-            </label>
+            <ToggleSwitch
+                label="Also auto-off when the daily time limit hits zero"
+                description="Skips the locked-tile screen and goes straight to the lockout overlay when the kid runs out of minutes."
+                checked={cfg.autoOffOnTimeLimit}
+                onChange={(v) => set("autoOffOnTimeLimit", v)}
+            />
 
             {error && <p className="error">{error}</p>}
             {saved && !error && <p className="muted">Saved.</p>}

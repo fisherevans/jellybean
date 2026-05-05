@@ -183,39 +183,47 @@ function ChannelEditor({ profileId, tags, channel, onCancel, onSaved }: EditorPr
                     onChange={(e) => set("description", e.target.value)}
                 />
             </label>
-            <label>
-                Sort order
-                <select
-                    value={c.sortOrder}
-                    onChange={(e) =>
-                        set("sortOrder", e.target.value as Channel["sortOrder"])
-                    }
-                >
-                    {SORT_ORDERS.map((o) => (
-                        <option key={o.value} value={o.value}>
-                            {o.label}
-                        </option>
-                    ))}
-                </select>
-            </label>
-            <fieldset className="day-toggles">
+            <fieldset className="pill-fieldset">
+                <legend>Sort order</legend>
+                <div className="pill-toggle-row">
+                    {SORT_ORDERS.map((o) => {
+                        const on = c.sortOrder === o.value;
+                        return (
+                            <button
+                                key={o.value}
+                                type="button"
+                                className={`pill-toggle ${on ? "active" : ""}`}
+                                aria-pressed={on}
+                                onClick={() => set("sortOrder", o.value)}
+                            >
+                                {o.label}
+                            </button>
+                        );
+                    })}
+                </div>
+            </fieldset>
+            <fieldset className="pill-fieldset">
                 <legend>Tags ({(c.tagIds ?? []).length} selected)</legend>
                 {tags.length === 0 ? (
                     <p className="muted">
                         No tags defined yet. Create them in the Tags page first.
                     </p>
                 ) : (
-                    <div className="day-toggles-grid wide">
-                        {tags.map((t) => (
-                            <label key={t.id} className="day-toggle">
-                                <input
-                                    type="checkbox"
-                                    checked={(c.tagIds ?? []).includes(t.id)}
-                                    onChange={() => toggleTag(t.id)}
-                                />
-                                <span>{t.name}</span>
-                            </label>
-                        ))}
+                    <div className="pill-toggle-row pill-toggle-wrap">
+                        {tags.map((t) => {
+                            const on = (c.tagIds ?? []).includes(t.id);
+                            return (
+                                <button
+                                    key={t.id}
+                                    type="button"
+                                    className={`pill-toggle ${on ? "active" : ""}`}
+                                    aria-pressed={on}
+                                    onClick={() => toggleTag(t.id)}
+                                >
+                                    {t.name}
+                                </button>
+                            );
+                        })}
                     </div>
                 )}
             </fieldset>

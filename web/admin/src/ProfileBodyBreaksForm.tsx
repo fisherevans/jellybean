@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type ProfileBodyBreaks } from "./api";
+import SnapSlider from "./SnapSlider";
+import ToggleSwitch from "./ToggleSwitch";
 
 // Per-profile body-breaks: cadence + voice template + reasons list.
 // The accumulator decays on pause / menu / browse and resets on
@@ -71,36 +73,47 @@ export default function ProfileBodyBreaksForm({ profileId }: Props) {
                 the same series does not reset the counter.
             </p>
 
-            <label className="checkbox">
-                <input
-                    type="checkbox"
-                    checked={cfg.enabled}
-                    onChange={(e) => set("enabled", e.target.checked)}
-                />
-                Enable body breaks for this profile
-            </label>
+            <ToggleSwitch
+                label="Enable body breaks for this profile"
+                description="When disabled, the kid is never interrupted by a break overlay."
+                checked={cfg.enabled}
+                onChange={(v) => set("enabled", v)}
+            />
 
-            <label>
-                Play before break (minutes)
-                <input
-                    type="number"
-                    min={1}
-                    max={240}
-                    value={cfg.playMinutes}
-                    onChange={(e) => set("playMinutes", Number(e.target.value))}
-                />
-            </label>
+            <SnapSlider
+                label="Play time before break"
+                value={cfg.playMinutes}
+                min={5}
+                max={240}
+                step={5}
+                suffix="min"
+                snaps={[
+                    { value: 15, label: "15m" },
+                    { value: 30, label: "30m" },
+                    { value: 45, label: "45m" },
+                    { value: 60, label: "1h" },
+                    { value: 90, label: "1.5h" },
+                    { value: 120, label: "2h" },
+                ]}
+                onChange={(v) => set("playMinutes", v)}
+            />
 
-            <label>
-                Break duration (minutes)
-                <input
-                    type="number"
-                    min={1}
-                    max={60}
-                    value={cfg.breakMinutes}
-                    onChange={(e) => set("breakMinutes", Number(e.target.value))}
-                />
-            </label>
+            <SnapSlider
+                label="Break duration"
+                value={cfg.breakMinutes}
+                min={1}
+                max={30}
+                step={1}
+                suffix="min"
+                snaps={[
+                    { value: 1, label: "1m" },
+                    { value: 3, label: "3m" },
+                    { value: 5, label: "5m" },
+                    { value: 10, label: "10m" },
+                    { value: 15, label: "15m" },
+                ]}
+                onChange={(v) => set("breakMinutes", v)}
+            />
 
             <label>
                 Voice message template

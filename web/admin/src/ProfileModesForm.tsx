@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, HttpError, type Layout, type Mode, type Tag } from "./api";
+import LayoutPreviewModal from "./LayoutPreviewModal";
 
 // Per-profile time-based modes. Each mode has a day-of-week + clock
 // schedule and can override tag filters / time limits / viewing
@@ -140,6 +142,7 @@ function ModeEditor({
     const [m, setM] = useState<Mode>(mode);
     const [error, setError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
+    const [previewLayoutId, setPreviewLayoutId] = useState<number | null>(null);
 
     function set<K extends keyof Mode>(key: K, v: Mode[K]) {
         setM((x) => ({ ...x, [key]: v }));
@@ -190,19 +193,23 @@ function ModeEditor({
                     onChange={(e) => set("name", e.target.value)}
                 />
             </label>
-            <fieldset className="day-toggles">
-                <legend>Days</legend>
-                <div className="day-toggles-grid">
-                    {DAYS.map((d, i) => (
-                        <label key={d} className="day-toggle">
-                            <input
-                                type="checkbox"
-                                checked={(m.scheduleDays & (1 << i)) !== 0}
-                                onChange={() => toggleDay(i)}
-                            />
-                            <span>{d}</span>
-                        </label>
-                    ))}
+            <fieldset className="pill-fieldset">
+                <legend>Days active</legend>
+                <div className="pill-toggle-row">
+                    {DAYS.map((d, i) => {
+                        const on = (m.scheduleDays & (1 << i)) !== 0;
+                        return (
+                            <button
+                                key={d}
+                                type="button"
+                                className={`pill-toggle ${on ? "active" : ""}`}
+                                aria-pressed={on}
+                                onClick={() => toggleDay(i)}
+                            >
+                                {d}
+                            </button>
+                        );
+                    })}
                 </div>
             </fieldset>
             <div className="settings-row">
@@ -242,28 +249,47 @@ function ModeEditor({
             </label>
             <label>
                 Layout while this mode is active
-                <select
-                    value={m.layoutId ?? 0}
-                    onChange={(e) => {
-                        const v = Number(e.target.value);
-                        set("layoutId", v > 0 ? v : null);
-                    }}
-                >
-                    <option value={0}>Use the profile's default layout</option>
-                    {layouts.map((l) => (
-                        <option key={l.id} value={l.id}>
-                            {l.name}
-                            {l.isDefault ? " (default)" : ""}
+                <div className="settings-input-row">
+                    <select
+                        value={m.layoutId ?? 0}
+                        onChange={(e) => {
+                            const v = Number(e.target.value);
+                            set("layoutId", v > 0 ? v : null);
+                        }}
+                    >
+                        <option value={0}>
+                            Use the profile's default layout
                         </option>
-                    ))}
-                </select>
+                        {layouts.map((l) => (
+                            <option key={l.id} value={l.id}>
+                                {l.name}
+                                {l.isDefault ? " (default)" : ""}
+                            </option>
+                        ))}
+                    </select>
+                    <button
+                        type="button"
+                        onClick={() => m.layoutId && setPreviewLayoutId(m.layoutId)}
+                        disabled={!m.layoutId}
+                    >
+                        Preview
+                    </button>
+                    {m.layoutId ? (
+                        <Link
+                            to={`/layouts/${m.layoutId}`}
+                            className="button-link"
+                        >
+                            Edit
+                        </Link>
+                    ) : null}
+                </div>
                 <span className="help">
                     Use a stripped-down layout (e.g. Continue Watching only)
                     while the mode is active. Leave on the default to keep
                     the kid's normal browse screen.
                 </span>
             </label>
-            <fieldset className="day-toggles">
+            <fieldset className="pill-fieldset">
                 <legend>
                     Required tags ({(m.requiredTagIds ?? []).length} selected)
                 </legend>
@@ -273,17 +299,21 @@ function ModeEditor({
                         the tag axis. Create tags in the Tags page first.
                     </p>
                 ) : (
-                    <div className="day-toggles-grid wide">
-                        {tags.map((t) => (
-                            <label key={t.id} className="day-toggle">
-                                <input
-                                    type="checkbox"
-                                    checked={(m.requiredTagIds ?? []).includes(t.id)}
-                                    onChange={() => toggleRequiredTag(t.id)}
-                                />
-                                <span>{t.name}</span>
-                            </label>
-                        ))}
+                    <div className="pill-toggle-row pill-toggle-wrap">
+                        {tags.map((t) => {
+                            const on = (m.requiredTagIds ?? []).includes(t.id);
+                            return (
+                                <button
+                                    key={t.id}
+                                    type="button"
+                                    className={`pill-toggle ${on ? "active" : ""}`}
+                                    aria-pressed={on}
+                                    onClick={() => toggleRequiredTag(t.id)}
+                                >
+                                    {t.name}
+                                </button>
+                            );
+                        })}
                     </div>
                 )}
                 <p className="help">
@@ -325,6 +355,12 @@ function ModeEditor({
                     {saving ? "Saving..." : "Save"}
                 </button>
             </div>
+            {previewLayoutId && (
+                <LayoutPreviewModal
+                    layoutId={previewLayoutId}
+                    onClose={() => setPreviewLayoutId(null)}
+                />
+            )}
         </div>
     );
 }
