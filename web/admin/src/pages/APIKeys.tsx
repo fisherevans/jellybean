@@ -145,7 +145,11 @@ export default function APIKeys() {
                         disabled={createState.kind === "creating"}
                     />
                 </label>
-                <button type="submit" disabled={createState.kind === "creating"}>
+                <button
+                    type="submit"
+                    className="primary"
+                    disabled={createState.kind === "creating"}
+                >
                     {createState.kind === "creating" ? "Creating…" : "Create key"}
                 </button>
             </form>

@@ -185,7 +185,11 @@ export default function Settings() {
                     />
                 </label>
                 <div className="settings-actions">
-                    <button type="submit" disabled={busy || pin.length < 4}>
+                    <button
+                        type="submit"
+                        className="primary"
+                        disabled={busy || pin.length < 4}
+                    >
                         {busy ? "Saving…" : override.pinSet ? "Update PIN" : "Set PIN"}
                     </button>
                     {override.pinSet ? (
@@ -231,6 +235,7 @@ export default function Settings() {
                 <div className="settings-actions">
                     <button
                         type="submit"
+                        className="primary"
                         disabled={busy || publicUrl.trim() === pubBaseline}
                     >
                         {busy ? "Saving…" : "Save"}

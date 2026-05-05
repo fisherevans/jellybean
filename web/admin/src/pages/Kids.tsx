@@ -56,7 +56,7 @@ export default function Kids() {
                         keys, no passwords stored.
                     </p>
                 </div>
-                <button onClick={() => setModal({ kind: "create" })}>+ Add kid</button>
+                <button className="primary" onClick={() => setModal({ kind: "create" })}>+ Add kid</button>
             </div>
 
             {error && <div className="error">{error}</div>}

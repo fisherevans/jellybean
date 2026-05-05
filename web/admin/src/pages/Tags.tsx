@@ -76,7 +76,7 @@ export default function Tags() {
                         a particular kid profile, regardless of categorization.
                     </p>
                 </div>
-                <button onClick={() => setModal({ kind: "create" })}>+ Add tag</button>
+                <button className="primary" onClick={() => setModal({ kind: "create" })}>+ Add tag</button>
             </div>
 
             {error && <div className="error">{error}</div>}

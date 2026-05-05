@@ -58,7 +58,10 @@ export default function Profiles() {
                         nav before triaging.
                     </p>
                 </div>
-                <button onClick={() => setModal({ kind: "create" })}>
+                <button
+                    className="primary"
+                    onClick={() => setModal({ kind: "create" })}
+                >
                     + Add profile
                 </button>
             </div>
@@ -68,12 +71,12 @@ export default function Profiles() {
             {profiles === null ? (
                 <Spinner block size={36} label="Loading profiles..." />
             ) : (
-                <ul className="profile-list">
+                <ul className="profile-cards">
                     {profiles.map((p) => (
                         <li key={p.id}>
                             <Link
                                 to={`/profiles/${p.id}`}
-                                className="profile-row profile-row-link"
+                                className="profile-card-link"
                             >
                                 <div className="profile-info">
                                     <div className="profile-name">
@@ -100,7 +103,7 @@ export default function Profiles() {
                                         </span>
                                     </div>
                                 </div>
-                                <div className="profile-row-chevron">
+                                <div className="profile-card-chevron">
                                     Settings →
                                 </div>
                             </Link>

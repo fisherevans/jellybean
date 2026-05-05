@@ -82,7 +82,7 @@ export default function Layouts() {
                         layout; multiple profiles can share one.
                     </p>
                 </div>
-                <button onClick={() => setCreating(true)}>+ New layout</button>
+                <button className="primary" onClick={() => setCreating(true)}>+ New layout</button>
             </div>
 
             {error && <div className="error">{error}</div>}

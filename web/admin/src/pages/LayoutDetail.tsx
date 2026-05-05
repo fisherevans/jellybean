@@ -134,8 +134,10 @@ export default function LayoutDetail() {
 
     return (
         <div className="page">
-            <p className="muted">
-                <Link to="/layouts">← Back to layouts</Link>
+            <p>
+                <Link to="/layouts" className="back-link">
+                    ← Back to layouts
+                </Link>
             </p>
             <div className="page-head">
                 <div className="layout-header">
@@ -263,7 +265,7 @@ export default function LayoutDetail() {
             )}
 
             <button
-                className="layout-add-row"
+                className="layout-add-row primary"
                 onClick={() => setEditorModal({ kind: "create" })}
                 disabled={busy}
             >

@@ -59,7 +59,11 @@ export default function Login({ onSuccess }: Props) {
                     />
                 </label>
                 {error && <div className="error">{error}</div>}
-                <button type="submit" disabled={submitting}>
+                <button
+                    type="submit"
+                    className="primary"
+                    disabled={submitting}
+                >
                     {submitting ? "Signing in..." : "Sign in"}
                 </button>
             </form>
