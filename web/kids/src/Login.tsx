@@ -97,7 +97,7 @@ export default function Login() {
     return (
         <div className="setup">
             <img
-                src="/kids/jellybean-kids.png"
+                src="/player/jellybean-kids.png"
                 alt="Jellybean Kids"
                 className="picker-brand"
                 width={96}

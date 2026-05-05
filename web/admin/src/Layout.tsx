@@ -108,7 +108,7 @@ export default function Layout({ user, onLogout }: Props) {
             <header className="topbar">
                 <Link to="/" className="brand">
                     <img
-                        src="/jellybean-admin.png"
+                        src="/manage/jellybean-admin.png"
                         alt=""
                         className="brand-mark"
                         width={32}
