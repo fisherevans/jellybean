@@ -15,24 +15,24 @@ function uniqueName(prefix: string): string {
 
 test.describe("layouts admin UI", () => {
     test("layouts nav entry is visible", async ({ page }) => {
-        await gotoAndWaitReady(page, "/");
+        await gotoAndWaitReady(page, "/manage");
         await expect(
             page.getByRole("navigation").getByRole("link", { name: "Layouts" }),
         ).toBeVisible();
     });
 
     test("layouts list page loads with seeded Default", async ({ page }) => {
-        await gotoAndWaitReady(page, "/layouts");
+        await gotoAndWaitReady(page, "/manage/layouts");
         await expect(page.getByRole("heading", { name: "Layouts" })).toBeVisible();
         // Seeded default layout is always present.
-        await expect(page.getByRole("link", { name: /Default/ })).toBeVisible();
+        await expect(page.locator(".profile-card-link").filter({ has: page.locator(".profile-name", { hasText: /^Default$/ }) })).toBeVisible();
     });
 
     test("create layout, append rows of every type, delete layout", async ({
         page,
     }) => {
         const name = uniqueName("BrowseTest");
-        await gotoAndWaitReady(page, "/layouts");
+        await gotoAndWaitReady(page, "/manage/layouts");
 
         // Create.
         await page.getByRole("button", { name: "+ New layout" }).click();
@@ -114,7 +114,7 @@ test.describe("layouts admin UI", () => {
     });
 
     test("default layout cannot be deleted", async ({ page }) => {
-        await gotoAndWaitReady(page, "/layouts");
+        await gotoAndWaitReady(page, "/manage/layouts");
         const defaultRow = page
             .locator(".profile-row")
             .filter({ has: page.locator(".profile-name", { hasText: /Default/ }) });
@@ -123,8 +123,8 @@ test.describe("layouts admin UI", () => {
     });
 
     test("profile settings shows the Browse layout dropdown", async ({ page }) => {
-        await gotoAndWaitReady(page, "/profiles");
-        await page.getByRole("link", { name: /Default/ }).click();
+        await gotoAndWaitReady(page, "/manage/profiles");
+        await page.locator(".profile-card-link").filter({ has: page.locator(".profile-name", { hasText: /^Default$/ }) }).click();
         await expect(page).toHaveURL(/\/profiles\/\d+/);
         // Basic tab is the default; the Browse layout select lives there.
         await expect(page.getByLabel("Browse layout")).toBeVisible();

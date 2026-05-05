@@ -79,7 +79,7 @@ export default function Kids() {
                                 <div className="kid-actions">
                                     <a
                                         className="kid-preview"
-                                        href={`/kids/library?profileId=${k.profileId}`}
+                                        href={`/player/library?profileId=${k.profileId}`}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         title="Open the kids client scoped to this kid's profile (admin cookie auth; library + filters work, but no resume / continue-watching since it's not the kid's Jellyfin token)"

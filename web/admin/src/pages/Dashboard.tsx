@@ -118,7 +118,7 @@ export default function Dashboard({ user, onLogout }: Props) {
             <div className="dashboard-links">
                 <Link to="/bulk">Bulk categorize</Link>
                 <Link to="/activity">Recent activity</Link>
-                <Link to="/manage-kids">Kids</Link>
+                <Link to="/kids">Kids</Link>
                 <Link to="/profiles">Profiles</Link>
             </div>
         </div>

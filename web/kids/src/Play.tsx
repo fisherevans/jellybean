@@ -499,7 +499,7 @@ export default function Play() {
             {overlayVisible && (
                 <div className="play-loading-overlay" aria-hidden>
                     <img
-                        src="/kids/jellybean-kids.png"
+                        src="/player/jellybean-kids.png"
                         alt=""
                         className="play-loading-bean"
                     />

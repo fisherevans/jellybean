@@ -19,7 +19,7 @@ const CARDS: Card[] = [
             "Per-profile visibility decisions, tag rules, time limits, body breaks, viewing controls, modes, and channels.",
     },
     {
-        to: "/manage-kids",
+        to: "/kids",
         title: "Kids",
         description:
             "Map Jellyfin users to Jellybean profiles. The kid TV / app authenticates directly with Jellyfin.",

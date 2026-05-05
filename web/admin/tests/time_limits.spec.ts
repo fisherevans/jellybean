@@ -6,8 +6,8 @@ import { test, expect } from "@playwright/test";
 
 test.describe("profile time-limits", () => {
     test("settings page time-limits tab edits and persists", async ({ page }) => {
-        await page.goto("/profiles");
-        await page.getByRole("link", { name: /Default/ }).click();
+        await page.goto("/manage/profiles");
+        await page.locator(".profile-card-link").filter({ has: page.locator(".profile-name", { hasText: /^Default$/ }) }).click();
         await expect(page).toHaveURL(/\/profiles\/\d+/);
         await page.getByRole("tab", { name: "Time limits" }).click();
         await page.waitForSelector(".snap-slider");

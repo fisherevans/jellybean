@@ -36,7 +36,7 @@ const links: NavItem[] = [
         matchPrefixes: [
             "/admin",
             "/profiles",
-            "/manage-kids",
+            "/kids",
             "/layouts",
             "/api-keys",
             "/settings",

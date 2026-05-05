@@ -5,8 +5,8 @@ import { test, expect } from "@playwright/test";
 
 test.describe("profile channels", () => {
     test("create + delete via settings page", async ({ page }) => {
-        await page.goto("/profiles");
-        await page.getByRole("link", { name: /Default/ }).click();
+        await page.goto("/manage/profiles");
+        await page.locator(".profile-card-link").filter({ has: page.locator(".profile-name", { hasText: /^Default$/ }) }).click();
         await page.getByRole("tab", { name: "Channels" }).click();
 
         await page.getByRole("button", { name: /Add channel/ }).click();

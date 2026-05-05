@@ -27,33 +27,33 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("full admin UI review", () => {
     test("dashboard / home", async ({ page }) => {
-        await page.goto("/");
+        await page.goto("/manage");
         await page.waitForLoadState("networkidle");
         await page.screenshot({ path: shot("01-home"), fullPage: true });
     });
 
     test("bulk categorize", async ({ page }) => {
-        await page.goto("/bulk");
+        await page.goto("/manage/bulk");
         await page.waitForLoadState("networkidle");
         await page.waitForTimeout(2000);
         await page.screenshot({ path: shot("02-bulk"), fullPage: true });
     });
 
     test("swipe", async ({ page }) => {
-        await page.goto("/swipe");
+        await page.goto("/manage/swipe");
         await page.waitForLoadState("networkidle");
         await page.waitForTimeout(1500);
         await page.screenshot({ path: shot("03-swipe"), fullPage: true });
     });
 
     test("activity", async ({ page }) => {
-        await page.goto("/activity");
+        await page.goto("/manage/activity");
         await page.waitForLoadState("networkidle");
         await page.screenshot({ path: shot("04-activity"), fullPage: true });
     });
 
     test("search", async ({ page }) => {
-        await page.goto("/search");
+        await page.goto("/manage/search");
         await page.waitForLoadState("networkidle");
         await page.screenshot({ path: shot("05-search-empty"), fullPage: true });
         // With a query.
@@ -69,19 +69,19 @@ test.describe("full admin UI review", () => {
     });
 
     test("tags list", async ({ page }) => {
-        await page.goto("/tags");
+        await page.goto("/manage/tags");
         await page.waitForLoadState("networkidle");
         await page.screenshot({ path: shot("06-tags"), fullPage: true });
     });
 
     test("layouts list", async ({ page }) => {
-        await page.goto("/layouts");
+        await page.goto("/manage/layouts");
         await page.waitForLoadState("networkidle");
         await page.screenshot({ path: shot("07-layouts"), fullPage: true });
     });
 
     test("layout detail", async ({ page }) => {
-        await page.goto("/layouts");
+        await page.goto("/manage/layouts");
         await page.waitForLoadState("networkidle");
         const link = page.locator("a.profile-name").first();
         if (await link.isVisible().catch(() => false)) {
@@ -95,13 +95,13 @@ test.describe("full admin UI review", () => {
     });
 
     test("profiles list", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.waitForLoadState("networkidle");
         await page.screenshot({ path: shot("08-profiles"), fullPage: true });
     });
 
     test("profile settings - basic", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.waitForLoadState("networkidle");
         await page.screenshot({
@@ -111,7 +111,7 @@ test.describe("full admin UI review", () => {
     });
 
     test("profile settings - tag rules", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Tag rules" }).click();
         await page.waitForTimeout(500);
@@ -122,7 +122,7 @@ test.describe("full admin UI review", () => {
     });
 
     test("profile settings - time limits", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Time limits" }).click();
         await page
@@ -135,7 +135,7 @@ test.describe("full admin UI review", () => {
     });
 
     test("profile settings - body breaks", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Body breaks" }).click();
         await page.waitForSelector(".snap-slider", { timeout: 5_000 });
@@ -146,7 +146,7 @@ test.describe("full admin UI review", () => {
     });
 
     test("profile settings - time limits steady state", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Time limits" }).click();
         await page.waitForSelector(".snap-slider", { timeout: 5_000 });
@@ -157,7 +157,7 @@ test.describe("full admin UI review", () => {
     });
 
     test("profile settings - viewing", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Viewing" }).click();
         await page.waitForSelector(".viewing-preview", { timeout: 5_000 });
@@ -168,7 +168,7 @@ test.describe("full admin UI review", () => {
     });
 
     test("profile settings - modes empty", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Modes" }).click();
         await page.screenshot({
@@ -178,7 +178,7 @@ test.describe("full admin UI review", () => {
     });
 
     test("profile settings - mode editor", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Modes" }).click();
         await page.getByRole("button", { name: /Add mode/ }).click();
@@ -189,7 +189,7 @@ test.describe("full admin UI review", () => {
     });
 
     test("profile settings - channels", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Channels" }).click();
         await page.screenshot({
@@ -199,7 +199,7 @@ test.describe("full admin UI review", () => {
     });
 
     test("profile settings - channel editor", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Channels" }).click();
         await page.getByRole("button", { name: /Add channel/ }).click();
@@ -210,31 +210,31 @@ test.describe("full admin UI review", () => {
     });
 
     test("manage kids", async ({ page }) => {
-        await page.goto("/manage-kids");
+        await page.goto("/manage/kids");
         await page.waitForLoadState("networkidle");
         await page.screenshot({ path: shot("10-kids"), fullPage: true });
     });
 
     test("api keys", async ({ page }) => {
-        await page.goto("/api-keys");
+        await page.goto("/manage/api-keys");
         await page.waitForLoadState("networkidle");
         await page.screenshot({ path: shot("11-api-keys"), fullPage: true });
     });
 
     test("settings (global)", async ({ page }) => {
-        await page.goto("/settings");
+        await page.goto("/manage/settings");
         await page.waitForLoadState("networkidle");
         await page.screenshot({ path: shot("12-settings"), fullPage: true });
     });
 
     test("settings hub", async ({ page }) => {
-        await page.goto("/admin");
+        await page.goto("/manage/admin");
         await page.waitForLoadState("networkidle");
         await page.screenshot({ path: shot("13-admin-hub"), fullPage: true });
     });
 
     test("categorize wrapper", async ({ page }) => {
-        await page.goto("/categorize");
+        await page.goto("/manage/categorize");
         await page.waitForLoadState("networkidle");
         await page.screenshot({
             path: shot("14-categorize"),
@@ -243,7 +243,7 @@ test.describe("full admin UI review", () => {
     });
 
     test("browse page", async ({ page }) => {
-        await page.goto("/browse");
+        await page.goto("/manage/browse");
         await page.waitForLoadState("networkidle");
         await page.screenshot({ path: shot("15-browse"), fullPage: true });
     });

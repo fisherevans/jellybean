@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// M8 #48 + #47 e2e. Hits /kids/browse via the admin preview path
+// M8 #48 + #47 e2e. Hits /player/browse via the admin preview path
 // (?profileId=N + admin cookie). Confirms:
 //   - tab pill renders with Browse active
 //   - rows from the seeded default layout show up
@@ -17,7 +17,7 @@ test.describe("kids browse + tab pill", () => {
     test("browse page loads with the active tab pill + at least one row", async ({
         page,
     }) => {
-        await gotoKids(page, "/kids/browse?profileId=1");
+        await gotoKids(page, "/player/browse?profileId=1");
         const browseBtn = page
             .locator(".kids-tabpill-btn")
             .filter({ hasText: "Browse" });
@@ -32,12 +32,12 @@ test.describe("kids browse + tab pill", () => {
     });
 
     test("clicking Library tab navigates to /library", async ({ page }) => {
-        await gotoKids(page, "/kids/browse?profileId=1");
+        await gotoKids(page, "/player/browse?profileId=1");
         await page
             .locator(".kids-tabpill-btn")
             .filter({ hasText: "Library" })
             .click();
-        await expect(page).toHaveURL(/\/kids\/library/);
+        await expect(page).toHaveURL(/\/player\/library/);
         const libraryBtn = page
             .locator(".kids-tabpill-btn")
             .filter({ hasText: "Library" });
@@ -48,10 +48,10 @@ test.describe("kids browse + tab pill", () => {
         // M7: Series + in-progress movies route to /watch; fresh
         // movies still go straight to /play. Either is a valid
         // outcome for "the first tile."
-        await gotoKids(page, "/kids/browse?profileId=1");
+        await gotoKids(page, "/player/browse?profileId=1");
         const firstTile = page.locator(".browse-tile").first();
         await expect(firstTile).toBeVisible({ timeout: 15_000 });
         await firstTile.click();
-        await expect(page).toHaveURL(/\/kids\/(play|watch)\//);
+        await expect(page).toHaveURL(/\/player\/(play|watch)\//);
     });
 });

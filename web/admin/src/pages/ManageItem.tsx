@@ -5,7 +5,7 @@ import { useActiveProfile } from "../activeProfile";
 import Spinner from "../Spinner";
 
 // Manage-item deep-link page (M9 #57). The kid TV's override QR
-// points at /manage-item/:itemId. The admin scans it on their
+// points at /items/:itemId. The admin scans it on their
 // phone, lands here, and can manage the item without bouncing
 // through the broader admin shell.
 //

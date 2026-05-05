@@ -14,15 +14,15 @@ async function gotoAndWaitReady(page: Page, path: string) {
 
 test.describe("override / settings admin UI", () => {
     test("Settings nav entry is visible", async ({ page }) => {
-        await gotoAndWaitReady(page, "/");
+        await gotoAndWaitReady(page, "/manage");
         await expect(
             page.getByRole("navigation").getByRole("link", { name: "Settings" }),
         ).toBeVisible();
     });
 
     test("PIN set + clear round trip", async ({ page }) => {
-        await gotoAndWaitReady(page, "/settings");
-        await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+        await gotoAndWaitReady(page, "/manage/settings");
+        await expect(page.locator("h1", { hasText: "Settings" })).toBeVisible();
 
         // Set a PIN via the form.
         await page.getByLabel(/^(PIN|New PIN)$/).first().fill("1234");
@@ -40,7 +40,7 @@ test.describe("override / settings admin UI", () => {
     });
 
     test("public URL setting persists", async ({ page }) => {
-        await gotoAndWaitReady(page, "/settings");
+        await gotoAndWaitReady(page, "/manage/settings");
         const input = page.getByLabel("Public URL");
         const sentinel = `https://e2e-${Date.now()}.example`;
         await input.fill(sentinel);
@@ -71,7 +71,7 @@ test.describe("override / settings admin UI", () => {
         // store directly via the bearer-key path: mint an admin
         // API key, use it to call the server-side override SetPIN +
         // peek the status. Easier: use the admin cookie via fetch.
-        await gotoAndWaitReady(page, "/settings");
+        await gotoAndWaitReady(page, "/manage/settings");
         await page.getByLabel(/^(PIN|New PIN)$/).first().fill("9999");
         await page.getByLabel("Confirm").fill("9999");
         await page.getByRole("button", { name: /Set PIN|Update PIN/ }).click();

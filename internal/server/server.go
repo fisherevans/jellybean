@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -199,12 +200,25 @@ func (s *Server) routes() {
 	kids.HandleFunc("/override/set-mode", s.handleKidsOverrideSetMode).Methods(http.MethodPost)
 	kids.HandleFunc("/channels", s.handleKidsChannels).Methods(http.MethodGet)
 
-	// Static SPAs. Order matters: /kids prefix wins over /, so the more
-	// specific one is registered first.
+	// Static SPAs. Two distinct apps live under two distinct prefixes:
+	//   /player/*  - the kid streaming client (was /kids/*)
+	//   /manage/*  - the parent / admin curation app (was /)
+	// Old /kids/* URLs and bare / both redirect into the new layout
+	// so existing bookmarks / TV deeplinks keep working.
+	s.router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/manage", http.StatusMovedPermanently)
+	}).Methods(http.MethodGet)
+	s.router.PathPrefix("/kids").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target := "/player" + strings.TrimPrefix(r.URL.Path, "/kids")
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+	})
 	if s.kidsAssets != nil {
 		kids, err := newSPA(s.kidsAssets, "web/kids/dist")
 		if err == nil {
-			s.router.PathPrefix("/kids").Handler(http.StripPrefix("/kids", kids))
+			s.router.PathPrefix("/player").Handler(http.StripPrefix("/player", kids))
 		} else {
 			s.logger.Warn().Err(err).Msg("kids SPA disabled")
 		}
@@ -212,7 +226,7 @@ func (s *Server) routes() {
 	if s.adminAssets != nil {
 		admin, err := newSPA(s.adminAssets, "web/admin/dist")
 		if err == nil {
-			s.router.PathPrefix("/").Handler(admin)
+			s.router.PathPrefix("/manage").Handler(http.StripPrefix("/manage", admin))
 		} else {
 			s.logger.Warn().Err(err).Msg("admin SPA disabled")
 		}

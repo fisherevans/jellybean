@@ -13,7 +13,7 @@ import { test, expect } from "@playwright/test";
 // endpoints work. We clear kids localStorage between tests so login state
 // doesn't bleed across cases.
 
-const KIDS_BASE = "/kids/";
+const KIDS_BASE = "/player/";
 
 async function clearKidsLocalStorage(page: import("@playwright/test").Page) {
     // Visit the kids origin first so localStorage is scoped right.
@@ -26,16 +26,16 @@ async function clearKidsLocalStorage(page: import("@playwright/test").Page) {
 }
 
 test.describe("kids login", () => {
-    test("/kids redirects to /kids/login when not signed in", async ({ page }) => {
+    test("/kids redirects to /player/login when not signed in", async ({ page }) => {
         await clearKidsLocalStorage(page);
         await page.goto(KIDS_BASE);
-        await expect(page).toHaveURL(/\/kids\/login$/);
+        await expect(page).toHaveURL(/\/player\/login$/);
         await expect(page.getByRole("heading", { name: /Sign in/ })).toBeVisible();
     });
 
     test("login form: invalid credentials show an error", async ({ page }) => {
         await clearKidsLocalStorage(page);
-        await page.goto("/kids/login");
+        await page.goto("/player/login");
         await page.getByLabel("Username").fill("definitely-not-a-real-user");
         await page.getByLabel("Password").fill("definitely-not-a-real-password");
         await page.getByRole("button", { name: /Sign in/ }).click();
@@ -55,7 +55,7 @@ test.describe("kids login", () => {
             "JELLYFIN_USERNAME / JELLYFIN_PASSWORD env vars required",
         );
         await clearKidsLocalStorage(page);
-        await page.goto("/kids/login");
+        await page.goto("/player/login");
         await page.getByLabel("Username").fill(username!);
         await page.getByLabel("Password").fill(password!);
         await page.getByRole("button", { name: /Sign in/ }).click();
@@ -67,7 +67,7 @@ test.describe("kids login", () => {
         // Wait until either condition is true.
         await expect(async () => {
             const url = page.url();
-            if (/\/kids\/library/.test(url)) return;
+            if (/\/player\/library/.test(url)) return;
             await expect(
                 page.getByText(/isn't set up as a kid/),
             ).toBeVisible();
@@ -80,7 +80,7 @@ test.describe("kids login", () => {
 // mapping for the admin user.
 async function gotoLibrary(page: import("@playwright/test").Page, profileId: number) {
     await clearKidsLocalStorage(page);
-    await page.goto(`/kids/library?profileId=${profileId}`);
+    await page.goto(`/player/library?profileId=${profileId}`);
     await expect(page.getByRole("tablist")).toBeVisible();
 }
 
@@ -114,7 +114,7 @@ test.describe("kids library", () => {
         const firstTile = page.locator(".tile-grid").first();
         await expect(firstTile).toBeVisible({ timeout: 10_000 });
         await firstTile.click();
-        await expect(page).toHaveURL(/\/kids\/play\//);
+        await expect(page).toHaveURL(/\/player\/play\//);
     });
 
     test("search box filters server-side via /api/kids/library?search= (M8 #49)", async ({
@@ -128,7 +128,7 @@ test.describe("kids library", () => {
             if (s) searches.push(s);
             route.continue();
         });
-        await page.goto(`/kids/library?profileId=1`);
+        await page.goto(`/player/library?profileId=1`);
         await expect(page.locator(".tile-grid").first()).toBeVisible({
             timeout: 15_000,
         });
@@ -148,7 +148,7 @@ test.describe("kids library", () => {
         // Some tile (cw or grid) should now have .focused.
         await expect(page.locator(".tile.focused")).toHaveCount(1);
         await page.keyboard.press("Enter");
-        await expect(page).toHaveURL(/\/kids\/play\//);
+        await expect(page).toHaveURL(/\/player\/play\//);
     });
 
     test("Series tiles get a TV badge when present", async ({ page }) => {
@@ -172,7 +172,7 @@ test.describe("kids library", () => {
             if (id && req.url().includes("/api/kids/")) seen.push(id);
         });
 
-        await page.goto(`/kids/library?profileId=1`);
+        await page.goto(`/player/library?profileId=1`);
         await page.waitForRequest(
             (req) => req.url().includes("/api/kids/library"),
             { timeout: 10_000 },
@@ -708,7 +708,7 @@ test.describe("kids playback", () => {
         // unit tests instead. Here we confirm the navigation, the stream
         // resolve call, and the video element wiring.
         await clearKidsLocalStorage(page);
-        await page.goto(`/kids/library?profileId=1`);
+        await page.goto(`/player/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
         const movieTile = page.locator(".tile-grid").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
@@ -718,14 +718,14 @@ test.describe("kids playback", () => {
         );
         await movieTile.click();
         await streamReq;
-        await expect(page).toHaveURL(/\/kids\/play\//);
+        await expect(page).toHaveURL(/\/player\/play\//);
         const video = page.locator("video");
         await expect(video).toBeVisible();
     });
 
     test("Esc returns to the watch menu (M7 #44)", async ({ page }) => {
         await clearKidsLocalStorage(page);
-        await page.goto(`/kids/library?profileId=1`);
+        await page.goto(`/player/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
         const movieTile = page.locator(".tile-grid").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
@@ -735,26 +735,26 @@ test.describe("kids playback", () => {
         // interstitial; when it's the former we never enter /play to
         // begin with, so skip that branch.
         const url = page.url();
-        if (!/\/kids\/play\//.test(url)) {
+        if (!/\/player\/play\//.test(url)) {
             test.skip();
         }
         await page.keyboard.press("Escape");
-        await expect(page).toHaveURL(/\/kids\/watch\//);
+        await expect(page).toHaveURL(/\/player\/watch\//);
     });
 
     test("back button returns to the watch menu (M7 #44)", async ({ page }) => {
         await clearKidsLocalStorage(page);
-        await page.goto(`/kids/library?profileId=1`);
+        await page.goto(`/player/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
         const movieTile = page.locator(".tile-grid").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
         await movieTile.click();
         const url = page.url();
-        if (!/\/kids\/play\//.test(url)) {
+        if (!/\/player\/play\//.test(url)) {
             test.skip();
         }
         await page.getByRole("link", { name: /^Back$/ }).first().click();
-        await expect(page).toHaveURL(/\/kids\/watch\//);
+        await expect(page).toHaveURL(/\/player\/watch\//);
     });
 
     test("custom transport mounts and reveals on keypress", async ({ page }) => {
@@ -764,12 +764,12 @@ test.describe("kids playback", () => {
         // is loading; first user keypress reveals it. Verify it mounts
         // with a scrubber and at least the restart + play/pause buttons.
         await clearKidsLocalStorage(page);
-        await page.goto(`/kids/library?profileId=1`);
+        await page.goto(`/player/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
         const movieTile = page.locator(".tile-grid").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
         await movieTile.click();
-        await expect(page).toHaveURL(/\/kids\/play\//);
+        await expect(page).toHaveURL(/\/player\/play\//);
         // Transport mounts hidden during the buffer state. Send a key
         // to wake it up.
         const transport = page.locator(".player-transport");

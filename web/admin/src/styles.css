@@ -3184,3 +3184,126 @@ textarea:focus {
     color: var(--muted);
     font-size: 0.8rem;
 }
+
+/* Settings two-pane layout: sidebar left, content right. Wraps every
+   admin / settings / profile / layout / kids / activity / api-keys /
+   system-settings route. */
+.settings-layout {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: 0;
+    min-height: calc(100vh - 4rem);
+    align-items: start;
+}
+.settings-sidebar {
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    padding: 1.25rem 0.85rem;
+    position: sticky;
+    top: 0;
+    align-self: stretch;
+    min-height: 100vh;
+}
+.settings-sidebar-title {
+    margin: 0 0.4rem 1rem;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    font-weight: 600;
+}
+.settings-sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+.settings-sidebar-link,
+.settings-sidebar-link:visited {
+    display: block;
+    padding: 0.5rem 0.6rem;
+    color: var(--muted);
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 0.95rem;
+}
+.settings-sidebar-link:hover {
+    color: var(--fg);
+    background: rgba(255, 255, 255, 0.04);
+}
+.settings-sidebar-link.active {
+    color: var(--fg);
+    background: rgba(128, 132, 255, 0.15);
+    font-weight: 500;
+}
+.settings-sidebar-section {
+    display: flex;
+    flex-direction: column;
+}
+.settings-sidebar-section-head {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.6rem;
+    color: var(--muted);
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+.settings-sidebar-section-head:hover {
+    color: var(--fg);
+    background: rgba(255, 255, 255, 0.04);
+}
+.settings-sidebar-section.expanded .settings-sidebar-section-head {
+    color: var(--fg);
+    font-weight: 500;
+}
+.settings-sidebar-caret {
+    color: var(--muted);
+    font-size: 0.7rem;
+    width: 0.8rem;
+}
+.settings-sidebar-children {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding: 0.15rem 0 0.35rem 1.4rem;
+    border-left: 1px solid var(--border);
+    margin-left: 1rem;
+}
+.settings-sidebar-child,
+.settings-sidebar-child:visited {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.6rem;
+    color: var(--muted);
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+.settings-sidebar-child:hover {
+    color: var(--fg);
+    background: rgba(255, 255, 255, 0.04);
+}
+.settings-sidebar-child.active {
+    color: var(--fg);
+    background: rgba(128, 132, 255, 0.18);
+    font-weight: 500;
+}
+.settings-sidebar-badge {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--muted);
+    font-size: 0.7rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.settings-content {
+    padding: 1.5rem 2rem;
+    min-width: 0;
+}
+.settings-content > .page {
+    padding: 0;
+}

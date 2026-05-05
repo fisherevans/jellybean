@@ -4,8 +4,8 @@ import { test, expect } from "@playwright/test";
 
 test.describe("profile viewing controls", () => {
     test("settings page viewing tab edits and persists", async ({ page }) => {
-        await page.goto("/profiles");
-        await page.getByRole("link", { name: /Default/ }).click();
+        await page.goto("/manage/profiles");
+        await page.locator(".profile-card-link").filter({ has: page.locator(".profile-name", { hasText: /^Default$/ }) }).click();
         await page.getByRole("tab", { name: "Viewing" }).click();
 
         await page.getByLabel("Dim (% darker, 0-80)").fill("25");
@@ -26,8 +26,8 @@ test.describe("profile viewing controls", () => {
     });
 
     test("invalid clock time is rejected with an inline error", async ({ page }) => {
-        await page.goto("/profiles");
-        await page.getByRole("link", { name: /Default/ }).click();
+        await page.goto("/manage/profiles");
+        await page.locator(".profile-card-link").filter({ has: page.locator(".profile-name", { hasText: /^Default$/ }) }).click();
         await page.getByRole("tab", { name: "Viewing" }).click();
         await page.getByLabel(/Auto-off at clock time/).fill("nope");
         await page.getByRole("button", { name: /^Save/ }).click();

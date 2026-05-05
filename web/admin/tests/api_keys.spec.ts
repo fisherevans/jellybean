@@ -14,7 +14,7 @@ function uniqueName(prefix: string): string {
 
 test.describe("api keys admin UI", () => {
     test("nav entry", async ({ page }) => {
-        await gotoAndWaitReady(page, "/");
+        await gotoAndWaitReady(page, "/manage");
         await expect(
             page.getByRole("navigation").getByRole("link", { name: "API keys" }),
         ).toBeVisible();
@@ -22,7 +22,7 @@ test.describe("api keys admin UI", () => {
 
     test("create reveals plaintext token, revoke, delete", async ({ page }) => {
         const name = uniqueName("e2e-key");
-        await gotoAndWaitReady(page, "/api-keys");
+        await gotoAndWaitReady(page, "/manage/api-keys");
 
         await page.getByLabel("Name").fill(name);
         await page.getByRole("button", { name: "Create key" }).click();
@@ -76,7 +76,7 @@ test.describe("api keys admin UI", () => {
 
     test("access log surfaces bearer-authed calls", async ({ page }) => {
         const name = uniqueName("log-key");
-        await gotoAndWaitReady(page, "/api-keys");
+        await gotoAndWaitReady(page, "/manage/api-keys");
         await page.getByLabel("Name").fill(name);
         await page.getByRole("button", { name: "Create key" }).click();
         const tokenText = await page.locator(".apikey-token").innerText();

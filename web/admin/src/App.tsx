@@ -11,6 +11,7 @@ import ProfileSettings from "./pages/ProfileSettings";
 import Categorize from "./pages/Categorize";
 import AdminHub from "./pages/AdminHub";
 import Browse from "./pages/Browse";
+import SettingsLayout from "./SettingsLayout";
 import Kids from "./pages/Kids";
 import Tags from "./pages/Tags";
 import TagDetail from "./pages/TagDetail";
@@ -77,19 +78,28 @@ export default function App() {
                     <Route path="/swipe" element={<Categorize />} />
                     <Route path="/categorize" element={<Categorize />} />
                     <Route path="/browse" element={<Browse />} />
-                    <Route path="/admin" element={<AdminHub />} />
-                    <Route path="/activity" element={<Activity />} />
                     <Route path="/search" element={<Search />} />
-                    <Route path="/profiles" element={<Profiles />} />
-                    <Route path="/profiles/:id" element={<ProfileSettings />} />
-                    <Route path="/manage-kids" element={<Kids />} />
                     <Route path="/tags" element={<Tags />} />
                     <Route path="/tags/:tagId" element={<TagDetail />} />
-                    <Route path="/layouts" element={<Layouts />} />
-                    <Route path="/layouts/:layoutId" element={<LayoutDetail />} />
-                    <Route path="/api-keys" element={<APIKeys />} />
-                    <Route path="/settings" element={<Settings />} />
-                    <Route path="/manage-item/:itemId" element={<ManageItem />} />
+                    <Route path="/items/:itemId" element={<ManageItem />} />
+                    {/* Admin / settings routes share a sidebar layout. */}
+                    <Route element={<SettingsLayout />}>
+                        <Route path="/admin" element={<AdminHub />} />
+                        <Route path="/activity" element={<Activity />} />
+                        <Route path="/profiles" element={<Profiles />} />
+                        <Route
+                            path="/profiles/:id"
+                            element={<ProfileSettings />}
+                        />
+                        <Route path="/kids" element={<Kids />} />
+                        <Route path="/layouts" element={<Layouts />} />
+                        <Route
+                            path="/layouts/:layoutId"
+                            element={<LayoutDetail />}
+                        />
+                        <Route path="/api-keys" element={<APIKeys />} />
+                        <Route path="/settings" element={<Settings />} />
+                    </Route>
                 </Route>
             ) : (
                 <Route path="*" element={<RedirectToLogin />} />

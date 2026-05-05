@@ -29,7 +29,7 @@ function shot(name: string) {
 
 test.describe("profile settings UX", () => {
     test("profiles list shows a clean clickable row + Settings affordance", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await expect(page.getByRole("heading", { name: "Profiles" })).toBeVisible();
 
         const defaultRow = page
@@ -68,7 +68,7 @@ test.describe("profile settings UX", () => {
     });
 
     test("clicking the row navigates to /profiles/:id with all tabs visible", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await expect(page).toHaveURL(/\/profiles\/\d+/);
         await expect(
@@ -95,7 +95,7 @@ test.describe("profile settings UX", () => {
     });
 
     test("Basic tab fields are editable + Save round trips", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         // Stays on Basic by default.
         await expect(page.getByLabel("Name")).toHaveValue("Default");
@@ -109,7 +109,7 @@ test.describe("profile settings UX", () => {
     });
 
     test("Time limits tab: ToggleSwitch flips on click", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Time limits" }).click();
         await page.waitForSelector(".toggle-switch");
@@ -128,7 +128,7 @@ test.describe("profile settings UX", () => {
     });
 
     test("Modes tab: day-of-week pill toggles flip on click", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Modes" }).click();
         await page.getByRole("button", { name: /Add mode/ }).click();
@@ -156,7 +156,7 @@ test.describe("profile settings UX", () => {
     });
 
     test("Body breaks tab loads + textarea is editable", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Body breaks" }).click();
         const reasons = page.getByLabel("Reasons (one per line)");
@@ -167,7 +167,7 @@ test.describe("profile settings UX", () => {
     });
 
     test("Viewing tab loads + sliders editable", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Viewing" }).click();
         await page.waitForSelector(".viewing-preview");
@@ -182,7 +182,7 @@ test.describe("profile settings UX", () => {
     });
 
     test("Channels tab loads + Add Channel works", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Channels" }).click();
         await page.getByRole("button", { name: /Add channel/ }).click();
@@ -191,7 +191,7 @@ test.describe("profile settings UX", () => {
     });
 
     test("Tag rules tab loads + radios visible", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Tag rules" }).click();
         // Either tags are present or "No tags yet" - both are valid
@@ -202,7 +202,7 @@ test.describe("profile settings UX", () => {
     });
 
     test("no milestone references appear in user-visible text", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         for (const tab of [
             "Basic",
@@ -225,7 +225,7 @@ test.describe("profile settings UX", () => {
     });
 
     test("active-tab styling reflects which tab is focused", async ({ page }) => {
-        await page.goto("/profiles");
+        await page.goto("/manage/profiles");
         await page.locator(".profile-card-link").first().click();
         await page.getByRole("tab", { name: "Modes" }).click();
         const modesTab = page.getByRole("tab", { name: "Modes" });

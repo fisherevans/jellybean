@@ -21,7 +21,7 @@ function uniqueName(prefix: string): string {
 
 test.describe("tags admin UI", () => {
     test("tags nav entry is visible", async ({ page }) => {
-        await gotoAndWaitReady(page, "/");
+        await gotoAndWaitReady(page, "/manage");
         await expect(
             page.getByRole("navigation").getByRole("link", { name: "Tags" }),
         ).toBeVisible();
@@ -30,7 +30,7 @@ test.describe("tags admin UI", () => {
     test("tags page loads + create modal stacks fields vertically", async ({
         page,
     }) => {
-        await gotoAndWaitReady(page, "/tags");
+        await gotoAndWaitReady(page, "/manage/tags");
         await expect(page.getByRole("heading", { name: "Tags" })).toBeVisible();
 
         // Open the modal.
@@ -64,7 +64,7 @@ test.describe("tags admin UI", () => {
         const name = uniqueName("Adventure");
         const description = "End-to-end exercised tag";
 
-        await gotoAndWaitReady(page, "/tags");
+        await gotoAndWaitReady(page, "/manage/tags");
 
         // Create.
         await page.getByRole("button", { name: "+ Add tag" }).click();
@@ -100,7 +100,7 @@ test.describe("tags admin UI", () => {
         const original = uniqueName("Bedtime");
         const renamed = uniqueName("Bedtime-renamed");
 
-        await gotoAndWaitReady(page, "/tags");
+        await gotoAndWaitReady(page, "/manage/tags");
 
         // Seed a tag to rename.
         await page.getByRole("button", { name: "+ Add tag" }).click();
@@ -135,15 +135,15 @@ test.describe("tags admin UI", () => {
     test("profile tag rules tab lists tags", async ({ page }) => {
         // Seed one tag so the tab has at least one row to render.
         const tagName = uniqueName("Scary");
-        await gotoAndWaitReady(page, "/tags");
+        await gotoAndWaitReady(page, "/manage/tags");
         await page.getByRole("button", { name: "+ Add tag" }).click();
         const createModal = page.locator(".modal");
         await createModal.locator('input[type="text"]').fill(tagName);
         await createModal.getByRole("button", { name: "Create" }).click();
         await expect(createModal).toBeHidden();
 
-        await page.goto("/profiles");
-        await page.getByRole("link", { name: /Default/ }).click();
+        await page.goto("/manage/profiles");
+        await page.locator(".profile-card-link").filter({ has: page.locator(".profile-name", { hasText: /^Default$/ }) }).click();
         await page.getByRole("tab", { name: "Tag rules" }).click();
 
         const panel = page.locator(".settings-panel");
@@ -160,15 +160,19 @@ test.describe("tags admin UI", () => {
         const saveBtn = panel.getByRole("button", { name: "Save" });
         await expect(saveBtn).toBeDisabled();
 
-        // Pick Always hide -> Save enables.
-        await row.locator(`input[value="always_hidden"]`).check();
+        // Pick Always hide via the segmented control (radios are
+        // visually-hidden inputs - click the wrapping label).
+        await row
+            .locator(".tag-filter-mode")
+            .filter({ hasText: "Always hide" })
+            .click();
         await expect(saveBtn).toBeEnabled();
         await saveBtn.click();
         // After a successful save the form goes clean again -> Save disables.
         await expect(saveBtn).toBeDisabled();
 
         // Cleanup the seeded tag (this also clears the filter via cascade).
-        await page.goto("/tags");
+        await page.goto("/manage/tags");
         const tagRow = page.locator(".tag-row", { hasText: tagName });
         page.once("dialog", (d) => d.accept());
         await tagRow.getByRole("button", { name: "Delete" }).click();

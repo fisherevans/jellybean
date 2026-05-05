@@ -1,12 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
 
 // M7 watch menu e2e. Uses the admin-preview path
-// (/kids/watch/:id?profileId=1 + admin cookie). The watch menu is
+// (/player/watch/:id?profileId=1 + admin cookie). The watch menu is
 // supposed to render hero + actions; for series, additionally an
 // episode accordion.
 
 async function gotoWatch(page: Page, itemId: string) {
-    await page.goto(`/kids/watch/${itemId}?profileId=1`);
+    await page.goto(`/player/watch/${itemId}?profileId=1`);
 }
 
 async function pickFirstSeriesId(page: Page): Promise<string | null> {
@@ -64,6 +64,6 @@ test.describe("kids watch menu", () => {
             timeout: 15_000,
         });
         await page.locator(".watch-back-link").click();
-        await expect(page).toHaveURL(/\/kids\/browse/);
+        await expect(page).toHaveURL(/\/player\/browse/);
     });
 });

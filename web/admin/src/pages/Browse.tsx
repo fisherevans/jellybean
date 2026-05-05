@@ -150,7 +150,7 @@ export default function Browse() {
                     {filtered.map((it) => (
                         <li key={it.Id} className="browse-item">
                             <Link
-                                to={`/manage-item/${encodeURIComponent(it.Id)}`}
+                                to={`/items/${encodeURIComponent(it.Id)}`}
                                 className="browse-item-link"
                             >
                                 <span className="browse-item-name">

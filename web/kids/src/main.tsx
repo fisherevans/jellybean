@@ -29,7 +29,7 @@ function Index() {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
-        <BrowserRouter basename="/kids">
+        <BrowserRouter basename="/player">
             <Routes>
                 <Route path="/" element={<Index />} />
                 <Route path="/login" element={<Login />} />

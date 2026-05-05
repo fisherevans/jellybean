@@ -13,16 +13,25 @@ async function gotoAndWaitReady(page: Page, path: string) {
 
 test.describe("admin shell", () => {
     test("home loads and shows nav", async ({ page }) => {
-        await gotoAndWaitReady(page, "/");
+        await gotoAndWaitReady(page, "/manage");
         await expect(page.getByRole("heading", { name: /Welcome/ })).toBeVisible();
-        const nav = page.getByRole("navigation");
-        for (const label of ["Bulk categorize", "Swipe", "Activity", "Search", "Profiles", "Kids"]) {
+        const nav = page.getByRole("navigation").first();
+        // Top nav was collapsed to 6 primary items; deeper admin
+        // pages live under the Settings hub.
+        for (const label of [
+            "Home",
+            "Categorize",
+            "Browse",
+            "Search",
+            "Tags",
+            "Settings",
+        ]) {
             await expect(nav.getByRole("link", { name: label })).toBeVisible();
         }
     });
 
     test("profile picker is populated", async ({ page }) => {
-        await gotoAndWaitReady(page, "/");
+        await gotoAndWaitReady(page, "/manage");
         const picker = page.getByLabel("Profile");
         await expect(picker).toBeVisible();
         await expect(picker).toContainText("Default");
@@ -31,7 +40,7 @@ test.describe("admin shell", () => {
 
 test.describe("bulk", () => {
     test("loads with three columns and counts", async ({ page }) => {
-        await gotoAndWaitReady(page, "/bulk");
+        await gotoAndWaitReady(page, "/manage/bulk");
         await expect(page.getByRole("heading", { name: "Bulk categorize" })).toBeVisible();
 
         // Initial fetch can take a while on large libraries (2300+ items).
@@ -53,7 +62,7 @@ test.describe("bulk", () => {
 
 test.describe("swipe", () => {
     test("loads (queue or empty state)", async ({ page }) => {
-        await gotoAndWaitReady(page, "/swipe");
+        await gotoAndWaitReady(page, "/manage/swipe");
         // Either the queue is empty ("All caught up for X") or there's an
         // item to categorize and the ← Hide / ↓ Skip / Show → buttons are
         // present. Initial fetch can take up to ~10s on a large library
@@ -72,7 +81,7 @@ test.describe("swipe", () => {
 
 test.describe("profiles", () => {
     test("default profile cannot be deleted", async ({ page }) => {
-        await gotoAndWaitReady(page, "/profiles");
+        await gotoAndWaitReady(page, "/manage/profiles");
         await expect(page.getByRole("heading", { name: "Profiles" })).toBeVisible();
         const defaultRow = page.locator("li").filter({ hasText: "Default" }).first();
         await expect(defaultRow).toBeVisible();
@@ -81,7 +90,7 @@ test.describe("profiles", () => {
     });
 
     test("create + delete a temporary profile", async ({ page }) => {
-        await gotoAndWaitReady(page, "/profiles");
+        await gotoAndWaitReady(page, "/manage/profiles");
         const tempName = `e2e-temp-${Date.now()}`;
         // Profile create now happens through a modal opened by "+ Add profile".
         await page.getByRole("button", { name: /\+ Add profile/ }).click();
@@ -99,14 +108,14 @@ test.describe("profiles", () => {
 
 test.describe("activity", () => {
     test("loads", async ({ page }) => {
-        await gotoAndWaitReady(page, "/activity");
+        await gotoAndWaitReady(page, "/manage/activity");
         await expect(page.getByRole("heading", { name: "Recent activity" })).toBeVisible();
     });
 });
 
 test.describe("search", () => {
     test("loads + reacts to typing", async ({ page }) => {
-        await gotoAndWaitReady(page, "/search");
+        await gotoAndWaitReady(page, "/manage/search");
         await expect(page.getByRole("heading", { name: "Search" })).toBeVisible();
         await page.getByPlaceholder(/Type a title/).fill("the");
         // Either matches or an empty-state message; both are fine outcomes

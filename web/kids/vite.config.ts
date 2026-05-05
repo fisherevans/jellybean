@@ -1,11 +1,12 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The kids app is served by the Go binary at /kids, so all asset URLs need
-// to be /kids-prefixed. base: "/kids/" handles that for both dev and prod.
+// The kids app is served by the Go binary at /player, so all asset URLs
+// need to be /player-prefixed. base: "/player/" handles that for both
+// dev and prod.
 export default defineConfig({
     plugins: [react()],
-    base: "/kids/",
+    base: "/player/",
     server: {
         port: 5174,
         proxy: {
