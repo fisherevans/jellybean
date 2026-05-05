@@ -29,18 +29,23 @@ const (
 // a new profile, matching the SQL DEFAULT in the migration so reset-
 // to-defaults from the admin UI lands on the same values that fresh
 // profiles start with.
+//
+// The template + reasons are written so any reason composes
+// grammatically with the template - all reasons are imperatives that
+// start with a verb and end with a period, so the final TTS string
+// reads naturally regardless of which reason fires.
 func DefaultProfileBodyBreaks(profileID int64) *ProfileBodyBreaks {
 	return &ProfileBodyBreaks{
 		ProfileID:            profileID,
 		Enabled:              false,
 		PlayMinutes:          30,
 		BreakMinutes:         5,
-		VoiceMessageTemplate: "Time for a break! {reason}",
+		VoiceMessageTemplate: "Time for a quick break. {reason}",
 		Reasons: []string{
-			"Do you need some water?",
-			"Now is a good time to try the potty.",
-			"Move your body, do a dance!",
-			"Can we clean up our toys while we wait?",
+			"Grab a sip of water.",
+			"Take a quick potty break.",
+			"Stand up and stretch.",
+			"Tidy up some toys while we wait.",
 		},
 	}
 }

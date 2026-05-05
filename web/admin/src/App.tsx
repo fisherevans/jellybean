@@ -18,7 +18,6 @@ import Layouts from "./pages/Layouts";
 import LayoutDetail from "./pages/LayoutDetail";
 import APIKeys from "./pages/APIKeys";
 import Settings from "./pages/Settings";
-import ManageItem from "./pages/ManageItem";
 import NotFound from "./pages/NotFound";
 import Spinner from "./Spinner";
 
@@ -86,7 +85,10 @@ export default function App() {
                     />
                     <Route path="/tags" element={<Tags />} />
                     <Route path="/tags/:tagId" element={<TagDetail />} />
-                    <Route path="/items/:itemId" element={<ManageItem />} />
+                    {/* /items/:itemId opens the Browse page with the
+                        item editor modal pre-opened. Used by the M9
+                        QR-code deep link. */}
+                    <Route path="/items/:itemId" element={<Browse />} />
                     {/* Admin / settings routes share a sidebar layout. */}
                     <Route element={<SettingsLayout />}>
                         <Route path="/admin" element={<AdminHub />} />

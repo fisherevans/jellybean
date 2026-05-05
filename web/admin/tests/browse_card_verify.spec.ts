@@ -79,25 +79,101 @@ test("browse card layout + interactions match feedback spec", async ({ page }) =
     expect(options.some((o) => /^Rating/.test(o))).toBeTruthy();
 
     // Filter panel: tags multi-select. Open the panel and confirm
-    // toggling two tags marks both as pressed.
+    // toggling two tags marks both as pressed AND that the
+    // accompanying label says "matches any" (OR), not "must match
+    // all" (AND).
     await filterBtn.click();
     const panel = page.locator(".browse-filter-panel");
     await expect(panel).toBeVisible();
-    const tagPills = panel
+    const tagsGroup = panel
         .locator(".browse-filter-group")
-        .filter({ hasText: /^Tags/ })
-        .locator(".pill-toggle");
+        .filter({ hasText: /^Tags/ });
+    const tagPills = tagsGroup.locator(".pill-toggle");
     const tagPillCount = await tagPills.count();
     if (tagPillCount >= 2) {
         await tagPills.nth(0).click();
         await tagPills.nth(1).click();
         await expect(tagPills.nth(0)).toHaveAttribute("aria-pressed", "true");
         await expect(tagPills.nth(1)).toHaveAttribute("aria-pressed", "true");
+        const label = await tagsGroup
+            .locator(".browse-filter-label")
+            .innerText();
+        expect(label).toMatch(/any/i);
+        expect(label).not.toMatch(/must match all/i);
     }
     await page.screenshot({
         path: resolve(SHOTS_DIR, "21-browse-filter-open.png"),
         fullPage: true,
     });
+});
+
+test("browse sort dropdown matches the input/button styling", async ({ page }) => {
+    await page.goto("/manage/browse");
+    await page.waitForSelector(".browse-item", { timeout: 15_000 });
+    const search = page.locator(".browse-search").first();
+    const sort = page.locator(".browse-sort").first();
+    const filt = page.getByRole("button", { name: /Filters/ }).first();
+    const sBox = await search.boundingBox();
+    const oBox = await sort.boundingBox();
+    const fBox = await filt.boundingBox();
+    if (!sBox || !oBox || !fBox) throw new Error("missing");
+    // All three should be roughly the same height (within 4px).
+    expect(Math.abs(sBox.height - oBox.height)).toBeLessThan(4);
+    expect(Math.abs(fBox.height - oBox.height)).toBeLessThan(4);
+    // Sort should have a visible border like the others.
+    const sortBorder = await sort.evaluate(
+        (el) => getComputedStyle(el).borderTopWidth,
+    );
+    expect(parseFloat(sortBorder)).toBeGreaterThan(0);
+});
+
+test("browse kebab menu shows full options without clipping", async ({ page }) => {
+    await page.goto("/manage/browse");
+    await page.waitForSelector(".browse-item", { timeout: 15_000 });
+    const kebab = page.locator(".browse-item-kebab").first();
+    await kebab.click();
+    const menu = page.locator(".browse-item-menu").first();
+    await expect(menu).toBeVisible();
+    // No "Clear state" wording.
+    expect(await menu.innerText()).not.toMatch(/Clear state/);
+    // Should mention Mark unset (when state is set), or at least
+    // visible/hidden affordances.
+    const text = await menu.innerText();
+    expect(text).toMatch(/Mark (visible|hidden|unset)/);
+    // The menu should be fully visible inside the viewport.
+    const menuBox = await menu.boundingBox();
+    const vp = page.viewportSize();
+    if (!menuBox || !vp) throw new Error("missing");
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(vp.width + 1);
+    expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(vp.height + 1);
+});
+
+test("browse Edit button opens the item editor modal", async ({ page }) => {
+    await page.goto("/manage/browse");
+    await page.waitForSelector(".browse-item", { timeout: 15_000 });
+    const editBtn = page.locator(".browse-item-edit").first();
+    await editBtn.click();
+    const modal = page.locator(".item-editor-modal");
+    await expect(modal).toBeVisible({ timeout: 10_000 });
+
+    // Modal contains the movie poster.
+    await expect(modal.locator(".item-editor-poster")).toBeVisible();
+    // Visibility radio group with the same style as tag rules.
+    await expect(modal.locator(".item-editor-state-row .tag-filter-mode")).toHaveCount(3);
+    // Tag pill multi-select OR a "no tags" message.
+    const pills = modal.locator(".pill-toggle");
+    const hasTags = (await pills.count()) > 0;
+    const hasMessage = (await modal.getByText(/No tags yet/).count()) > 0;
+    expect(hasTags || hasMessage).toBeTruthy();
+
+    await page.screenshot({
+        path: resolve(SHOTS_DIR, "23-item-editor-modal.png"),
+        fullPage: true,
+    });
+
+    // Esc closes it.
+    await page.keyboard.press("Escape");
+    await expect(modal).toHaveCount(0);
 });
 
 test("browse search actually filters", async ({ page }) => {
@@ -179,6 +255,97 @@ test("PIN is single field + read-only when set", async ({ page }) => {
     expect(editVisible || setVisible).toBeTruthy();
     // No "Confirm" PIN field.
     expect(await page.getByText("Confirm").count()).toBe(0);
+});
+
+test("time-limit snap slider has correct proportions", async ({ page }) => {
+    await page.goto("/manage/profiles");
+    await page.locator(".profile-card-link").first().click();
+    await page.getByRole("tab", { name: "Time limits" }).click();
+    await page.waitForSelector(".snap-slider");
+    // Make sure limits are enabled so the slider renders.
+    const enabled = await page
+        .locator(".toggle-switch input[type=checkbox]")
+        .first()
+        .isChecked();
+    if (!enabled) {
+        await page.locator(".toggle-switch").first().click();
+        await page.waitForTimeout(150);
+    }
+    const row = page.locator(".snap-slider-row").first();
+    const range = row.locator(".snap-slider-range");
+    const num = row.locator(".snap-slider-number");
+    const r = await range.boundingBox();
+    const n = await num.boundingBox();
+    if (!r || !n) throw new Error("missing");
+    // The slider should be much wider than the number input so the
+    // user can actually drag the thumb.
+    expect(r.width).toBeGreaterThan(n.width * 1.5);
+    // Number input should be narrow.
+    expect(n.width).toBeLessThan(120);
+    // Drag the thumb and verify the number changes.
+    const before = await num.inputValue();
+    await range.focus();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await page.waitForTimeout(100);
+    const after = await num.inputValue();
+    expect(after).not.toBe(before);
+    await page.screenshot({
+        path: resolve(SHOTS_DIR, "24-snap-slider.png"),
+        fullPage: true,
+    });
+});
+
+test("mode-schedule day toggles are clickable", async ({ page }) => {
+    await page.goto("/manage/profiles");
+    await page.locator(".profile-card-link").first().click();
+    await page.getByRole("tab", { name: "Modes" }).click();
+    // Open or create a mode editor.
+    const newBtn = page.getByRole("button", { name: /Add mode|New mode/ });
+    if (await newBtn.count()) await newBtn.first().click();
+    const dayPill = page
+        .locator(".pill-fieldset", { hasText: "Days active" })
+        .locator(".pill-toggle")
+        .first();
+    if ((await dayPill.count()) === 0) {
+        // No editor open; bail without failing - the form might
+        // not show until a mode is created.
+        return;
+    }
+    const before = await dayPill.getAttribute("aria-pressed");
+    await dayPill.click();
+    await page.waitForTimeout(80);
+    const after = await dayPill.getAttribute("aria-pressed");
+    expect(after).not.toBe(before);
+});
+
+test("channel editor: search-and-add picker replaces textarea", async ({ page }) => {
+    await page.goto("/manage/profiles");
+    await page.locator(".profile-card-link").first().click();
+    await page.getByRole("tab", { name: "Channels" }).click();
+    await page.waitForSelector(".settings-form");
+    // Open or create a channel.
+    const addBtn = page.getByRole("button", { name: /Add channel/ });
+    if (await addBtn.count()) await addBtn.first().click();
+    else await page.getByRole("button", { name: /^Edit$/ }).first().click();
+    // The textarea should be gone; the search input should exist.
+    const oldTextarea = page.locator("textarea");
+    expect(await oldTextarea.count()).toBe(0);
+    const search = page.locator(".channel-pick-search");
+    await expect(search).toBeVisible();
+    // Distributed random sort option present.
+    const distributed = page.getByRole("button", { name: /Distributed random/ });
+    await expect(distributed).toBeVisible();
+    await page.screenshot({
+        path: resolve(SHOTS_DIR, "25-channel-editor.png"),
+        fullPage: true,
+    });
+    // Search for an item, expect at least one result row.
+    await search.fill("the");
+    await page.waitForTimeout(450);
+    const results = page.locator(".channel-pick-results .channel-pick-result");
+    await expect(results.first()).toBeVisible({ timeout: 5_000 });
 });
 
 test("warm tint filter expression matches kid SPA target", async ({ page }) => {

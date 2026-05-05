@@ -8,8 +8,8 @@ CREATE TABLE profile_body_breaks (
     enabled                 INTEGER NOT NULL DEFAULT 0,
     play_minutes            INTEGER NOT NULL DEFAULT 30,
     break_minutes           INTEGER NOT NULL DEFAULT 5,
-    voice_message_template  TEXT    NOT NULL DEFAULT 'Time for a break! {reason}',
-    reasons_json            TEXT    NOT NULL DEFAULT '["Do you need some water?","Now is a good time to try the potty.","Move your body, do a dance!","Can we clean up our toys while we wait?"]',
+    voice_message_template  TEXT    NOT NULL DEFAULT 'Time for a quick break. {reason}',
+    reasons_json            TEXT    NOT NULL DEFAULT '["Grab a sip of water.","Take a quick potty break.","Stand up and stretch.","Tidy up some toys while we wait."]',
     updated_at              INTEGER NOT NULL
 );
 

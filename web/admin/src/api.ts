@@ -274,7 +274,11 @@ export type Channel = {
     description?: string;
     badgeText?: string;
     badgeColor?: string;
-    sortOrder: "random" | "round_robin_tags" | "in_order";
+    sortOrder:
+        | "random"
+        | "distributed_random"
+        | "round_robin_tags"
+        | "in_order";
     tagIds: number[];
     itemIds: string[];
     createdAt?: string;

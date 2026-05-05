@@ -33,9 +33,10 @@ type Channel struct {
 }
 
 var validChannelSortOrders = map[string]bool{
-	"random":           true,
-	"round_robin_tags": true,
-	"in_order":         true,
+	"random":             true,
+	"distributed_random": true,
+	"round_robin_tags":   true,
+	"in_order":           true,
 }
 
 func (s *Store) ListChannels(ctx context.Context, profileID int64) ([]Channel, error) {

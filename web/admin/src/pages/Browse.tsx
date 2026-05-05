@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api, type Item, type ItemState, type Tag } from "../api";
 import { useActiveProfile } from "../activeProfile";
+import ItemEditorModal from "../ItemEditorModal";
 import Spinner from "../Spinner";
 
 // Browse the profile's library. Replaces the old separate Search
@@ -27,6 +28,8 @@ const SORT_OPTIONS: Array<{ key: SortKey; label: string; jellyfin: string }> = [
 
 export default function Browse() {
     const { profile } = useActiveProfile();
+    const params = useParams<{ itemId?: string }>();
+    const navigate = useNavigate();
     const [items, setItems] = useState<Item[]>([]);
     const [total, setTotal] = useState(0);
     const [tags, setTags] = useState<Tag[]>([]);
@@ -43,6 +46,12 @@ export default function Browse() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [busyItemId, setBusyItemId] = useState<string | null>(null);
+    // Item editor opens as a modal. The route /items/:itemId still
+    // works as a deep link - we read it here and seed the modal id
+    // on mount so the QR-code flow keeps working.
+    const [editorItemId, setEditorItemId] = useState<string | null>(
+        params.itemId ?? null,
+    );
 
     useEffect(() => {
         const id = window.setTimeout(() => setSearchDebounced(search.trim()), 300);
@@ -84,28 +93,27 @@ export default function Browse() {
                 baseItems = res.Items ?? [];
                 baseTotal = res.TotalRecordCount ?? 0;
             } else {
+                // Multi-tag is OR (union). The server's tagId param is
+                // single-value, so we fan out one request per selected
+                // tag and union by id. First-seen wins for ordering +
+                // metadata; that's stable enough for typical 2-3 tag
+                // selections.
                 const responses = await Promise.all(
                     tagIds.map((id) =>
                         api.listItems({ ...baseParams, tagId: id }),
                     ),
                 );
-                // Intersect by item id; keep first response's order +
-                // metadata so the UI is stable.
-                const firstSet = responses[0];
-                const idsAfter = new Set<string>(
-                    firstSet.Items?.map((it) => it.Id) ?? [],
-                );
-                for (let i = 1; i < responses.length; i++) {
-                    const ids = new Set(
-                        (responses[i].Items ?? []).map((it) => it.Id),
-                    );
-                    for (const id of [...idsAfter])
-                        if (!ids.has(id)) idsAfter.delete(id);
+                const seen = new Set<string>();
+                const merged: Item[] = [];
+                for (const res of responses) {
+                    for (const it of res.Items ?? []) {
+                        if (seen.has(it.Id)) continue;
+                        seen.add(it.Id);
+                        merged.push(it);
+                    }
                 }
-                baseItems = (firstSet.Items ?? []).filter((it) =>
-                    idsAfter.has(it.Id),
-                );
-                baseTotal = baseItems.length;
+                baseItems = merged;
+                baseTotal = merged.length;
             }
             // Year range filter (client-side - server lacks this).
             const min = yearMin ? Number(yearMin) : null;
@@ -330,8 +338,8 @@ export default function Browse() {
                             <span className="browse-filter-label">
                                 Tags{" "}
                                 {activeTagIds.size > 0
-                                    ? `(${activeTagIds.size} selected, items must match all)`
-                                    : "(multi-select)"}
+                                    ? `(${activeTagIds.size} selected; matches any)`
+                                    : "(multi-select; matches any)"}
                             </span>
                             <div className="pill-toggle-row pill-toggle-wrap">
                                 {tags.map((t) => {
@@ -375,7 +383,7 @@ export default function Browse() {
                           activeTagIds.size > 0
                               ? ` tagged ${[...activeTagIds]
                                     .map((id) => tagsById.get(id)?.name ?? id)
-                                    .join(" + ")}`
+                                    .join(" or ")}`
                               : ""
                       }`}
             </div>
@@ -393,9 +401,26 @@ export default function Browse() {
                             onMarkVisible={() => setItemState(it.Id, "visible")}
                             onMarkHidden={() => setItemState(it.Id, "hidden")}
                             onClearState={() => setItemState(it.Id, null)}
+                            onEdit={() => setEditorItemId(it.Id)}
                         />
                     ))}
                 </ul>
+            )}
+
+            {editorItemId && profile && (
+                <ItemEditorModal
+                    itemId={editorItemId}
+                    profileId={profile.id}
+                    profileName={profile.name}
+                    onClose={() => {
+                        setEditorItemId(null);
+                        // If we got here from /items/:id deep-link,
+                        // pop back to /browse so a refresh doesn't
+                        // reopen the modal.
+                        if (params.itemId) navigate("/browse", { replace: true });
+                    }}
+                    onSaved={() => void refresh()}
+                />
             )}
         </div>
     );
@@ -440,6 +465,7 @@ type CardProps = {
     onMarkVisible: () => void;
     onMarkHidden: () => void;
     onClearState: () => void;
+    onEdit: () => void;
 };
 
 function BrowseCard({
@@ -448,6 +474,7 @@ function BrowseCard({
     onMarkVisible,
     onMarkHidden,
     onClearState,
+    onEdit,
 }: CardProps) {
     const [menuOpen, setMenuOpen] = useState(false);
     const wrapRef = useRef<HTMLLIElement | null>(null);
@@ -476,10 +503,7 @@ function BrowseCard({
 
     return (
         <li ref={wrapRef} className="browse-item">
-            <Link
-                to={`/items/${encodeURIComponent(item.Id)}`}
-                className="browse-item-link"
-            >
+            <div className="browse-item-link">
                 {posterURL ? (
                     <img
                         src={posterURL}
@@ -524,21 +548,36 @@ function BrowseCard({
                         </div>
                     )}
                 </div>
-            </Link>
-            <button
-                type="button"
-                className="browse-item-kebab"
-                aria-label="Quick actions"
-                aria-expanded={menuOpen}
-                onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setMenuOpen((v) => !v);
-                }}
-                disabled={busy}
-            >
-                ⋯
-            </button>
+            </div>
+            <div className="browse-item-actions">
+                <button
+                    type="button"
+                    className="browse-item-edit"
+                    aria-label={`Edit ${item.Name}`}
+                    onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onEdit();
+                    }}
+                    disabled={busy}
+                >
+                    Edit
+                </button>
+                <button
+                    type="button"
+                    className="browse-item-kebab"
+                    aria-label="Quick actions"
+                    aria-expanded={menuOpen}
+                    onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setMenuOpen((v) => !v);
+                    }}
+                    disabled={busy}
+                >
+                    ⋯
+                </button>
+            </div>
             {menuOpen && (
                 <div className="browse-item-menu" role="menu">
                     {item.State !== "visible" && (
@@ -574,16 +613,9 @@ function BrowseCard({
                                 onClearState();
                             }}
                         >
-                            Clear state
+                            Mark unset
                         </button>
                     )}
-                    <Link
-                        to={`/items/${encodeURIComponent(item.Id)}`}
-                        role="menuitem"
-                        className="browse-item-menu-link"
-                    >
-                        Edit details + tags →
-                    </Link>
                 </div>
             )}
         </li>
