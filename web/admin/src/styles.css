@@ -1970,7 +1970,28 @@ button:disabled {
     padding: 1.25rem;
     max-width: 560px;
     width: 92%;
+    max-height: 90vh;
+    overflow-y: auto;
 }
+
+.time-limits-preview {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.5rem 0.85rem;
+    margin-top: 0.4rem;
+}
+.time-limits-preview h4 {
+    margin: 0 0 0.3rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+.time-limits-preview ul {
+    margin: 0;
+    padding-left: 1.2rem;
+    font-size: 0.85rem;
+}
+
 
 /* form layout used inside ProfileModal / KidModal */
 .modal-form {

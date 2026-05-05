@@ -3,13 +3,15 @@ import { Link } from "react-router-dom";
 import { api, HttpError, type Layout, type Profile } from "../api";
 import ProfileModal from "../ProfileModal";
 import ProfileTagFiltersModal from "../ProfileTagFiltersModal";
+import ProfileTimeLimitsModal from "../ProfileTimeLimitsModal";
 import Spinner from "../Spinner";
 
 type Modal =
     | { kind: "closed" }
     | { kind: "create" }
     | { kind: "edit"; profile: Profile }
-    | { kind: "tag-filters"; profile: Profile };
+    | { kind: "tag-filters"; profile: Profile }
+    | { kind: "time-limits"; profile: Profile };
 
 export default function Profiles() {
     const [profiles, setProfiles] = useState<Profile[] | null>(null);
@@ -129,6 +131,13 @@ export default function Profiles() {
                                     >
                                         Tag rules
                                     </button>
+                                    <button
+                                        onClick={() =>
+                                            setModal({ kind: "time-limits", profile: p })
+                                        }
+                                    >
+                                        Time limits
+                                    </button>
                                     <button onClick={() => setModal({ kind: "edit", profile: p })}>
                                         Edit
                                     </button>
@@ -164,6 +173,12 @@ export default function Profiles() {
             )}
             {modal.kind === "tag-filters" && (
                 <ProfileTagFiltersModal
+                    profile={modal.profile}
+                    onClose={() => setModal({ kind: "closed" })}
+                />
+            )}
+            {modal.kind === "time-limits" && (
+                <ProfileTimeLimitsModal
                     profile={modal.profile}
                     onClose={() => setModal({ kind: "closed" })}
                 />

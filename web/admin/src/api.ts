@@ -186,6 +186,49 @@ export type Layout = {
 };
 
 // API key (M14). Bearer-token auth equivalent to admin cookie.
+export type ProfileTimeLimits = {
+    profileId: number;
+    enabled: boolean;
+    dailyCapMinutes: number;
+    refillIntervalHours: number;
+    dayStartHour: number;
+    defaultShowCapMinutes?: number | null;
+    defaultMovieStarts?: number | null;
+    updatedAt?: string;
+};
+
+export type ContentTimeOverride = {
+    profileId: number;
+    jellyfinItemId: string;
+    overrideCapMinutes?: number | null;
+    overrideStarts?: number | null;
+    updatedAt?: string;
+};
+
+export type BucketStatus = {
+    availableMinutes: number;
+    capMinutes: number;
+    nextRefillAt: string;
+    nextResetAt: string;
+    locked: boolean;
+    reason?: string;
+};
+
+export type MovieBucketStatus = {
+    startsToday: number;
+    startsAllowed: number;
+    nextResetAt: string;
+    locked: boolean;
+    reason?: string;
+};
+
+export type TimeStatus = {
+    enabled: boolean;
+    global: BucketStatus;
+    perShow: Record<string, BucketStatus>;
+    perMovie: Record<string, MovieBucketStatus>;
+};
+
 export type APIKey = {
     id: number;
     name: string;
@@ -535,6 +578,36 @@ export const api = {
         ),
     setSetting: (key: string, value: string) =>
         request<void>("PUT", `/api/admin/settings`, { key, value }),
+
+    // --- M10: time limits ------------------------------------------
+    getProfileTimeLimits: (profileId: number) =>
+        request<ProfileTimeLimits>(
+            "GET",
+            `/api/admin/profiles/${profileId}/time-limits`,
+        ),
+    setProfileTimeLimits: (profileId: number, body: ProfileTimeLimits) =>
+        request<void>(
+            "PUT",
+            `/api/admin/profiles/${profileId}/time-limits`,
+            body,
+        ),
+    listContentOverrides: (profileId: number) =>
+        request<{ overrides: ContentTimeOverride[] }>(
+            "GET",
+            `/api/admin/profiles/${profileId}/content-overrides`,
+        ),
+    upsertContentOverride: (
+        profileId: number,
+        itemId: string,
+        body: { overrideCapMinutes?: number | null; overrideStarts?: number | null },
+    ) =>
+        request<void>(
+            "PUT",
+            `/api/admin/profiles/${profileId}/content-overrides/${encodeURIComponent(itemId)}`,
+            body,
+        ),
+    getKidTimeStatus: (kidId: number) =>
+        request<TimeStatus>("GET", `/api/admin/kids/${kidId}/time-status`),
 };
 
 export { HttpError };

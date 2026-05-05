@@ -30,25 +30,25 @@ const UnlimitedOverride = -1
 // migration: enabled=false, 240 min/day, 1h refill, 2 AM start, no
 // per-show / per-movie caps.
 type ProfileTimeLimits struct {
-	ProfileID              int64
-	Enabled                bool
-	DailyCapMinutes        int
-	RefillIntervalHours    int
-	DayStartHour           int
-	DefaultShowCapMinutes  *int
-	DefaultMovieStarts     *int
-	UpdatedAt              time.Time
+	ProfileID             int64     `json:"profileId"`
+	Enabled               bool      `json:"enabled"`
+	DailyCapMinutes       int       `json:"dailyCapMinutes"`
+	RefillIntervalHours   int       `json:"refillIntervalHours"`
+	DayStartHour          int       `json:"dayStartHour"`
+	DefaultShowCapMinutes *int      `json:"defaultShowCapMinutes,omitempty"`
+	DefaultMovieStarts    *int      `json:"defaultMovieStarts,omitempty"`
+	UpdatedAt             time.Time `json:"updatedAt"`
 }
 
 // ContentTimeOverride is the per-(profile, item) override row.
 // OverrideCapMinutes / OverrideStarts of -1 means "unlimited"; nil
 // means "inherit the profile default."
 type ContentTimeOverride struct {
-	ProfileID           int64
-	JellyfinItemID      string
-	OverrideCapMinutes  *int
-	OverrideStarts      *int
-	UpdatedAt           time.Time
+	ProfileID          int64     `json:"profileId"`
+	JellyfinItemID     string    `json:"jellyfinItemId"`
+	OverrideCapMinutes *int      `json:"overrideCapMinutes,omitempty"`
+	OverrideStarts     *int      `json:"overrideStarts,omitempty"`
+	UpdatedAt          time.Time `json:"updatedAt"`
 }
 
 // WatchSegment is one closed playback span attributed to a kid. Used
