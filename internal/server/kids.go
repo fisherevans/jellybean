@@ -624,13 +624,10 @@ func (s *Server) handleKidsStopEncoding(w http.ResponseWriter, r *http.Request) 
 // at 5 Mbps is the safe ceiling for cheap consumer Android TV WebViews
 // (the Skyworth M5 testing case).
 //
-// Per-device tuning lives client-side: the kid client tracks its own
-// stutter history in localStorage and tells the server "use at most
-// N bps for me" via ?maxBitrate=N. The server clamps that down further
-// if it falls below the profile cap, but never up.
-//
-// Future: an admin/adult menu could override the bitrate locally per
-// TV (e.g. "force 1.5 Mbps on the kitchen tablet"), still client-side.
+// The player rebuild dropped the client-driven `?maxBitrate=N` ladder
+// in favor of trusting this single profile cap; the kid client lets
+// hls.js's recovery ladder + the JS->Kotlin Reset Player bridge handle
+// the rare cases where a stream is genuinely unplayable on the device.
 const conservativeDeviceProfile = `{
     "Name": "Conservative",
     "MaxStreamingBitrate": 5000000,
