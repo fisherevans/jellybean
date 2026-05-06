@@ -228,6 +228,11 @@ export default function Browse() {
     // transitions and on cheap WebView builds where imperative
     // .focus() doesn't always take effect on the first try.
     const lastTileRef = useRef<{ row: number; col: number }>({ row: 0, col: 0 });
+    // Per-row column memory: when the kid arrows down/up between
+    // rows, restore the column they were last on for the destination
+    // row instead of resetting to 0. So row 1 col 3 -> down to row 2
+    // -> right to row 2 col 5 -> up returns to row 1 col 3.
+    const rowColMemoryRef = useRef<Map<number, number>>(new Map());
     function onKey(e: KeyboardEvent) {
         if (!data) return;
         const rows = data.rows;
@@ -258,18 +263,36 @@ export default function Browse() {
                     }
                     return;
                 case "ArrowDown":
-                    // Row change always lands on col 0 - the kid's
-                    // selected tile lives at the far-left of every
-                    // row, so changing rows means starting fresh
-                    // there. Don't preserve the within-row column.
+                    // Row change restores the destination row's last
+                    // visited col (default 0). Save the current row's
+                    // col first so coming back lands on the right tile.
                     if (focus.row < rows.length - 1) {
-                        setFocus({ kind: "tile", row: focus.row + 1, col: 0 });
+                        rowColMemoryRef.current.set(focus.row, focus.col);
+                        const nextRow = focus.row + 1;
+                        const remembered =
+                            rowColMemoryRef.current.get(nextRow) ?? 0;
+                        const nextLen = rows[nextRow].items.length;
+                        const col = Math.min(
+                            remembered,
+                            Math.max(0, nextLen - 1),
+                        );
+                        setFocus({ kind: "tile", row: nextRow, col });
                     }
                     return;
                 case "ArrowUp":
                     if (focus.row > 0) {
-                        setFocus({ kind: "tile", row: focus.row - 1, col: 0 });
+                        rowColMemoryRef.current.set(focus.row, focus.col);
+                        const prevRow = focus.row - 1;
+                        const remembered =
+                            rowColMemoryRef.current.get(prevRow) ?? 0;
+                        const prevLen = rows[prevRow].items.length;
+                        const col = Math.min(
+                            remembered,
+                            Math.max(0, prevLen - 1),
+                        );
+                        setFocus({ kind: "tile", row: prevRow, col });
                     } else {
+                        rowColMemoryRef.current.set(focus.row, focus.col);
                         lastTileRef.current = { row: focus.row, col: focus.col };
                         setFocus({ kind: "tab", index: 0 });
                     }
