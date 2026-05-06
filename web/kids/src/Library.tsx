@@ -15,6 +15,7 @@ import {
     set as cacheSet,
 } from "./libraryCache";
 import { useOnlineStatus } from "./onlineStatus";
+import AlphaBar, { firstIndexByLetter } from "./AlphaBar";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
 import TabPill, { TAB_SLOT_COUNT, tabHref } from "./TabPill";
 import {
@@ -70,7 +71,10 @@ type Focus =
     | { kind: "search" }
     | { kind: "filter"; index: number }
     | { kind: "cw"; index: number }
-    | { kind: "grid"; index: number };
+    | { kind: "grid"; index: number }
+    | { kind: "alpha"; index: number };
+
+const ALPHA_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
 const PAGE_SIZE = 24;
 
@@ -444,6 +448,9 @@ export default function Library() {
             focus.kind === "filter";
         if (focus.kind === "search") {
             searchWrapRef.current?.focus({ preventScroll: true });
+        } else if (focus.kind === "alpha") {
+            const el = tileRefs.current[`alpha:${focus.index}`];
+            if (el) el.focus({ preventScroll: true });
         } else {
             const key = focusKey(focus);
             const el = tileRefs.current[key];
@@ -509,6 +516,8 @@ export default function Library() {
                             playSuffix,
                             () => setMenuOpen(true),
                             () => searchInputRef.current?.focus(),
+                            (gridIdx) =>
+                                setFocus({ kind: "grid", index: gridIdx }),
                         ),
                 }),
             );
@@ -749,6 +758,18 @@ export default function Library() {
                     onClose={() => setOverride(null)}
                 />
             )}
+            {items.length > 0 && (
+                <AlphaBar
+                    items={items}
+                    focusedIndex={focus.kind === "alpha" ? focus.index : null}
+                    letterRef={(i, el) => {
+                        tileRefs.current[`alpha:${i}`] = el;
+                    }}
+                    onLetterClick={(_letter, gridIdx) => {
+                        setFocus({ kind: "grid", index: gridIdx });
+                    }}
+                />
+            )}
             {menuOpen && <MainMenuModal onClose={() => setMenuOpen(false)} />}
         </div>
     );
@@ -828,9 +849,19 @@ function moveFocus(f: Focus, key: string, opts: MoveOpts): Focus {
         case "grid": {
             const cols = Math.max(1, opts.columns);
             const i = f.index;
-            if (key === "ArrowLeft") return { kind: "grid", index: Math.max(0, i - 1) };
-            if (key === "ArrowRight")
-                return { kind: "grid", index: Math.min(opts.gridCount - 1, i + 1) };
+            if (key === "ArrowLeft") {
+                if (i % cols === 0) return f;
+                return { kind: "grid", index: i - 1 };
+            }
+            if (key === "ArrowRight") {
+                // At the rightmost column, ArrowRight jumps into the
+                // A-Z bar so the kid can hit the jumpscroll without
+                // backtracking up to filter row.
+                if ((i + 1) % cols === 0 || i === opts.gridCount - 1) {
+                    return { kind: "alpha", index: 0 };
+                }
+                return { kind: "grid", index: i + 1 };
+            }
             if (key === "ArrowDown") {
                 const next = i + cols;
                 if (next < opts.gridCount) return { kind: "grid", index: next };
@@ -843,6 +874,26 @@ function moveFocus(f: Focus, key: string, opts: MoveOpts): Focus {
                     return { kind: "filter", index: 0 };
                 }
                 return { kind: "grid", index: i - cols };
+            }
+            return f;
+        }
+        case "alpha": {
+            // Vertical strip on the right side of the page. Up/Down
+            // walks letters, Left returns to the grid, Enter activates.
+            // Pressing Up at the topmost letter exits to filter row.
+            if (key === "ArrowUp") {
+                if (f.index <= 0) return { kind: "filter", index: 0 };
+                return { kind: "alpha", index: f.index - 1 };
+            }
+            if (key === "ArrowDown") {
+                return {
+                    kind: "alpha",
+                    index: Math.min(ALPHA_LETTERS.length - 1, f.index + 1),
+                };
+            }
+            if (key === "ArrowLeft") {
+                if (opts.gridCount > 0) return { kind: "grid", index: 0 };
+                return { kind: "filter", index: 0 };
             }
             return f;
         }
@@ -859,6 +910,7 @@ function activate(
     playSuffix: string,
     onOpenMenu: () => void,
     onOpenSearch: () => void,
+    onAlphaJump: (index: number) => void,
 ) {
     if (f.kind === "tab") {
         if (f.index === 2) {
@@ -874,6 +926,12 @@ function activate(
         // the real <input>, which opens the Android TV IME. Pure D-pad
         // navigation onto search just highlights it, no IME.
         onOpenSearch();
+        return;
+    }
+    if (f.kind === "alpha") {
+        const letter = ALPHA_LETTERS[f.index];
+        const idx = firstIndexByLetter(items)[letter];
+        if (idx !== undefined) onAlphaJump(idx);
         return;
     }
     if (f.kind === "filter") {

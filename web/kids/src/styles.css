@@ -1324,8 +1324,21 @@ a,
 }
 .watch-actions {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 0.75rem;
+    overflow-x: auto;
+    /* Padding so the focus glow on the leftmost / rightmost button
+       doesn't clip against the scroll container. */
+    padding: 0.5rem 0.5rem 0.75rem;
+    scroll-snap-type: x proximity;
+    scroll-padding-inline-start: 0.5rem;
+    scrollbar-width: none;
+}
+.watch-actions::-webkit-scrollbar {
+    display: none;
+}
+.watch-action {
+    scroll-snap-align: start;
 }
 .watch-action {
     background: var(--card);
@@ -1475,14 +1488,47 @@ a,
     color: var(--muted);
     font-size: 0.85rem;
 }
-.watch-episode-progress {
+/* Episode poster wrapper hosts the in-progress overlay AND the
+   bar-below-thumb. Position relative so the absolute children clip
+   inside the wrap. */
+.watch-episode-thumb-wrap {
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+/* Overlay on the bottom of the poster - in-progress only. */
+.watch-episode-thumb-progress {
     position: absolute;
     left: 0;
-    bottom: 0;
-    height: 3px;
+    /* Sit just above the poster's bottom edge but inside the thumb. */
+    bottom: 30px;
+    height: 4px;
     background: var(--accent);
-    border-radius: 0 2px 2px 0;
+    border-top-right-radius: 2px;
     pointer-events: none;
+    z-index: 1;
+}
+/* Strip beneath the poster, full width of the thumb. Watched = full
+   accent fill; in-progress = partial fill matching pct. */
+.watch-episode-thumb-bar {
+    position: relative;
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.watch-episode-thumb-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+}
+.watch-episode.watched .watch-episode-thumb-bar-fill {
+    /* Slightly muted on already-watched - the bar communicates "done"
+       not "active." */
+    opacity: 0.6;
 }
 
 /* M8 #49 library search box. The wrap is the D-pad target so landing
@@ -1523,6 +1569,56 @@ a,
 }
 .library-search::placeholder {
     color: var(--muted);
+}
+
+/* A-Z jumpscroll bar - pinned to the right edge of the page so it
+   stays visible as the kid scrolls the grid. Letters with no items
+   are dimmed and unfocusable. */
+.library-alpha-bar {
+    position: fixed;
+    top: 50%;
+    right: 0.75rem;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: rgba(0, 0, 0, 0.4);
+    border-radius: 14px;
+    padding: 0.4rem 0.3rem;
+    backdrop-filter: blur(4px);
+    z-index: 50;
+    pointer-events: auto;
+}
+.library-alpha-letter {
+    background: transparent;
+    border: 2px solid transparent;
+    color: #aaa;
+    font-size: 0.85rem;
+    font-weight: 700;
+    width: 1.6rem;
+    height: 1.4rem;
+    line-height: 1;
+    border-radius: 999px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 100ms ease, color 100ms ease;
+}
+.library-alpha-letter:hover:not(.disabled) {
+    color: #fff;
+}
+.library-alpha-letter.focused,
+.library-alpha-letter:focus {
+    outline: none;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: #fff;
+}
+.library-alpha-letter.disabled {
+    color: #444;
+    cursor: default;
 }
 
 

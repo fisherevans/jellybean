@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import {
     ArrowCounterClockwise,
     Play,
+    Shuffle,
     SkipForward,
 } from "@phosphor-icons/react";
 import { authHeaders, getSession, imageAuthSuffix, type Session } from "./auth";
@@ -92,13 +93,20 @@ export default function Watch() {
         }
     }, [session, adminProfileId, nav]);
 
-    // Window-level D-pad nav. Watch has a small set of focusable
-    // buttons (Back, hero actions, season heads, episodes when a
-    // season is open). Rather than build a 2D focus model, we walk
-    // every visible button under .watch-screen in DOM order on
-    // ArrowUp/ArrowDown/ArrowLeft/ArrowRight, scrolling the focused
-    // one to vertical-center. Enter/Space clicks. Accordion expansion
-    // changes the button list but the next press recomputes it.
+    // Zone-aware D-pad nav. Buttons opt into zones via data-zone:
+    //   - "back"      : the Back link (top-left).
+    //   - "hero"      : the hero action buttons (Resume / Restart /
+    //                   Next / Random for shows; Play / Restart for
+    //                   movies). Left/Right cycles within. Down
+    //                   crosses to the first accordion item.
+    //   - "accordion" : season heads + visible episode buttons. Up/Down
+    //                   walks them in DOM order.
+    //
+    // Cross-zone transitions:
+    //   back  Down            -> hero[0]
+    //   hero  Up               -> back
+    //   hero  Down             -> accordion[0]
+    //   accordion[0] Up        -> hero[0]
     useEffect(() => {
         if (override) return;
         const handler = (e: KeyboardEvent) => {
@@ -115,38 +123,59 @@ export default function Watch() {
             e.preventDefault();
             const root = document.querySelector(".watch-screen");
             if (!root) return;
-            const focusables = Array.from(
-                root.querySelectorAll<HTMLElement>(
-                    "a, button:not([disabled])",
-                ),
-            ).filter((el) => el.offsetParent !== null);
-            if (focusables.length === 0) return;
             const active = document.activeElement as HTMLElement | null;
-            let idx = active ? focusables.indexOf(active) : -1;
+            const zone = active?.getAttribute("data-zone") ?? null;
+
             if (e.key === "Enter" || e.key === " ") {
-                (active as HTMLElement | null)?.click?.();
+                active?.click?.();
                 return;
             }
-            const forward =
-                e.key === "ArrowDown" || e.key === "ArrowRight";
-            if (idx < 0) {
-                idx = forward ? 0 : focusables.length - 1;
+
+            const heroBtns = Array.from(
+                root.querySelectorAll<HTMLElement>('[data-zone="hero"]'),
+            ).filter((el) => el.offsetParent !== null);
+            const accBtns = Array.from(
+                root.querySelectorAll<HTMLElement>('[data-zone="accordion"]'),
+            ).filter((el) => el.offsetParent !== null);
+            const backBtn = root.querySelector<HTMLElement>(
+                '[data-zone="back"]',
+            );
+
+            let next: HTMLElement | null = null;
+
+            if (zone === "back") {
+                if (e.key === "ArrowDown") next = heroBtns[0] ?? null;
+            } else if (zone === "hero") {
+                const idx = active ? heroBtns.indexOf(active) : -1;
+                if (e.key === "ArrowLeft") {
+                    next = heroBtns[Math.max(0, idx - 1)] ?? null;
+                } else if (e.key === "ArrowRight") {
+                    next = heroBtns[Math.min(heroBtns.length - 1, idx + 1)] ?? null;
+                } else if (e.key === "ArrowUp") {
+                    next = backBtn ?? null;
+                } else if (e.key === "ArrowDown") {
+                    next = accBtns[0] ?? null;
+                }
+            } else if (zone === "accordion") {
+                const idx = active ? accBtns.indexOf(active) : -1;
+                if (e.key === "ArrowUp") {
+                    if (idx <= 0) next = heroBtns[0] ?? null;
+                    else next = accBtns[idx - 1] ?? null;
+                } else if (e.key === "ArrowDown") {
+                    if (idx >= 0 && idx < accBtns.length - 1) {
+                        next = accBtns[idx + 1] ?? null;
+                    }
+                }
             } else {
-                idx = forward
-                    ? Math.min(focusables.length - 1, idx + 1)
-                    : Math.max(0, idx - 1);
+                // No active zone yet (e.g. body-focused). Land on the
+                // primary hero button.
+                next = heroBtns[0] ?? null;
             }
-            const next = focusables[idx];
+
             if (next) {
                 next.focus({ preventScroll: true });
-                // Hero actions live at the top of the page; centering
-                // them would push the header off-screen. Scroll to top
-                // for anything inside .watch-hero or the back link;
-                // center for accordion buttons.
-                if (
-                    next.closest(".watch-hero") ||
-                    next.closest(".watch-back")
-                ) {
+                const nextZone = next.getAttribute("data-zone");
+                if (nextZone === "hero" || nextZone === "back") {
                     scrollWindowToTop();
                 } else {
                     scrollWindowToCenter(next);
@@ -191,27 +220,27 @@ export default function Watch() {
         }, [override, nav, browseHref]),
     );
 
-    // On mount, defensively focus the first hero button + scroll to
-    // top. autoFocus on the primary hero button SHOULD handle this
-    // but on cheap WebView builds (Skyworth) the autoFocus race with
-    // mount + episode-fetch occasionally landed focus on the last
-    // episode button (the one rendered last in the open accordion
-    // season), scrolling the page to the bottom. Re-focusing
-    // explicitly when the item resolves nails the right initial state.
+    // On mount, defensively focus the primary hero button + scroll
+    // to top. We wait for both `item` AND (for series) `episodes`
+    // because the primary hero button only renders once episodes
+    // have loaded for series - waiting for item alone landed focus
+    // on a still-disabled "Loading episodes..." button or fell
+    // through to the last accordion episode in DOM order, scrolling
+    // the page to the bottom.
     useEffect(() => {
         if (!item) return;
-        // Defer one frame so the hero buttons have rendered.
+        if (item.Type === "Series" && !episodes) return;
         const id = requestAnimationFrame(() => {
             const root = document.querySelector(".watch-screen");
             if (!root) return;
             const heroBtn = root.querySelector<HTMLElement>(
-                ".watch-hero .watch-action.primary",
+                '[data-zone="hero"]:not([disabled])',
             );
             heroBtn?.focus({ preventScroll: true });
             scrollWindowToTop();
         });
         return () => cancelAnimationFrame(id);
-    }, [item?.Id]);
+    }, [item?.Id, episodes]);
 
     const fetchItem = useCallback(async () => {
         if (!itemId) return;
@@ -324,7 +353,12 @@ export default function Watch() {
         <div className="watch-screen">
             <BackdropImage itemId={item.Id} />
             <header className="watch-back">
-                <Link to={browseHref} className="watch-back-link" aria-label="Back">
+                <Link
+                    to={browseHref}
+                    className="watch-back-link"
+                    aria-label="Back"
+                    data-zone="back"
+                >
                     ← Back
                 </Link>
             </header>
@@ -344,6 +378,7 @@ export default function Watch() {
                                 className="watch-action primary"
                                 onClick={() => goPlay(item.Id)}
                                 autoFocus
+                                data-zone="hero"
                             >
                                 <Play weight="fill" aria-hidden />
                                 Resume
@@ -354,6 +389,7 @@ export default function Watch() {
                                 className="watch-action primary"
                                 onClick={() => goPlay(item.Id, true)}
                                 autoFocus
+                                data-zone="hero"
                             >
                                 <ArrowCounterClockwise weight="bold" aria-hidden />
                                 Watch again
@@ -364,6 +400,7 @@ export default function Watch() {
                                 className="watch-action primary"
                                 onClick={() => goPlay(item.Id)}
                                 autoFocus
+                                data-zone="hero"
                             >
                                 <Play weight="fill" aria-hidden />
                                 Play
@@ -373,6 +410,7 @@ export default function Watch() {
                             <button
                                 className="watch-action"
                                 onClick={() => goPlay(item.Id, true)}
+                                data-zone="hero"
                             >
                                 <ArrowCounterClockwise weight="bold" aria-hidden />
                                 Restart
@@ -459,12 +497,23 @@ function SeriesHeroActions({ episodes, onPlay }: SeriesHeroActionsProps) {
             </button>
         );
     }
+    const playRandom = () => {
+        if (!episodes) return;
+        const flat: SeriesEpisode[] = [];
+        for (const s of episodes.seasons) {
+            for (const e of s.episodes) flat.push(e);
+        }
+        if (flat.length === 0) return;
+        const pick = flat[Math.floor(Math.random() * flat.length)];
+        onPlay(pick.id);
+    };
     return (
         <>
             <button
                 className="watch-action primary"
                 onClick={() => onPlay(target.episode.id)}
                 autoFocus
+                data-zone="hero"
             >
                 <Play weight="fill" aria-hidden />
                 {target.label}
@@ -472,6 +521,7 @@ function SeriesHeroActions({ episodes, onPlay }: SeriesHeroActionsProps) {
             <button
                 className="watch-action"
                 onClick={() => onPlay(target.episode.id, { restart: true })}
+                data-zone="hero"
             >
                 <ArrowCounterClockwise weight="bold" aria-hidden />
                 Restart
@@ -480,11 +530,20 @@ function SeriesHeroActions({ episodes, onPlay }: SeriesHeroActionsProps) {
                 <button
                     className="watch-action"
                     onClick={() => onPlay(next.id)}
+                    data-zone="hero"
                 >
                     <SkipForward weight="fill" aria-hidden />
                     Next ({epLabel(next)})
                 </button>
             )}
+            <button
+                className="watch-action"
+                onClick={playRandom}
+                data-zone="hero"
+            >
+                <Shuffle weight="bold" aria-hidden />
+                Random
+            </button>
         </>
     );
 }
@@ -508,8 +567,9 @@ function pickResumeTarget(
 ): { episode: SeriesEpisode; label: string } | null {
     if (!response) return null;
     // Pick the first in-progress episode (5-90% played) when there is
-    // one. Else pick the first unwatched after a completed run. Else
-    // first episode of season 1 (or 0 if specials are first).
+    // one. Else pick the first unwatched - that's a "Play" since it
+    // has no progress on the target itself. Else (every episode
+    // completed), default to "Watch again" on the first.
     const flat: SeriesEpisode[] = [];
     for (const s of response.seasons) {
         for (const e of s.episodes) flat.push(e);
@@ -525,11 +585,14 @@ function pickResumeTarget(
     if (firstUnwatched) {
         return {
             episode: firstUnwatched,
-            label: `Continue with ${epLabel(firstUnwatched)}`,
+            label: `Play ${epLabel(firstUnwatched)}`,
         };
     }
     if (flat.length > 0) {
-        return { episode: flat[0], label: "Watch again" };
+        return {
+            episode: flat[0],
+            label: `Watch again`,
+        };
     }
     return null;
 }
@@ -545,11 +608,18 @@ type EpisodeAccordionProps = {
 
 function EpisodeAccordion({ response, onPlay }: EpisodeAccordionProps) {
     const [openSeason, setOpenSeason] = useState<number | null>(null);
+    // userToggled tracks whether the kid has manually clicked a season
+    // head. Once they have, the auto-pick effect bails so closing a
+    // season doesn't immediately spring it back open. Without this
+    // gate, the auto-open effect re-fired any time openSeason became
+    // null (which is exactly what closing does).
+    const [userToggled, setUserToggled] = useState(false);
 
     // Pick the season containing the resume target as the default-
-    // open one when episodes load.
+    // open one when episodes load. Only runs before the kid has
+    // interacted - their manual choice wins after that.
     useEffect(() => {
-        if (!response || openSeason !== null) return;
+        if (!response || userToggled || openSeason !== null) return;
         const target = pickResumeTarget(response);
         if (!target) {
             setOpenSeason(response.seasons[0]?.seasonNumber ?? null);
@@ -559,7 +629,7 @@ function EpisodeAccordion({ response, onPlay }: EpisodeAccordionProps) {
             s.episodes.some((e) => e.id === target.episode.id),
         );
         setOpenSeason(season?.seasonNumber ?? response.seasons[0]?.seasonNumber ?? null);
-    }, [response, openSeason]);
+    }, [response, openSeason, userToggled]);
 
     if (!response) {
         return (
@@ -591,9 +661,11 @@ function EpisodeAccordion({ response, onPlay }: EpisodeAccordionProps) {
                         <button
                             type="button"
                             className={`watch-season-head ${isOpen ? "open" : ""}`}
-                            onClick={() =>
-                                setOpenSeason(isOpen ? null : s.seasonNumber)
-                            }
+                            data-zone="accordion"
+                            onClick={() => {
+                                setUserToggled(true);
+                                setOpenSeason(isOpen ? null : s.seasonNumber);
+                            }}
                         >
                             <span>{label}</span>
                             <span className="watch-season-count">
@@ -605,16 +677,50 @@ function EpisodeAccordion({ response, onPlay }: EpisodeAccordionProps) {
                             <ul className="watch-episode-list">
                                 {s.episodes.map((e) => {
                                     const pct = e.userData?.PlayedPercentage ?? 0;
-                                    const watched = e.userData?.Played ?? false;
+                                    const watched =
+                                        (e.userData?.Played ?? false) ||
+                                        pct >= 90;
                                     const inProgress = pct >= 5 && pct < 90;
+                                    // Progress bar sizing:
+                                    //   watched      -> full width below thumb
+                                    //   in-progress  -> partial overlay on
+                                    //                   thumb + matching bar
+                                    //                   below
+                                    //   unwatched    -> nothing
+                                    const barPct = watched
+                                        ? 100
+                                        : inProgress
+                                          ? pct
+                                          : 0;
                                     return (
                                         <li key={e.id}>
                                             <button
                                                 type="button"
-                                                className="watch-episode"
+                                                className={`watch-episode ${watched ? "watched" : ""}`}
+                                                data-zone="accordion"
                                                 onClick={() => onPlay(e.id)}
                                             >
-                                                <EpisodeThumb episode={e} />
+                                                <div className="watch-episode-thumb-wrap">
+                                                    <EpisodeThumb episode={e} />
+                                                    {inProgress && (
+                                                        <div
+                                                            className="watch-episode-thumb-progress"
+                                                            style={{ width: `${pct}%` }}
+                                                            aria-hidden
+                                                        />
+                                                    )}
+                                                    {barPct > 0 && (
+                                                        <div
+                                                            className="watch-episode-thumb-bar"
+                                                            aria-hidden
+                                                        >
+                                                            <div
+                                                                className="watch-episode-thumb-bar-fill"
+                                                                style={{ width: `${barPct}%` }}
+                                                            />
+                                                        </div>
+                                                    )}
+                                                </div>
                                                 <div className="watch-episode-info">
                                                     <div className="watch-episode-title">
                                                         <span className="watch-episode-badge">
@@ -634,15 +740,6 @@ function EpisodeAccordion({ response, onPlay }: EpisodeAccordionProps) {
                                                             ? formatRuntime(e.runtimeTicks)
                                                             : ""}
                                                     </div>
-                                                    {inProgress && (
-                                                        <div
-                                                            className="watch-episode-progress"
-                                                            style={{
-                                                                width: `${pct}%`,
-                                                            }}
-                                                            aria-hidden
-                                                        />
-                                                    )}
                                                 </div>
                                             </button>
                                         </li>

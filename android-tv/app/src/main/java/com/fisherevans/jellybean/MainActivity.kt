@@ -178,14 +178,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * BACK navigates the WebView's history first; falls through to the
-     * default behaviour (which finishes the Activity) when there is no
-     * history left. D-pad keys are deliberately left to the default path
-     * so the focused WebView receives them as `keydown` events.
+     * BACK is forwarded to JS first so the kid client's progressive
+     * back model (close modals -> reset focus to home -> nav to
+     * parent route) can run before any WebView-level history pop.
+     * If JS reports it didn't handle (`window.__jellybeanBack`
+     * returns false or is absent), we fall back to the default:
+     * webView.goBack() if there is history, else finish() to exit.
+     *
+     * D-pad keys are deliberately left to the default path so the
+     * focused WebView receives them as `keydown` events.
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK && webView.canGoBack()) {
-            webView.goBack()
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            webView.evaluateJavascript(
+                "(typeof window.__jellybeanBack === 'function' " +
+                    "? window.__jellybeanBack() : false)"
+            ) { result ->
+                runOnUiThread {
+                    val handled = result == "true"
+                    if (!handled) {
+                        if (webView.canGoBack()) webView.goBack()
+                        else finish()
+                    }
+                }
+            }
             return true
         }
         return super.onKeyDown(keyCode, event)

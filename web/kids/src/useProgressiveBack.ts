@@ -1,50 +1,86 @@
 import { useEffect } from "react";
 
-// useProgressiveBack lets a page consume the Android TV Back press to
-// reset focus before the next press actually backs out of the page.
+// useProgressiveBack lets a page register a back handler that's
+// called from the Android Kotlin bridge BEFORE any WebView history
+// pop. The Kotlin onKeyDown override evaluates
+// `window.__jellybeanBack()` and only falls through to its default
+// behavior (webView.goBack / Activity.finish) when the JS handler
+// returns false.
 //
-// On mount the hook pushes a "sentinel" history entry with the same
-// URL as the current page. The Android Back button maps to
-// history.back() in the WebView, which pops the sentinel and fires
-// popstate. The page-level handler decides whether the back is
-// "consumed" (e.g. focus moves to the first tile, modal closes) and
-// re-pushes the sentinel to keep the absorption alive, OR returns
-// false to let the browser actually back out of the page.
+// Why not history.pushState sentinels (the old approach)?  WebView
+// history can be ambiguous on cheap Android TV builds - sentinels
+// pile up across navigation, popstate ordering races with React
+// Router's URL transitions, and a single back press can pop past
+// where we expected. The bridge-driven approach is deterministic:
+// JS handles or it doesn't. The browser's history doesn't move
+// unless we explicitly nav.
 //
-// Limitations: in the rare nested-popstate case (rapid backs across
-// route boundaries) the handler may miss one press. The simplest
-// fallback is "the user presses back twice." Good enough for the
-// Skyworth's input pace.
+// Browser fallback: when there's no Kotlin shell (running in a
+// regular browser, e.g. admin preview), we install a popstate
+// listener with a sentinel as a best-effort mimic. The shell
+// path is the supported one.
 
 type BackHandler = () => boolean;
 
-const SENTINEL = { __jellybeanSentinel: true };
+declare global {
+    interface Window {
+        __jellybeanBack?: BackHandler;
+    }
+}
+
+const stack: BackHandler[] = [];
+
+function topHandler(): BackHandler | null {
+    return stack.length > 0 ? stack[stack.length - 1] : null;
+}
+
+function bridgeHandler(): boolean {
+    const handler = topHandler();
+    if (!handler) return false;
+    try {
+        return handler();
+    } catch {
+        return false;
+    }
+}
+
+if (typeof window !== "undefined" && !window.__jellybeanBack) {
+    window.__jellybeanBack = bridgeHandler;
+}
 
 export function useProgressiveBack(handler: BackHandler): void {
     useEffect(() => {
-        // Push the sentinel so the next browser-back lands here and
-        // fires popstate without leaving the page.
+        stack.push(handler);
+        return () => {
+            const idx = stack.lastIndexOf(handler);
+            if (idx >= 0) stack.splice(idx, 1);
+        };
+    }, [handler]);
+
+    // Browser fallback: when the Kotlin bridge isn't present,
+    // pushState a sentinel so popstate fires on the user's back
+    // press. Detect bridge presence by JellybeanShell's existence.
+    useEffect(() => {
+        const hasShell =
+            typeof window !== "undefined" &&
+            typeof (window as unknown as {
+                JellybeanShell?: unknown;
+            }).JellybeanShell !== "undefined";
+        if (hasShell) return;
         try {
-            window.history.pushState(SENTINEL, "");
+            window.history.pushState({ __jellybeanSentinel: true }, "");
         } catch {
             return;
         }
         const onPop = () => {
             const consumed = handler();
             if (consumed) {
-                // Re-arm: another sentinel so the next back also pops
-                // here. Without this the URL is at "origin" and the
-                // next back exits the WebView.
                 try {
-                    window.history.pushState(SENTINEL, "");
+                    window.history.pushState({ __jellybeanSentinel: true }, "");
                 } catch {
                     /* ignore */
                 }
             }
-            // If !consumed, popstate has already happened. The page is
-            // at its top-level escape state; the next back press will
-            // run the browser's default behavior (Activity.finish on
-            // the kid TV when the history stack is empty).
         };
         window.addEventListener("popstate", onPop);
         return () => window.removeEventListener("popstate", onPop);
