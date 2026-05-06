@@ -327,25 +327,22 @@ a,
     display: flex;
     gap: 1.4rem;
     overflow-x: auto;
+    /* position: relative so children's offsetLeft is relative to this
+       scroller - smoothScroll uses offsetLeft (layout-static) instead
+       of getBoundingClientRect (affected by mid-animation scroll). */
+    position: relative;
     padding: 1rem 1.25rem 1.5rem;
-    scroll-snap-type: x mandatory;
-    /* scroll-padding-inline-start: when a tile snaps to "start", land
-       it INSIDE the row's padding rather than flush with the clip
-       rect. Without this, the leftmost tile is at scroll-position 0
-       and visually clips against the row's overflow box even though
-       there's container padding. */
-    scroll-padding-inline-start: 1.25rem;
+    /* No scroll-snap. Mandatory snap fights the JS smooth-scroll
+       animator: each scrollLeft write mid-animation gets snapped to
+       the nearest tile boundary, producing visible halts and a
+       non-deterministic end position. The animator lands the row at
+       the right scrollLeft on its own. */
+    scrollbar-width: none;
     /* contain: layout - layout isolation only, NO paint clipping. */
     contain: layout;
 }
-
 .cw-scroll::-webkit-scrollbar {
-    height: 6px;
-}
-
-.cw-scroll::-webkit-scrollbar-thumb {
-    background: #333;
-    border-radius: 3px;
+    display: none;
 }
 
 .grid {
@@ -1024,17 +1021,23 @@ a,
     display: flex;
     gap: 1.4rem;
     overflow-x: auto;
+    /* position: relative so children's offsetLeft is relative to this
+       scroller. smoothScroll computes scrollLeft target from offsetLeft
+       (which doesn't change as the row scrolls), avoiding the math
+       drift that getBoundingClientRect would cause mid-animation. */
+    position: relative;
     padding: 1rem 1.25rem 1.5rem;
-    scroll-snap-type: x mandatory;
-    /* scroll-padding-inline-start: when a tile snaps/scrolls to
-       "start", honor the container's left padding so the focused tile
-       lands inset from the clip rect with breathing room for its
-       focus zoom (transform: scale 1.08). Without this, scrolling
-       the row left brings the focused tile flush with the clip edge
-       and the zoom gets cut off. */
-    scroll-padding-inline-start: 1.25rem;
+    /* No scroll-snap. Mandatory snap fights the JS animator -
+       scrollLeft writes mid-animation get snapped back to a tile
+       boundary, producing the visible "selection moves but row
+       doesn't follow" + non-deterministic shifts. The animator
+       handles all positioning. */
+    scrollbar-width: none;
     /* contain: layout - layout isolation only, NO paint clipping. */
     contain: layout;
+}
+.browse-row-items::-webkit-scrollbar {
+    display: none;
 }
 .browse-tile {
     flex: 0 0 auto;

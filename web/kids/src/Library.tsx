@@ -368,23 +368,28 @@ export default function Library() {
             })
             .catch((err) => {
                 if (cancelled) return;
-                // 401 = stale bearer; wipe local session and bounce
-                // to /login. Auto-recovery, no error UI.
-                if (
+                const isUnauthorized =
                     err &&
                     typeof err === "object" &&
-                    (err as { code?: string }).code === "UNAUTHORIZED"
-                ) {
+                    (err as { code?: string }).code === "UNAUTHORIZED";
+                const haveCache =
+                    allEtag !== undefined || cwEtag !== undefined;
+                // 401 with no cache to fall back on -> bearer is bust
+                // and we can't render anything; redirect to /login.
+                if (isUnauthorized && !haveCache) {
                     clearSession();
                     nav("/login", { replace: true });
                     return;
                 }
-                // Distinguish "we had cache to fall back on" (background
-                // refresh failed, keep tiles, show small indicator) from
-                // "no cache + the network failed" (full error screen).
-                const haveCache = allEtag !== undefined || cwEtag !== undefined;
+                // 401 with cache: keep showing the cached library so
+                // the kid isn't yanked to /login mid-browse, but flag
+                // the stale auth via the refresh-error pill so the
+                // kid (or a parent) sees something's off. The next
+                // nav that requires fresh data will redirect.
                 if (haveCache) {
-                    setRefreshError("Couldn't refresh");
+                    setRefreshError(
+                        isUnauthorized ? "Sign-in expired" : "Couldn't refresh",
+                    );
                 } else {
                     setError(String(err.message ?? err));
                 }

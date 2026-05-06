@@ -83,30 +83,29 @@ export function smoothScrollTo(
 }
 
 // scrollTileIntoRowStart scrolls a horizontal scroller (e.g. a
-// .browse-row-items) so the given tile lands at the start of the
-// visible area, with `paddingLeft` of inset.
+// .browse-row-items) so the given tile lands at `paddingLeft` of
+// inset from the scroller's left edge.
 //
-// Uses getBoundingClientRect math instead of offsetLeft because
-// offsetLeft is relative to the nearest positioned ancestor, which
-// often isn't the scroller (the scroller has display:flex, no
-// position: relative). The bounding-rect approach gives an absolute
-// "how far left/right from current scroll" that's robust to the
-// scroller's positioning context.
+// Uses tile.offsetLeft, which is the tile's static layout x-position
+// relative to its offsetParent. The scroller MUST have
+// `position: relative` so it IS the offsetParent; otherwise
+// offsetLeft is reported against a higher ancestor and the math is
+// off by however much sits between them. Layout-static math means
+// the target doesn't shift mid-animation as scrollLeft changes,
+// which getBoundingClientRect-based math suffered from when called
+// from rapid keypresses.
 export function scrollTileIntoRowStart(
     tile: HTMLElement,
     paddingLeft: number = 0,
 ): void {
     const scroller = tile.parentElement;
     if (!scroller) return;
-    const tileRect = tile.getBoundingClientRect();
-    const scrollerRect = scroller.getBoundingClientRect();
-    const delta = tileRect.left - scrollerRect.left - paddingLeft;
-    const target = scroller.scrollLeft + delta;
+    const target = tile.offsetLeft - paddingLeft;
     const max = scroller.scrollWidth - scroller.clientWidth;
     smoothScrollTo(
         scroller,
         "x",
-        Math.max(0, Math.min(max, target)),
+        Math.max(0, Math.min(Math.max(0, max), target)),
     );
 }
 
