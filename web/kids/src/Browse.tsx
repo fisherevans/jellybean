@@ -5,6 +5,7 @@ import {
     authHeaders,
     clearSession,
     getSession,
+    withAuthRetry,
     type Session,
 } from "./auth";
 import { TAG_ICONS, isTagIconName } from "./tagIcons";
@@ -124,10 +125,15 @@ export default function Browse() {
             if (!session && adminProfileId) {
                 url.searchParams.set("profileId", adminProfileId);
             }
-            const res = await fetch(url.toString(), {
-                credentials: "same-origin",
-                headers: authHeaders(),
-            });
+            // withAuthRetry: a single 401 retries once after 800ms
+            // before we give up + bounce to /login. Hides transient
+            // Jellyfin restarts; real revocation still 401s on retry.
+            const res = await withAuthRetry(() =>
+                fetch(url.toString(), {
+                    credentials: "same-origin",
+                    headers: authHeaders(),
+                }),
+            );
             if (!res.ok) {
                 if (res.status === 401) {
                     // Stale bearer token. Wipe local session and bounce
@@ -211,10 +217,12 @@ export default function Browse() {
                 if (!session && adminProfileId) {
                     url.searchParams.set("profileId", adminProfileId);
                 }
-                const res = await fetch(url.toString(), {
-                    credentials: "same-origin",
-                    headers: authHeaders(),
-                });
+                const res = await withAuthRetry(() =>
+                    fetch(url.toString(), {
+                        credentials: "same-origin",
+                        headers: authHeaders(),
+                    }),
+                );
                 if (!res.ok) {
                     if (res.status === 401) {
                         clearSession();

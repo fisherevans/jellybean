@@ -36,6 +36,63 @@ const DEVICE_ID_KEY = "jellybean.kids.deviceId";
 const SESSION_KEY_PREFIX = "jellybean.kids.";
 const SESSION_KEY_KEEP = new Set([DEVICE_ID_KEY]);
 
+// JellybeanShell.{set,get,clear}AuthBlob bridge to Android
+// SharedPreferences. Keeps the kid signed in across WebView
+// localStorage prunes (Android's storage-cleanup, WebView upgrades).
+// Browser fallback: getAuthBridge returns undefined and every
+// bridge call below short-circuits, so the app behaves identically
+// to a localStorage-only world.
+type AuthBridge = {
+    setAuthBlob?: (json: string) => void;
+    getAuthBlob?: () => string | null;
+    clearAuthBlob?: () => void;
+};
+function getAuthBridge(): AuthBridge | undefined {
+    if (typeof window === "undefined") return undefined;
+    return (window as unknown as { JellybeanShell?: AuthBridge })
+        .JellybeanShell;
+}
+
+// AUTH_KEY_TO_BLOB_FIELD maps each localStorage key to the JSON
+// field name in the SharedPreferences blob. Used by both the
+// mirror-on-write path (setSession) and the rehydrate-on-boot path
+// (hydrateAuthFromBridge).
+const AUTH_KEY_TO_BLOB_FIELD: Record<string, string> = {
+    [TOKEN_KEY]: "token",
+    [USER_ID_KEY]: "userId",
+    [USER_NAME_KEY]: "userName",
+    [PROFILE_ID_KEY]: "profileId",
+    [PROFILE_NAME_KEY]: "profileName",
+    [KID_NAME_KEY]: "kidName",
+    [KID_ID_KEY]: "kidId",
+    [DEVICE_ID_KEY]: "deviceId",
+};
+
+function mirrorAuthToBridge(): void {
+    const bridge = getAuthBridge();
+    if (!bridge?.setAuthBlob) return;
+    const blob: Record<string, string> = {};
+    for (const [lsKey, blobKey] of Object.entries(AUTH_KEY_TO_BLOB_FIELD)) {
+        const v = localStorage.getItem(lsKey);
+        if (v !== null) blob[blobKey] = v;
+    }
+    try {
+        bridge.setAuthBlob(JSON.stringify(blob));
+    } catch {
+        // JNI exceptions never break sign-in.
+    }
+}
+
+function clearAuthOnBridge(): void {
+    const bridge = getAuthBridge();
+    if (!bridge?.clearAuthBlob) return;
+    try {
+        bridge.clearAuthBlob();
+    } catch {
+        /* ignore */
+    }
+}
+
 export type Session = {
     token: string;
     userId: string;
@@ -85,6 +142,12 @@ export function setSession(s: Session): void {
     else localStorage.removeItem(KID_NAME_KEY);
     if (s.kidId !== undefined) localStorage.setItem(KID_ID_KEY, String(s.kidId));
     else localStorage.removeItem(KID_ID_KEY);
+    // Mirror to Android SharedPreferences via the JellybeanShell
+    // bridge. Reads back from localStorage so we capture the actual
+    // serialized form (number-stringified profileId, etc.) and so
+    // deviceId is included via the lazy-generation path below.
+    getDeviceId();
+    mirrorAuthToBridge();
 }
 
 // clearSession wipes every jellybean.kids.* entry except the deviceId,
@@ -99,19 +162,62 @@ export function clearSession(): void {
         toRemove.push(k);
     }
     for (const k of toRemove) localStorage.removeItem(k);
+    // Mirror the clear to Android SharedPreferences so the next
+    // launch doesn't rehydrate a signed-out session. No-op in browser.
+    clearAuthOnBridge();
     // Drop any cached library data so the next kid signing in on this
     // device can't see the previous kid's tiles. Best-effort: any IDB
     // failure is swallowed so sign-out always succeeds.
     clearLibraryCache().catch(() => {});
 }
 
+// hydrateAuthFromBridge replays the SharedPreferences auth blob back
+// into localStorage when localStorage is empty but the bridge has a
+// blob (i.e. WebView storage was pruned but the APK still has the
+// session). Runs once at app boot from main.tsx, before React reads
+// getSession() for its first render. No-op when the bridge is absent
+// (browser) or localStorage already has a token (running install
+// wins over any stale bridge snapshot).
+export function hydrateAuthFromBridge(): void {
+    const bridge = getAuthBridge();
+    if (!bridge?.getAuthBlob) return;
+    if (localStorage.getItem(TOKEN_KEY)) return;
+    let raw: string | null = null;
+    try {
+        raw = bridge.getAuthBlob() ?? null;
+    } catch {
+        return;
+    }
+    if (!raw) return;
+    let blob: Record<string, unknown>;
+    try {
+        blob = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+        return;
+    }
+    for (const [lsKey, blobKey] of Object.entries(AUTH_KEY_TO_BLOB_FIELD)) {
+        const v = blob[blobKey];
+        if (v === undefined || v === null || v === "") continue;
+        if (lsKey === DEVICE_ID_KEY && localStorage.getItem(DEVICE_ID_KEY)) {
+            // Lazy generator may have already fired (paranoia; in
+            // practice main.tsx runs hydrate before any other code).
+            continue;
+        }
+        localStorage.setItem(lsKey, String(v));
+    }
+}
+
 // getDeviceId returns a stable per-install UUID, generating + persisting one
 // on first call. Used as Jellyfin's DeviceId so each TV is its own session.
+// When the bridge is present, also mirror the freshly-generated id so the
+// first lazy generation (after a localStorage wipe but with no bridge blob
+// yet) lands on disk too.
 export function getDeviceId(): string {
     let id = localStorage.getItem(DEVICE_ID_KEY);
     if (!id) {
         id = generateUUIDv4();
         localStorage.setItem(DEVICE_ID_KEY, id);
+        mirrorAuthToBridge();
     }
     return id;
 }
@@ -172,6 +278,27 @@ export function authHeaders(): Record<string, string> {
         headers["X-Jellyfin-User-Id"] = session.userId;
     }
     return headers;
+}
+
+// withAuthRetry runs doFetch once. On 401, waits 800ms and runs it
+// again, returning that result. Anything else (2xx, 304, non-401 4xx,
+// network throws) returned/thrown immediately. Real Jellyfin
+// revocation stays 401 on retry and the call site handles it the
+// same way as today (clearSession + nav("/login")). Transient 401s
+// from Jellyfin restarting mid-request, suspend-resume clock skew,
+// or a momentary auth-cache miss self-heal silently.
+//
+// Returns Response - never throws on 401 itself. Call sites still
+// inspect res.status. The retry uses the same closure both times so
+// URL + headers + auth re-evaluate naturally with whatever's in
+// localStorage on retry.
+export async function withAuthRetry(
+    doFetch: () => Promise<Response>,
+): Promise<Response> {
+    const first = await doFetch();
+    if (first.status !== 401) return first;
+    await new Promise((r) => setTimeout(r, 800));
+    return doFetch();
 }
 
 // imageAuthSuffix builds the &token=...&userId=... fragment to append to

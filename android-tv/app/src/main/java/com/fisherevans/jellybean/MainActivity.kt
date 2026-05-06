@@ -1,7 +1,9 @@
 package com.fisherevans.jellybean
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -32,7 +34,23 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
 
+    /**
+     * App-private SharedPreferences file holding a single "blob" key
+     * with the kid's serialized auth state (token, userId, deviceId,
+     * etc.). Mirrored from the JS side via the JellybeanShell bridge
+     * so the kid stays signed in across WebView localStorage prunes
+     * (Android's storage-cleanup, WebView upgrades, etc).
+     *
+     * Dedicated file (not the default activity prefs) so a future
+     * "wipe auth" tool can delete just this file without touching
+     * unrelated state.
+     */
+    private lateinit var authPrefs: SharedPreferences
+
     companion object {
+        private const val AUTH_PREFS_FILE = "jellybean_kids_auth"
+        private const val AUTH_PREFS_BLOB = "blob"
+
         /**
          * Dev intent that wipes the kid's auth state and (optionally)
          * pre-fills the sign-in form with username/password so a
@@ -58,6 +76,10 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize the auth-mirroring prefs early so handleDevIntent +
+        // the JellybeanShell bridge methods can both rely on it being set.
+        authPrefs = getSharedPreferences(AUTH_PREFS_FILE, Context.MODE_PRIVATE)
 
         // Edge-to-edge: draw under the system bars so immersive mode has
         // something to hide.
@@ -127,6 +149,12 @@ class MainActivity : AppCompatActivity() {
         }
         val targetUrl = target.toString()
 
+        // Always clear the SharedPreferences mirror so the next
+        // hydrateAuthFromBridge() at app boot doesn't replay a stale
+        // session before Login can consume the dev creds. Symmetric
+        // with the JS clearSession() flow on the warm-start branch.
+        authPrefs.edit().remove(AUTH_PREFS_BLOB).apply()
+
         // localStorage clear runs in JS. On cold start the WebView
         // doesn't have a loaded page yet so evaluateJavascript would be
         // a no-op - just loadUrl directly and let Login.tsx clear the
@@ -137,12 +165,24 @@ class MainActivity : AppCompatActivity() {
             webView.loadUrl(targetUrl)
             return
         }
+        // Prefix-scan removal mirrors clearSession()'s policy: every
+        // jellybean.kids.* key except deviceId (the per-install
+        // identity outlives sign-in cycles). Hardcoding the key list
+        // would silently miss new fields - see kidId, which the
+        // earlier explicit list omitted.
         val js = """
             try {
-                ['jellybean.kids.token','jellybean.kids.userId',
-                 'jellybean.kids.userName','jellybean.kids.profileId',
-                 'jellybean.kids.profileName','jellybean.kids.kidName']
-                    .forEach(function(k){ localStorage.removeItem(k); });
+                var toRemove = [];
+                for (var i = 0; i < localStorage.length; i++) {
+                    var k = localStorage.key(i);
+                    if (k && k.indexOf('jellybean.kids.') === 0
+                        && k !== 'jellybean.kids.deviceId') {
+                        toRemove.push(k);
+                    }
+                }
+                for (var j = 0; j < toRemove.length; j++) {
+                    localStorage.removeItem(toRemove[j]);
+                }
             } catch(e){}
         """.trimIndent()
         webView.evaluateJavascript(js) {
@@ -217,6 +257,39 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun exitApp() {
             runOnUiThread { finishAndRemoveTask() }
+        }
+
+        /**
+         * Mirror the kid auth state from JS -> SharedPreferences. The
+         * kid SPA calls this from setSession() so the auth blob
+         * survives WebView localStorage prunes. Storage is opaque
+         * JSON; JS owns the schema. Single key = single atomic write,
+         * no per-field bookkeeping in Kotlin.
+         */
+        @JavascriptInterface
+        fun setAuthBlob(json: String) {
+            authPrefs.edit().putString(AUTH_PREFS_BLOB, json).apply()
+        }
+
+        /**
+         * Read the kid auth blob, or null when not set. Called once
+         * at boot from hydrateAuthFromBridge() in main.tsx so the
+         * SPA can replay the blob into localStorage if WebView
+         * storage was pruned. Returns String? - JS sees null as
+         * native null.
+         */
+        @JavascriptInterface
+        fun getAuthBlob(): String? {
+            return authPrefs.getString(AUTH_PREFS_BLOB, null)
+        }
+
+        /**
+         * Drop the kid auth blob. Called from clearSession() (kid
+         * tap-Sign-Out) so the next launch starts at /login.
+         */
+        @JavascriptInterface
+        fun clearAuthBlob() {
+            authPrefs.edit().remove(AUTH_PREFS_BLOB).apply()
         }
     }
 

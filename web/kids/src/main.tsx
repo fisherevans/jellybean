@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { getSession } from "./auth";
+import { getSession, hydrateAuthFromBridge } from "./auth";
 import Browse from "./Browse";
 import KidOverlays from "./KidOverlays";
 import Library from "./Library";
@@ -59,6 +59,13 @@ function AppShell() {
 if ("scrollRestoration" in window.history) {
     window.history.scrollRestoration = "manual";
 }
+
+// Replay the kid auth blob from Android SharedPreferences back into
+// localStorage when localStorage is empty but the bridge has a blob
+// (i.e. WebView storage was pruned but the APK still has the
+// session). Synchronous JNI call - React's first render below sees
+// the rehydrated localStorage. No-op in browser.
+hydrateAuthFromBridge();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>

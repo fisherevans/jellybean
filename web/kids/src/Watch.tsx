@@ -11,6 +11,7 @@ import {
     clearSession,
     getSession,
     imageAuthSuffix,
+    withAuthRetry,
     type Session,
 } from "./auth";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
@@ -267,10 +268,12 @@ export default function Watch() {
             if (!session && adminProfileId) {
                 url.searchParams.set("profileId", adminProfileId);
             }
-            const res = await fetch(url.toString(), {
-                credentials: "same-origin",
-                headers: authHeaders(),
-            });
+            const res = await withAuthRetry(() =>
+                fetch(url.toString(), {
+                    credentials: "same-origin",
+                    headers: authHeaders(),
+                }),
+            );
             if (!res.ok) {
                 if (res.status === 401) {
                     clearSession();
@@ -312,12 +315,14 @@ export default function Watch() {
         let cancelled = false;
         void (async () => {
             try {
-                const res = await fetch(
-                    `/api/kids/series/${encodeURIComponent(itemId)}/episodes`,
-                    {
-                        credentials: "same-origin",
-                        headers: authHeaders(),
-                    },
+                const res = await withAuthRetry(() =>
+                    fetch(
+                        `/api/kids/series/${encodeURIComponent(itemId)}/episodes`,
+                        {
+                            credentials: "same-origin",
+                            headers: authHeaders(),
+                        },
+                    ),
                 );
                 if (!res.ok) {
                     if (res.status === 401) {

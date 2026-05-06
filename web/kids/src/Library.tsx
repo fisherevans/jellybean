@@ -5,6 +5,7 @@ import {
     clearSession,
     getSession,
     probeAdmin,
+    withAuthRetry,
     type AdminUser,
     type Session,
 } from "./auth";
@@ -220,10 +221,17 @@ export default function Library() {
         > => {
             const headers: Record<string, string> = { ...authHeaders() };
             if (ifNoneMatch) headers["If-None-Match"] = ifNoneMatch;
-            const res = await fetch(buildURL(section, startIndex), {
-                credentials: "same-origin",
-                headers,
-            });
+            // withAuthRetry: tolerate one transient 401 before
+            // throwing UNAUTHORIZED. Real revocation still 401s on
+            // retry; the cache-fallback branch downstream still
+            // applies (it gates on haveCache, not on whether the
+            // retry happened).
+            const res = await withAuthRetry(() =>
+                fetch(buildURL(section, startIndex), {
+                    credentials: "same-origin",
+                    headers,
+                }),
+            );
             const etag = res.headers.get("ETag") ?? "";
             if (res.status === 304) {
                 return { status: "not-modified", etag };
