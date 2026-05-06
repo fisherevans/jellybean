@@ -637,6 +637,37 @@ func (s *Server) handleKidsStopEncoding(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleKidsRefreshLayout drops the kid's profile-scoped layout row
+// cache so the next /api/kids/browse re-resolves every randomized
+// row from scratch (random_unwatched shuffle, tag_fanout ordering).
+// Backed by the Menu modal's "Refresh from server" action - a TV
+// remote one-click way to force-pull fresh layout state without
+// leaving the kid app.
+//
+// Layout STRUCTURE changes (rows added/removed/edited) auto-bust
+// this cache via curation/layouts.go's row mutators. This endpoint
+// is for content changes the row mutators can't observe - tag
+// membership, item visibility, etc. - that the kid wants to see
+// reflected before the 60-min TTL expires.
+func (s *Server) handleKidsRefreshLayout(w http.ResponseWriter, r *http.Request) {
+	kc := s.resolveKidsAuth(r)
+	if kc == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	profileID, msg := s.resolveKidsProfileID(r, kc)
+	if msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+	if err := s.curation.InvalidateProfileLayoutCache(r.Context(), profileID); err != nil {
+		s.logger.Error().Err(err).Int64("profile_id", profileID).Msg("kids refresh layout cache")
+		http.Error(w, "failed to refresh", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // conservativeDeviceProfile is the lowest-common-denominator Jellyfin
 // DeviceProfile we hand to PostPlaybackInfo for every kids stream
 // request. It direct-plays only the narrowest set of codecs (h264 +

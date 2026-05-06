@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { clearSession } from "./auth";
+import { authHeaders, clearSession, withAuthRetry } from "./auth";
+import { clear as clearLibraryCache } from "./libraryCache";
 
-// MainMenuModal is the Menu pill's overlay. Three actions:
+// MainMenuModal is the Menu pill's overlay. Four actions:
+//   - Refresh: bust the server-side row cache for this kid's profile,
+//     drop the local IDB library cache, reload the page. Used by the
+//     parent to pull fresh layout settings after editing in the
+//     admin app, without an admin-side dev-tools round-trip.
 //   - Sign out: clearSession + back to /login on the same TV.
 //   - Swap users: same as sign out for now (no multi-profile picker yet).
 //     Kept distinct so a future multi-profile UX has a place to land.
@@ -12,13 +17,18 @@ import { clearSession } from "./auth";
 // D-pad participates: ArrowUp/Down cycles, Enter activates, Escape
 // closes. The first action is auto-focused on open.
 
-type Action = "sign-out" | "swap-users" | "exit";
+type Action = "refresh" | "sign-out" | "swap-users" | "exit";
 
 type Props = {
     onClose: () => void;
 };
 
 const ACTIONS: { id: Action; label: string; description: string }[] = [
+    {
+        id: "refresh",
+        label: "Refresh from server",
+        description: "Pull fresh layout + library data after a parent's changes.",
+    },
     {
         id: "sign-out",
         label: "Sign out",
@@ -39,14 +49,40 @@ const ACTIONS: { id: Action; label: string; description: string }[] = [
 export default function MainMenuModal({ onClose }: Props) {
     const nav = useNavigate();
     const [focus, setFocus] = useState(0);
+    const [refreshing, setRefreshing] = useState(false);
     const refs = useRef<(HTMLButtonElement | null)[]>([]);
 
     useEffect(() => {
         refs.current[focus]?.focus({ preventScroll: false });
     }, [focus]);
 
+    async function refreshFromServer() {
+        if (refreshing) return;
+        setRefreshing(true);
+        try {
+            // Best-effort: a 4xx/5xx here just means the server cache
+            // wasn't busted, but we still drop IDB + reload below so
+            // the kid sees a fresh fetch either way.
+            await withAuthRetry(() =>
+                fetch("/api/kids/maintenance/refresh-layout", {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: authHeaders(),
+                }),
+            ).catch(() => undefined);
+            await clearLibraryCache().catch(() => undefined);
+            window.location.reload();
+        } finally {
+            // Only reached if reload() somehow doesn't fire.
+            setRefreshing(false);
+        }
+    }
+
     function activate(id: Action) {
         switch (id) {
+            case "refresh":
+                void refreshFromServer();
+                return;
             case "sign-out":
             case "swap-users":
                 clearSession();
@@ -127,21 +163,30 @@ export default function MainMenuModal({ onClose }: Props) {
             >
                 <h2 className="kids-menu-title">Menu</h2>
                 <ul className="kids-menu-list">
-                    {ACTIONS.map((a, i) => (
-                        <li key={a.id}>
-                            <button
-                                type="button"
-                                ref={(el) => (refs.current[i] = el)}
-                                className={`kids-menu-action ${focus === i ? "focused" : ""}`}
-                                onClick={() => activate(a.id)}
-                                onFocus={() => setFocus(i)}
-                                tabIndex={focus === i ? 0 : -1}
-                            >
-                                <span className="kids-menu-action-label">{a.label}</span>
-                                <span className="kids-menu-action-desc">{a.description}</span>
-                            </button>
-                        </li>
-                    ))}
+                    {ACTIONS.map((a, i) => {
+                        const isRefresh = a.id === "refresh";
+                        const busy = isRefresh && refreshing;
+                        return (
+                            <li key={a.id}>
+                                <button
+                                    type="button"
+                                    ref={(el) => (refs.current[i] = el)}
+                                    className={`kids-menu-action ${focus === i ? "focused" : ""}`}
+                                    onClick={() => activate(a.id)}
+                                    onFocus={() => setFocus(i)}
+                                    tabIndex={focus === i ? 0 : -1}
+                                    disabled={busy}
+                                >
+                                    <span className="kids-menu-action-label">
+                                        {busy ? "Refreshing…" : a.label}
+                                    </span>
+                                    <span className="kids-menu-action-desc">
+                                        {a.description}
+                                    </span>
+                                </button>
+                            </li>
+                        );
+                    })}
                 </ul>
                 <p className="kids-menu-hint" aria-hidden>
                     Back to close

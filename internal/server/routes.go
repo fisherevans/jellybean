@@ -124,6 +124,7 @@ func (s *Server) kidsLibraryRoutes(r *mux.Router) {
 	r.HandleFunc("/library", s.handleKidsLibrary).Methods(http.MethodGet)
 	r.HandleFunc("/browse", s.handleKidsBrowse).Methods(http.MethodGet)
 	r.HandleFunc("/browse/row/{rowId}", s.handleKidsBrowseRow).Methods(http.MethodGet)
+	r.HandleFunc("/maintenance/refresh-layout", s.handleKidsRefreshLayout).Methods(http.MethodPost)
 	r.HandleFunc("/items/{id}", s.handleKidsItem).Methods(http.MethodGet)
 	r.HandleFunc("/items/{id}/image", s.handleKidsImage).Methods(http.MethodGet)
 	r.HandleFunc("/items/{id}/next-up", s.handleKidsNextUp).Methods(http.MethodGet)
