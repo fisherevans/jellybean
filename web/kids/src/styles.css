@@ -330,13 +330,14 @@ a,
     display: flex;
     gap: 1.4rem;
     overflow-x: auto;
-    /* CSS spec: when overflow-x is auto/scroll, overflow-y: visible is
-       coerced to auto. Pad enough on every side that the focus zoom
-       (transform: scale 1.08) never reaches the container's clip rect.
-       The horizontal padding is what keeps the leftmost / rightmost
-       tile from getting clipped at its outer edge. */
     padding: 1rem 1.25rem 1.5rem;
     scroll-snap-type: x mandatory;
+    /* scroll-padding-inline-start: when a tile snaps to "start", land
+       it INSIDE the row's padding rather than flush with the clip
+       rect. Without this, the leftmost tile is at scroll-position 0
+       and visually clips against the row's overflow box even though
+       there's container padding. */
+    scroll-padding-inline-start: 1.25rem;
     /* contain: layout - layout isolation only, NO paint clipping. */
     contain: layout;
 }
@@ -901,7 +902,7 @@ a,
     height: 28px;
     border-radius: 50%;
     object-fit: cover;
-    background: #000;
+    /* No background - the bean PNG already has its own opaque art. */
 }
 .kids-tabpill-menu-label {
     font-size: 1.05rem;
@@ -1026,12 +1027,15 @@ a,
     display: flex;
     gap: 1.4rem;
     overflow-x: auto;
-    /* overflow-x: auto coerces overflow-y to auto by spec. Pad
-       enough on every side so the focus zoom (1.08) lives inside
-       the box - including the LEFT side so the leftmost tile
-       doesn't clip when focused. */
     padding: 1rem 1.25rem 1.5rem;
     scroll-snap-type: x mandatory;
+    /* scroll-padding-inline-start: when a tile snaps/scrolls to
+       "start", honor the container's left padding so the focused tile
+       lands inset from the clip rect with breathing room for its
+       focus zoom (transform: scale 1.08). Without this, scrolling
+       the row left brings the focused tile flush with the clip edge
+       and the zoom gets cut off. */
+    scroll-padding-inline-start: 1.25rem;
     /* contain: layout - layout isolation only, NO paint clipping. */
     contain: layout;
 }

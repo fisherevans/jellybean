@@ -134,11 +134,16 @@ export default function Library() {
     const [focus, setFocus] = useState<Focus>({ kind: "search" });
     const tileRefs = useRef<Record<string, HTMLButtonElement | null>>({});
     // Two refs for the search affordance:
-    //   searchWrapRef - the D-pad target (a button wrapping the input).
-    //                   Focusing this does NOT open the IME.
+    //   searchWrapRef - the D-pad target (a tabbable div wrapping the
+    //                   input). Focusing this does NOT open the IME.
+    //                   Must be a div, not a <button>, because HTML5
+    //                   forbids <input> as a descendant of <button> -
+    //                   the parser would auto-close the button before
+    //                   the input, leaving them as siblings, and the
+    //                   wrap ref would land on a now-empty button.
     //   searchInputRef - the actual <input>. Focused on Enter, which
     //                    opens the IME on Android TV.
-    const searchWrapRef = useRef<HTMLButtonElement | null>(null);
+    const searchWrapRef = useRef<HTMLDivElement | null>(null);
     const searchInputRef = useRef<HTMLInputElement | null>(null);
     const sentinelRef = useRef<HTMLDivElement | null>(null);
     const [menuOpen, setMenuOpen] = useState(false);
@@ -424,12 +429,19 @@ export default function Library() {
 
     // Keep focused element on screen + imperatively focus the right
     // DOM node. preventScroll=true suppresses the browser's
-    // auto-scroll-into-view from focus(); we run the scroll explicitly
-    // so it happens once and uses our scroll-behavior (smooth).
+    // auto-scroll-into-view from focus() so it can't race the smooth
+    // scroll below.
     //
-    // Top-area focus (tab / search / filter) snaps the page back to
-    // top so the kid is never staring at a sliver of search bar above
-    // a half-scrolled grid. Tiles in cw/grid get vertically centered.
+    // Top-area focus (tab / search / filter): pin window to top via
+    // a two-step window.scrollTo - the first call sets the position,
+    // and we issue it twice (rAF + immediate) because some Android
+    // WebView builds drop the second smooth-scroll call when issued
+    // mid-flight from a previous scrollIntoView. Sending it twice
+    // gives the renderer a stable target.
+    //
+    // cw / grid focus: vertically center the row, AND use inline:"start"
+    // on the cw strip so the focused tile is left-anchored (CSS
+    // scroll-padding-inline-start gives it inset breathing room).
     useEffect(() => {
         const inTopArea =
             focus.kind === "tab" ||
@@ -444,9 +456,20 @@ export default function Library() {
         }
         if (inTopArea) {
             window.scrollTo({ top: 0, behavior: "smooth" });
-        } else if (focus.kind === "cw" || focus.kind === "grid") {
-            const key = focusKey(focus);
-            const el = tileRefs.current[key];
+            // Re-issue on the next frame in case a previous in-flight
+            // smooth scroll absorbed this one (the "halfway-stop" bug).
+            requestAnimationFrame(() => {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+            });
+        } else if (focus.kind === "cw") {
+            const el = tileRefs.current[focusKey(focus)];
+            el?.scrollIntoView({
+                block: "center",
+                inline: "start",
+                behavior: "smooth",
+            });
+        } else if (focus.kind === "grid") {
+            const el = tileRefs.current[focusKey(focus)];
             el?.scrollIntoView({
                 block: "center",
                 inline: "nearest",
@@ -568,16 +591,16 @@ export default function Library() {
             {adminProfileId && !session && <AdminPreviewBanner />}
 
             <div className="library-controls">
-                <button
+                <div
                     ref={searchWrapRef}
-                    type="button"
+                    role="button"
+                    aria-label="Search library"
                     className={`library-search-wrap ${
                         focus.kind === "search" ? "focused" : ""
                     }`}
                     tabIndex={focus.kind === "search" ? 0 : -1}
                     onClick={() => searchInputRef.current?.focus()}
                     onFocus={() => setFocus({ kind: "search" })}
-                    aria-label="Search library"
                 >
                     <input
                         ref={searchInputRef}
@@ -586,16 +609,17 @@ export default function Library() {
                         placeholder="Search"
                         value={searchInput}
                         onChange={(e) => setSearchInput(e.target.value)}
-                        // The wrap owns the D-pad focus; tabbing into the
-                        // input directly would skip the no-IME state. -1
-                        // keeps the input out of the focus order while
-                        // still allowing imperative .focus() calls.
+                        // The wrap owns the D-pad focus; tabbing into
+                        // the input directly would skip the no-IME
+                        // state. -1 keeps the input out of the focus
+                        // order while still allowing imperative
+                        // .focus() calls (Enter on the wrap promotes).
                         tabIndex={-1}
-                        // Stop click bubbling so tapping the input doesn't
-                        // double-fire (wrap's onClick refocuses).
+                        // Stop click bubbling so tapping the input
+                        // doesn't double-fire (wrap's onClick refocuses).
                         onClick={(e) => e.stopPropagation()}
                     />
-                </button>
+                </div>
             </div>
 
             <div className="filter-row" role="tablist">
