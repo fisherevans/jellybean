@@ -322,15 +322,15 @@ a,
     display: flex;
     gap: 1rem;
     overflow-x: auto;
-    overflow-y: visible;
-    /* Vertical padding so the focus zoom-in doesn't get clipped by the
-       overflow-x scroller. The clip-rect is per-axis - overflow-x:auto
-       implicitly clips Y too unless we leave room. */
-    padding: 0.75rem 0 1.25rem;
+    /* CSS spec: when overflow-x is auto/scroll, overflow-y: visible is
+       coerced to auto. So the focus zoom (transform: scale 1.08) gets
+       implicitly Y-clipped. Pad enough that the zoom never reaches the
+       container's edge. */
+    padding: 1rem 0.25rem 1.5rem;
     scroll-snap-type: x mandatory;
-    /* paint isolation only - "layout" containment was what clipped the
-       focus zoom on cheap TVs; paint alone is enough for the perf goal. */
-    contain: paint;
+    /* contain: layout - layout isolation only, NO paint clipping. The
+       previous `contain: paint` was clipping the zoomed tile. */
+    contain: layout;
 }
 
 .cw-scroll::-webkit-scrollbar {
@@ -345,12 +345,12 @@ a,
 .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 1rem 0.9rem;
-    /* Headroom on top/bottom so .tile.focused's scale(1.06) doesn't get
-       clipped where the row meets the next row above. */
-    padding: 0.5rem 0;
-    /* paint-only - layout containment clipped the zoom-in on rows. */
-    contain: paint;
+    gap: 1.1rem 0.9rem;
+    /* Headroom so .tile.focused's scale(1.08) doesn't visually clip
+       where rows meet vertically. */
+    padding: 0.75rem 0.25rem 1rem;
+    /* contain: layout - layout isolation only, NO paint clipping. */
+    contain: layout;
 }
 
 .sentinel {
@@ -1016,9 +1016,13 @@ a,
     display: flex;
     gap: 0.85rem;
     overflow-x: auto;
-    padding: 0.4rem 0.2rem 0.6rem;
+    /* overflow-x: auto coerces overflow-y to auto by spec. Pad enough
+       on top/bottom so the focus zoom (1.08) lives inside the box. */
+    padding: 1rem 0.25rem 1.5rem;
     scroll-snap-type: x mandatory;
-    contain: layout paint;
+    /* contain: layout - layout isolation only, NO paint clipping.
+       Earlier `contain: layout paint` was clipping the zoomed tile. */
+    contain: layout;
 }
 .browse-tile {
     flex: 0 0 auto;
@@ -1459,26 +1463,41 @@ a,
     pointer-events: none;
 }
 
-/* M8 #49 library search box. Server-side filter via the existing
-   /api/kids/library?search= query param. Sits above the type-filter
-   pills, full-width at TV viewing distance. */
+/* M8 #49 library search box. The wrap is the D-pad target so landing
+   focus on the search bar does NOT auto-open the Android TV IME. The
+   actual <input> only gets DOM focus when the kid presses Enter,
+   which is when the IME is supposed to come up. */
 .library-controls {
     margin: 0 0 0.75rem;
 }
-.library-search {
+.library-search-wrap {
     width: 100%;
     background: var(--card);
-    border: 1px solid var(--border);
+    border: 2px solid var(--border);
     border-radius: 999px;
+    color: var(--fg);
+    padding: 0;
+    cursor: pointer;
+    transition: border-color 100ms ease, box-shadow 100ms ease;
+    /* Display as a row so the inner input lays out correctly. */
+    display: flex;
+    align-items: stretch;
+    text-align: left;
+}
+.library-search-wrap:focus,
+.library-search-wrap.focused {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(255, 188, 0, 0.25);
+}
+.library-search {
+    flex: 1;
+    background: transparent;
+    border: 0;
     color: var(--fg);
     padding: 0.7rem 1.1rem;
     font-size: 1.05rem;
     outline: none;
-}
-.library-search:focus,
-.library-search.focused {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(255, 188, 0, 0.25);
 }
 .library-search::placeholder {
     color: var(--muted);

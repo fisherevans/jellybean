@@ -133,7 +133,13 @@ export default function Library() {
 
     const [focus, setFocus] = useState<Focus>({ kind: "search" });
     const tileRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-    const searchRef = useRef<HTMLInputElement | null>(null);
+    // Two refs for the search affordance:
+    //   searchWrapRef - the D-pad target (a button wrapping the input).
+    //                   Focusing this does NOT open the IME.
+    //   searchInputRef - the actual <input>. Focused on Enter, which
+    //                    opens the IME on Android TV.
+    const searchWrapRef = useRef<HTMLButtonElement | null>(null);
+    const searchInputRef = useRef<HTMLInputElement | null>(null);
     const sentinelRef = useRef<HTMLDivElement | null>(null);
     const [menuOpen, setMenuOpen] = useState(false);
     // Adult-override gesture (M9): long-press UP on a focused tile
@@ -417,13 +423,14 @@ export default function Library() {
     }, [loading, items.length, continueItems.length]);
 
     // Keep focused element on screen + imperatively focus the right
-    // DOM node. Tab + filter pills get nearest-block scroll (small
-    // headers, no need to recenter). Tiles in cw/grid land vertically
-    // centered so the kid's eye-line stays stable as they D-pad.
+    // DOM node. The "search" kind focuses the wrap button (a non-input)
+    // so the Android TV IME does NOT auto-open just because the kid
+    // D-padded onto the search bar - the IME opens only when the kid
+    // presses Enter on it (see activate()).
     useEffect(() => {
         if (focus.kind === "search") {
-            searchRef.current?.focus({ preventScroll: false });
-            searchRef.current?.scrollIntoView({ block: "nearest" });
+            searchWrapRef.current?.focus({ preventScroll: false });
+            searchWrapRef.current?.scrollIntoView({ block: "nearest" });
             return;
         }
         const key = focusKey(focus);
@@ -479,6 +486,7 @@ export default function Library() {
                         nav,
                         playSuffix,
                         () => setMenuOpen(true),
+                        () => searchInputRef.current?.focus(),
                     ),
             }));
         },
@@ -548,16 +556,34 @@ export default function Library() {
             {adminProfileId && !session && <AdminPreviewBanner />}
 
             <div className="library-controls">
-                <input
-                    ref={searchRef}
-                    type="search"
-                    className={`library-search ${focus.kind === "search" ? "focused" : ""}`}
-                    placeholder="Search"
-                    aria-label="Search library"
-                    value={searchInput}
-                    onChange={(e) => setSearchInput(e.target.value)}
+                <button
+                    ref={searchWrapRef}
+                    type="button"
+                    className={`library-search-wrap ${
+                        focus.kind === "search" ? "focused" : ""
+                    }`}
+                    tabIndex={focus.kind === "search" ? 0 : -1}
+                    onClick={() => searchInputRef.current?.focus()}
                     onFocus={() => setFocus({ kind: "search" })}
-                />
+                    aria-label="Search library"
+                >
+                    <input
+                        ref={searchInputRef}
+                        type="search"
+                        className="library-search"
+                        placeholder="Search"
+                        value={searchInput}
+                        onChange={(e) => setSearchInput(e.target.value)}
+                        // The wrap owns the D-pad focus; tabbing into the
+                        // input directly would skip the no-IME state. -1
+                        // keeps the input out of the focus order while
+                        // still allowing imperative .focus() calls.
+                        tabIndex={-1}
+                        // Stop click bubbling so tapping the input doesn't
+                        // double-fire (wrap's onClick refocuses).
+                        onClick={(e) => e.stopPropagation()}
+                    />
+                </button>
             </div>
 
             <div className="filter-row" role="tablist">
@@ -777,6 +803,7 @@ function activate(
     nav: ReturnType<typeof useNavigate>,
     playSuffix: string,
     onOpenMenu: () => void,
+    onOpenSearch: () => void,
 ) {
     if (f.kind === "tab") {
         if (f.index === 2) {
@@ -788,7 +815,10 @@ function activate(
         return;
     }
     if (f.kind === "search") {
-        // No activation behavior - the input itself handles its events.
+        // Enter on the highlighted search bar promotes DOM focus to
+        // the real <input>, which opens the Android TV IME. Pure D-pad
+        // navigation onto search just highlights it, no IME.
+        onOpenSearch();
         return;
     }
     if (f.kind === "filter") {

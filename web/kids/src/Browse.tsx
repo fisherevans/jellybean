@@ -164,6 +164,17 @@ export default function Browse() {
         if (!data) return;
         const rows = data.rows;
         if (rows.length === 0) return;
+        // preventDefault for ANY arrow / Enter the page handles, even
+        // if the move clamps at an edge. Otherwise the browser's
+        // default arrow behavior scrolls the window.
+        const isHandled =
+            e.key === "ArrowLeft" ||
+            e.key === "ArrowRight" ||
+            e.key === "ArrowUp" ||
+            e.key === "ArrowDown" ||
+            e.key === "Enter" ||
+            e.key === " ";
+        if (isHandled) e.preventDefault();
         if (focus.kind === "tile") {
             const row = rows[focus.row];
             if (!row) return;
@@ -171,13 +182,11 @@ export default function Browse() {
                 case "ArrowRight":
                     if (focus.col < row.items.length - 1) {
                         setFocus({ kind: "tile", row: focus.row, col: focus.col + 1 });
-                        e.preventDefault();
                     }
                     return;
                 case "ArrowLeft":
                     if (focus.col > 0) {
                         setFocus({ kind: "tile", row: focus.row, col: focus.col - 1 });
-                        e.preventDefault();
                     }
                     return;
                 case "ArrowDown":
@@ -185,7 +194,6 @@ export default function Browse() {
                         const nextLen = rows[focus.row + 1].items.length;
                         const nextCol = Math.min(focus.col, Math.max(0, nextLen - 1));
                         setFocus({ kind: "tile", row: focus.row + 1, col: nextCol });
-                        e.preventDefault();
                     }
                     return;
                 case "ArrowUp":
@@ -195,11 +203,8 @@ export default function Browse() {
                         setFocus({ kind: "tile", row: focus.row - 1, col: prevCol });
                     } else {
                         lastTileRef.current = { row: focus.row, col: focus.col };
-                        // Browse is the active tab on this page; land
-                        // focus on it so Left/Right cycles to Library.
                         setFocus({ kind: "tab", index: 0 });
                     }
-                    e.preventDefault();
                     return;
                 case "Enter":
                 case " ": {
@@ -210,7 +215,6 @@ export default function Browse() {
                             : `/play/${encodeURIComponent(item.Id)}`;
                         nav(`${target}${location.search}`);
                     }
-                    e.preventDefault();
                     return;
                 }
             }
@@ -219,18 +223,15 @@ export default function Browse() {
             switch (e.key) {
                 case "ArrowDown":
                     setFocus({ kind: "tile", ...lastTileRef.current });
-                    e.preventDefault();
                     return;
                 case "ArrowLeft":
                     if (focus.index > 0) {
                         setFocus({ kind: "tab", index: focus.index - 1 });
-                        e.preventDefault();
                     }
                     return;
                 case "ArrowRight":
                     if (focus.index < TAB_SLOT_COUNT - 1) {
                         setFocus({ kind: "tab", index: focus.index + 1 });
-                        e.preventDefault();
                     }
                     return;
                 case "Enter":
@@ -241,7 +242,6 @@ export default function Browse() {
                         const target = focus.index === 0 ? "browse" : "library";
                         nav(tabHref(target, location.search));
                     }
-                    e.preventDefault();
                     return;
                 }
             }
