@@ -139,7 +139,7 @@ export default function TagDetail() {
             <AddItemsPanel
                 tag={tag}
                 profileId={profile.id}
-                excludeIds={items?.map((it) => it.Id) ?? []}
+                taggedItems={items ?? []}
                 onChanged={async () => {
                     await Promise.all([refreshItems(), refreshTag()]);
                 }}
@@ -243,11 +243,16 @@ function TagSummaryPanel({ tag, onEdit, onDelete }: TagSummaryPanelProps) {
 type AddItemsPanelProps = {
     tag: Tag;
     profileId: number;
-    excludeIds: string[];
+    // Items currently in the tag, regardless of visibility state.
+    // Used to (a) exclude them from the addable results and (b) show
+    // them in the bottom "Already tagged" section when they match
+    // the search - including hidden items that the server-side
+    // visible-only filter would otherwise drop.
+    taggedItems: Item[];
     onChanged: () => Promise<void>;
 };
 
-function AddItemsPanel({ tag, profileId, excludeIds, onChanged }: AddItemsPanelProps) {
+function AddItemsPanel({ tag, profileId, taggedItems, onChanged }: AddItemsPanelProps) {
     const [search, setSearch] = useState("");
     const [debouncedSearch, setDebouncedSearch] = useState("");
     const [results, setResults] = useState<Item[]>([]);
@@ -257,7 +262,10 @@ function AddItemsPanel({ tag, profileId, excludeIds, onChanged }: AddItemsPanelP
     const [open, setOpen] = useState(false);
     const wrapRef = useRef<HTMLDivElement | null>(null);
 
-    const exclude = useMemo(() => new Set(excludeIds), [excludeIds]);
+    const exclude = useMemo(
+        () => new Set(taggedItems.map((it) => it.Id)),
+        [taggedItems],
+    );
 
     // Debounce search input by 250ms so each keystroke doesn't fire.
     useEffect(() => {
@@ -327,7 +335,43 @@ function AddItemsPanel({ tag, profileId, excludeIds, onChanged }: AddItemsPanelP
         }
     }
 
-    const filteredResults = results.filter((it) => !exclude.has(it.Id));
+    async function remove(it: Item) {
+        if (busyIds.has(it.Id)) return;
+        const next = new Set(busyIds);
+        next.add(it.Id);
+        setBusyIds(next);
+        setError(null);
+        try {
+            const remaining = (it.Tags ?? [])
+                .filter((t) => t.id !== tag.id)
+                .map((t) => t.id);
+            // force=true: removing a tag from a hidden item is the
+            // intentional cleanup path the server explicitly allows.
+            await api.setItemTags(it.Id, remaining, { force: true });
+            await onChanged();
+        } catch (err) {
+            setError(err instanceof HttpError ? err.message : String(err));
+        } finally {
+            const drop = new Set(busyIds);
+            drop.delete(it.Id);
+            setBusyIds(drop);
+        }
+    }
+
+    // Split results: addable (visible items not yet tagged) come from
+    // the server search; already-tagged results come from the parent's
+    // taggedItems array filtered locally by the search query. We
+    // can't get tagged-but-hidden items from the server search
+    // (state: "visible" filters them out), so the local filter is
+    // necessary to show those.
+    const addableResults = results.filter((it) => !exclude.has(it.Id));
+    const alreadyTaggedResults = useMemo(() => {
+        const q = debouncedSearch.toLowerCase();
+        if (!q) return [] as Item[];
+        return taggedItems.filter((it) =>
+            it.Name.toLowerCase().includes(q),
+        );
+    }, [taggedItems, debouncedSearch]);
 
     return (
         <section className="tag-add-section">
@@ -345,40 +389,93 @@ function AddItemsPanel({ tag, profileId, excludeIds, onChanged }: AddItemsPanelP
                 {open && (
                     <div className="tag-add-popup">
                         {error && <div className="error">{error}</div>}
-                        {loading && filteredResults.length === 0 ? (
+                        {loading &&
+                        addableResults.length === 0 &&
+                        alreadyTaggedResults.length === 0 ? (
                             <div className="muted tag-add-popup-empty">
                                 Loading…
                             </div>
-                        ) : filteredResults.length === 0 ? (
+                        ) : addableResults.length === 0 &&
+                          alreadyTaggedResults.length === 0 ? (
                             <div className="muted tag-add-popup-empty">
                                 {debouncedSearch
                                     ? "No matching visible items."
                                     : "No more visible items to tag."}
                             </div>
                         ) : (
-                            <ul className="tag-add-popup-list">
-                                {filteredResults.map((it) => (
-                                    <li key={it.Id} className="tag-add-popup-row">
-                                        <div className="tag-add-popup-info">
-                                            <div className="tag-add-popup-name">
-                                                {it.Name}
-                                            </div>
-                                            <div className="muted">
-                                                {it.Type}
-                                                {it.ProductionYear
-                                                    ? ` · ${it.ProductionYear}`
-                                                    : ""}
-                                            </div>
+                            <>
+                                {addableResults.length > 0 && (
+                                    <ul className="tag-add-popup-list">
+                                        {addableResults.map((it) => (
+                                            <li
+                                                key={it.Id}
+                                                className="tag-add-popup-row"
+                                            >
+                                                <div className="tag-add-popup-info">
+                                                    <div className="tag-add-popup-name">
+                                                        {it.Name}
+                                                    </div>
+                                                    <div className="muted">
+                                                        {it.Type}
+                                                        {it.ProductionYear
+                                                            ? ` · ${it.ProductionYear}`
+                                                            : ""}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => add(it)}
+                                                    disabled={busyIds.has(
+                                                        it.Id,
+                                                    )}
+                                                >
+                                                    {busyIds.has(it.Id)
+                                                        ? "Adding…"
+                                                        : "Add"}
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                                {alreadyTaggedResults.length > 0 && (
+                                    <>
+                                        <div className="tag-add-popup-section-head">
+                                            Already tagged
                                         </div>
-                                        <button
-                                            onClick={() => add(it)}
-                                            disabled={busyIds.has(it.Id)}
-                                        >
-                                            {busyIds.has(it.Id) ? "Adding…" : "Add"}
-                                        </button>
-                                    </li>
-                                ))}
-                            </ul>
+                                        <ul className="tag-add-popup-list">
+                                            {alreadyTaggedResults.map((it) => (
+                                                <li
+                                                    key={it.Id}
+                                                    className="tag-add-popup-row tag-add-popup-row-tagged"
+                                                >
+                                                    <div className="tag-add-popup-info">
+                                                        <div className="tag-add-popup-name">
+                                                            {it.Name}
+                                                        </div>
+                                                        <div className="muted">
+                                                            {it.Type}
+                                                            {it.ProductionYear
+                                                                ? ` · ${it.ProductionYear}`
+                                                                : ""}
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() =>
+                                                            remove(it)
+                                                        }
+                                                        disabled={busyIds.has(
+                                                            it.Id,
+                                                        )}
+                                                    >
+                                                        {busyIds.has(it.Id)
+                                                            ? "Removing…"
+                                                            : "Remove"}
+                                                    </button>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </>
+                                )}
+                            </>
                         )}
                     </div>
                 )}

@@ -1697,6 +1697,27 @@ a.tag-item-name:hover {
 .tag-add-popup-row:last-child {
     border-bottom: 0;
 }
+/* Section divider between "Add" results (top) and "Already tagged"
+   results (bottom). Sticky so the kid sees what they're looking at
+   when the popup is scrolled. */
+.tag-add-popup-section-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--card);
+    color: var(--muted);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0.45rem 0.85rem;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+}
+/* Already-tagged rows are dimmer than addable rows so the eye
+   reads "these are already in the tag" before "I can remove them." */
+.tag-add-popup-row-tagged {
+    opacity: 0.78;
+}
 .tag-add-popup-info {
     flex: 1;
     min-width: 0;
