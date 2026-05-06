@@ -253,14 +253,17 @@ export default function Browse() {
     // automatic scroll-into-view from focus() so it doesn't race the
     // explicit smooth scroll below.
     //
-    // Rapid D-pad presses produce a stutter when each focus change
-    // triggers a fresh smooth scrollIntoView - the in-flight smooth
-    // scroll gets canceled mid-animation and the velocity resets.
-    // We coalesce via requestAnimationFrame: multiple focus changes
-    // within a single frame collapse to one scroll to the latest
-    // target. Visually this turns "press right 5 times fast" from
-    // 5 stuttering scrolls into a single smooth slide.
-    const scrollRafRef = useRef<number | null>(null);
+    // Tile focus uses INSTANT scroll (default "auto" behavior).
+    // Smooth scrolling on rapid D-pad presses stutters: each new
+    // keydown cancels the in-flight smooth animation mid-ease and
+    // restarts from zero velocity, producing a visible halt-and-go
+    // pattern. Auto + CSS scroll-snap-align: start makes the row
+    // jump tile-by-tile, which reads as snappy stepping rather than
+    // stuttering. The rAF coalescing tried earlier didn't help -
+    // canceled rAFs still left scrolls mid-flight when frames missed.
+    //
+    // Window-level scroll (tab focus) stays smooth because it only
+    // fires on discrete state changes, not on rapid sequences.
     useEffect(() => {
         const k =
             focus.kind === "tile"
@@ -269,22 +272,29 @@ export default function Browse() {
         const el = tileRefs.current[k];
         if (!el) return;
         el.focus({ preventScroll: true });
-        if (scrollRafRef.current !== null) {
-            cancelAnimationFrame(scrollRafRef.current);
+        if (focus.kind === "tab") {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+        } else {
+            el.scrollIntoView({
+                block: "center",
+                inline: "start",
+            });
         }
-        scrollRafRef.current = requestAnimationFrame(() => {
-            scrollRafRef.current = null;
-            if (focus.kind === "tab") {
-                window.scrollTo({ top: 0, behavior: "smooth" });
-            } else {
-                el.scrollIntoView({
-                    block: "center",
-                    inline: "start",
-                    behavior: "smooth",
-                });
-            }
-        });
     }, [focus]);
+
+    // Re-focus the Menu tab when the menu modal closes. The modal's
+    // close path doesn't change `focus` state (still tab[2]), so the
+    // focus effect above doesn't re-fire and DOM focus stays on body
+    // (the modal's last-focused element was unmounted with the modal).
+    // Without this, the kid sees the menu pill still highlighted but
+    // pressing Enter does nothing because no element has DOM focus.
+    const wasMenuOpen = useRef(false);
+    useEffect(() => {
+        if (wasMenuOpen.current && !menuOpen) {
+            tileRefs.current["tab:2"]?.focus({ preventScroll: true });
+        }
+        wasMenuOpen.current = menuOpen;
+    }, [menuOpen]);
 
     if (error) {
         return (

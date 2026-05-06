@@ -427,17 +427,19 @@ export default function Library() {
         });
     }, [loading, items.length, continueItems.length]);
 
-    // Keep focused element on screen + imperatively focus the right
-    // DOM node. preventScroll=true on focus() suppresses the
-    // browser's auto-scroll-into-view so it can't race the smooth
-    // scroll below.
+    // preventScroll=true on focus() suppresses the browser's
+    // auto-scroll-into-view so we control all scrolls explicitly.
     //
-    // rAF-coalesce: rapid D-pad presses can trigger 4-5 focus changes
-    // in 200ms. Issuing a smooth scroll on each one cancels the
-    // previous in-flight animation and the visible velocity stutters.
-    // Coalescing to one scroll per animation frame collapses bursts
-    // into a single fluid slide.
-    const scrollRafRef = useRef<number | null>(null);
+    // Tile scrolls (cw / grid) use INSTANT scroll (default "auto"
+    // behavior). Smooth scrolling stutters on rapid D-pad presses
+    // because each new keydown cancels the in-flight smooth scroll
+    // mid-ease and restarts from zero velocity. With auto + CSS
+    // scroll-snap, the row jumps tile-by-tile, which reads as snappy
+    // stepping rather than stuttering.
+    //
+    // Top-area focus (tab / search / filter) snaps the window to top
+    // with smooth behavior - it only fires once per discrete state
+    // change so it doesn't race itself.
     useEffect(() => {
         const inTopArea =
             focus.kind === "tab" ||
@@ -450,30 +452,29 @@ export default function Library() {
             const el = tileRefs.current[key];
             if (el) el.focus({ preventScroll: true });
         }
-        if (scrollRafRef.current !== null) {
-            cancelAnimationFrame(scrollRafRef.current);
+        if (inTopArea) {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+        } else if (focus.kind === "cw") {
+            const el = tileRefs.current[focusKey(focus)];
+            el?.scrollIntoView({ block: "center", inline: "start" });
+        } else if (focus.kind === "grid") {
+            const el = tileRefs.current[focusKey(focus)];
+            el?.scrollIntoView({ block: "center", inline: "nearest" });
         }
-        scrollRafRef.current = requestAnimationFrame(() => {
-            scrollRafRef.current = null;
-            if (inTopArea) {
-                window.scrollTo({ top: 0, behavior: "smooth" });
-            } else if (focus.kind === "cw") {
-                const el = tileRefs.current[focusKey(focus)];
-                el?.scrollIntoView({
-                    block: "center",
-                    inline: "start",
-                    behavior: "smooth",
-                });
-            } else if (focus.kind === "grid") {
-                const el = tileRefs.current[focusKey(focus)];
-                el?.scrollIntoView({
-                    block: "center",
-                    inline: "nearest",
-                    behavior: "smooth",
-                });
-            }
-        });
     }, [focus]);
+
+    // Re-focus the Menu tab when the menu modal closes. Without this
+    // the page focus state is still tab[2] but DOM focus is on body
+    // (the modal's last-focused button was unmounted with the modal),
+    // so the kid sees the pill highlighted but pressing Enter does
+    // nothing because no element receives the keydown.
+    const wasMenuOpen = useRef(false);
+    useEffect(() => {
+        if (wasMenuOpen.current && !menuOpen) {
+            tileRefs.current["tab:2"]?.focus({ preventScroll: true });
+        }
+        wasMenuOpen.current = menuOpen;
+    }, [menuOpen]);
 
     // Calculate columns in the grid based on viewport width to drive
     // up/down navigation. The CSS grid uses auto-fill with minmax(180px),
@@ -613,12 +614,13 @@ export default function Library() {
                         placeholder="Search"
                         value={searchInput}
                         onChange={(e) => setSearchInput(e.target.value)}
-                        // The wrap owns the D-pad focus; tabbing into
-                        // the input directly would skip the no-IME
-                        // state. -1 keeps the input out of the focus
-                        // order while still allowing imperative
-                        // .focus() calls (Enter on the wrap promotes).
-                        tabIndex={-1}
+                        // No tabIndex=-1: Android WebView's IME launch
+                        // is gated on the focused input being in the
+                        // normal tab order, and -1 was suppressing
+                        // it. The wrap's tabIndex toggles to keep
+                        // D-pad nav landing on the wrap first; the
+                        // input only gets DOM focus when Enter on the
+                        // wrap promotes it.
                         // Stop click bubbling so tapping the input
                         // doesn't double-fire (wrap's onClick refocuses).
                         onClick={(e) => e.stopPropagation()}
