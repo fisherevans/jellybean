@@ -1257,19 +1257,24 @@ a,
    tap targets are deliberately oversized vs. the admin web app. */
 .watch-screen {
     position: relative;
-    min-height: 100vh;
     color: var(--fg);
-    overflow-y: auto;
-    padding: 1.5rem 2rem 4rem;
+    /* Let the page fit its actual content. min-height: 100vh was
+       creating an empty bottom band on movies (no accordion to fill
+       below the hero). For series the accordion provides plenty of
+       height; for movies, the page now ends right after the hero. */
+    padding: 1.5rem 2rem 2rem;
 }
 .watch-backdrop {
     position: absolute;
+    /* Cover the whole .watch-screen, not just the top 60vh - the
+       blurred backdrop becomes the page background instead of fading
+       into a hard-edged grey/black band partway down. */
     inset: 0;
     width: 100%;
-    height: 60vh;
+    height: 100%;
     object-fit: cover;
     z-index: 0;
-    filter: blur(20px) brightness(0.45);
+    filter: blur(20px) brightness(0.4);
     transform: scale(1.05);
 }
 .watch-backdrop-fallback {
@@ -1488,9 +1493,10 @@ a,
     color: var(--muted);
     font-size: 0.85rem;
 }
-/* Episode poster wrapper hosts the in-progress overlay AND the
-   bar-below-thumb. Position relative so the absolute children clip
-   inside the wrap. */
+/* Episode poster wrapper. Renders ONE progress treatment at a time:
+   in-progress -> overlay flush with the thumb bottom (width = pct%);
+   watched     -> full strip below the thumb. The two are mutually
+   exclusive so the kid never sees double bars. */
 .watch-episode-thumb-wrap {
     position: relative;
     flex-shrink: 0;
@@ -1498,20 +1504,19 @@ a,
     flex-direction: column;
     gap: 0.25rem;
 }
-/* Overlay on the bottom of the poster - in-progress only. */
+/* Overlay flush with the bottom of the poster - in-progress only.
+   Sits inside the thumb's overflow:hidden box so it clips against
+   the poster's rounded corner. */
 .watch-episode-thumb-progress {
     position: absolute;
     left: 0;
-    /* Sit just above the poster's bottom edge but inside the thumb. */
-    bottom: 30px;
+    bottom: 0;
     height: 4px;
     background: var(--accent);
-    border-top-right-radius: 2px;
     pointer-events: none;
     z-index: 1;
 }
-/* Strip beneath the poster, full width of the thumb. Watched = full
-   accent fill; in-progress = partial fill matching pct. */
+/* Strip beneath the poster - watched only (full width). */
 .watch-episode-thumb-bar {
     position: relative;
     width: 100%;
@@ -1571,32 +1576,44 @@ a,
     color: var(--muted);
 }
 
-/* A-Z jumpscroll bar - pinned to the right edge of the page so it
-   stays visible as the kid scrolls the grid. Letters with no items
-   are dimmed and unfocusable. */
-.library-alpha-bar {
+/* A-Z jumpscroll bar - pinned to the right edge of the page. The
+   wrap is a fixed-height viewport; the inner .library-alpha-bar
+   track slides via translateY so the focused letter is always at
+   the visual center. The viewport has overflow hidden so letters
+   above + below scroll out of view. */
+.library-alpha-bar-wrap {
     position: fixed;
-    top: 50%;
+    top: 0;
     right: 0.75rem;
-    transform: translateY(-50%);
+    height: 100vh;
+    width: 3.5rem;
     display: flex;
-    flex-direction: column;
-    gap: 1px;
-    background: rgba(0, 0, 0, 0.4);
-    border-radius: 14px;
-    padding: 0.4rem 0.3rem;
-    backdrop-filter: blur(4px);
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
     z-index: 50;
     pointer-events: auto;
+}
+.library-alpha-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    background: rgba(0, 0, 0, 0.55);
+    border-radius: 18px;
+    padding: 0.4rem 0.3rem;
+    backdrop-filter: blur(4px);
+    transition: transform 180ms ease-out;
+    /* The track has its full natural height (~1100px for 26 letters
+       at 1.4rem each + gaps); the wrap above clips it. */
 }
 .library-alpha-letter {
     background: transparent;
     border: 2px solid transparent;
     color: #aaa;
-    font-size: 0.85rem;
+    font-size: 1.15rem;
     font-weight: 700;
-    width: 1.6rem;
-    height: 1.4rem;
+    width: 2.2rem;
+    height: 2rem;
     line-height: 1;
     border-radius: 999px;
     padding: 0;
@@ -1604,7 +1621,11 @@ a,
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: background 100ms ease, color 100ms ease;
+    transition:
+        background 120ms ease,
+        color 120ms ease,
+        transform 120ms ease;
+    flex-shrink: 0;
 }
 .library-alpha-letter:hover:not(.disabled) {
     color: #fff;
@@ -1615,6 +1636,7 @@ a,
     background: var(--accent);
     color: var(--accent-fg);
     border-color: #fff;
+    transform: scale(1.15);
 }
 .library-alpha-letter.disabled {
     color: #444;

@@ -31,7 +31,7 @@ export default function Login() {
     // mirrors the Index redirect but covers the case of a user manually
     // navigating to /login while a token is in storage.
     useEffect(() => {
-        if (getSession()) nav("/library", { replace: true });
+        if (getSession()) nav("/browse", { replace: true });
     }, [nav]);
 
     async function onSubmit(e: FormEvent) {
@@ -84,7 +84,7 @@ export default function Login() {
             // Warm the library cache off the critical path so the next
             // screen feels instant. Fire-and-forget; nav doesn't wait.
             prefetchLibrary();
-            nav("/library", { replace: true });
+            nav("/browse", { replace: true });
         } catch {
             setError("Couldn't reach the server. Try again.");
         } finally {

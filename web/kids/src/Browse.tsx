@@ -57,6 +57,10 @@ type Focus =
     | { kind: "tab"; index: number }
     | { kind: "tile"; row: number; col: number };
 
+// sessionStorage key for the last activated tile (used to restore
+// focus when the kid pops back from /watch or /play).
+const LAST_FOCUSED_KEY = "jellybean.kids.browse.lastFocused";
+
 export default function Browse() {
     const nav = useNavigate();
     const [searchParams] = useSearchParams();
@@ -135,6 +139,56 @@ export default function Browse() {
     useEffect(() => {
         refresh();
     }, [refresh]);
+
+    // First-time focus seeding when data lands. Two strategies, in
+    // priority order:
+    //   1. sessionStorage holds the last activated tile id (saved on
+    //      Enter / click). When present and findable in the loaded
+    //      rows, restore focus there - the kid pressed back from
+    //      /watch or /play and expects to land where they came from.
+    //   2. Otherwise, focus the first tile of the favorites row (or
+    //      row 0 if there's no favorites row in the current layout).
+    const initialFocusSetRef = useRef(false);
+    useEffect(() => {
+        if (initialFocusSetRef.current) return;
+        if (!data || data.rows.length === 0) return;
+        initialFocusSetRef.current = true;
+
+        const remembered = (() => {
+            try {
+                const raw = sessionStorage.getItem(LAST_FOCUSED_KEY);
+                return raw ? (JSON.parse(raw) as { itemId: string }) : null;
+            } catch {
+                return null;
+            }
+        })();
+        if (remembered?.itemId) {
+            for (let r = 0; r < data.rows.length; r++) {
+                const c = data.rows[r].items.findIndex(
+                    (it) => it.Id === remembered.itemId,
+                );
+                if (c >= 0) {
+                    setFocus({ kind: "tile", row: r, col: c });
+                    return;
+                }
+            }
+        }
+        const favIdx = data.rows.findIndex((r) => r.type === "favorites");
+        const targetRow =
+            favIdx >= 0 && data.rows[favIdx].items.length > 0 ? favIdx : 0;
+        setFocus({ kind: "tile", row: targetRow, col: 0 });
+    }, [data]);
+
+    function rememberLastFocused(itemId: string) {
+        try {
+            sessionStorage.setItem(
+                LAST_FOCUSED_KEY,
+                JSON.stringify({ itemId }),
+            );
+        } catch {
+            /* ignore */
+        }
+    }
 
     // Progressive Back escape: anywhere off (tile 0,0) collapses there
     // first. From (tile 0,0) the next back falls through to the WebView
@@ -224,6 +278,7 @@ export default function Browse() {
                 case " ": {
                     const item = row.items[focus.col];
                     if (item) {
+                        rememberLastFocused(item.Id);
                         const target = shouldShowWatchMenu(item)
                             ? `/watch/${encodeURIComponent(item.Id)}`
                             : `/play/${encodeURIComponent(item.Id)}`;
@@ -379,6 +434,7 @@ export default function Browse() {
                                     focused={focused}
                                     showProgress
                                     onClick={() => {
+                                        rememberLastFocused(item.Id);
                                         const target = shouldShowWatchMenu(item)
                                             ? `/watch/${encodeURIComponent(item.Id)}`
                                             : `/play/${encodeURIComponent(item.Id)}`;

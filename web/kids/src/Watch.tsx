@@ -701,17 +701,13 @@ function EpisodeAccordion({ response, onPlay }: EpisodeAccordionProps) {
                                         (e.userData?.Played ?? false) ||
                                         pct >= 90;
                                     const inProgress = pct >= 5 && pct < 90;
-                                    // Progress bar sizing:
-                                    //   watched      -> full width below thumb
-                                    //   in-progress  -> partial overlay on
-                                    //                   thumb + matching bar
-                                    //                   below
-                                    //   unwatched    -> nothing
-                                    const barPct = watched
-                                        ? 100
-                                        : inProgress
-                                          ? pct
-                                          : 0;
+                                    // One progress bar per episode:
+                                    //   in-progress -> overlay on the thumb at
+                                    //                  bottom-edge with width
+                                    //                  matching pct.
+                                    //   watched     -> full strip below thumb,
+                                    //                  visually marks "done."
+                                    //   unwatched   -> no bar.
                                     return (
                                         <li key={e.id}>
                                             <button
@@ -729,14 +725,14 @@ function EpisodeAccordion({ response, onPlay }: EpisodeAccordionProps) {
                                                             aria-hidden
                                                         />
                                                     )}
-                                                    {barPct > 0 && (
+                                                    {watched && !inProgress && (
                                                         <div
                                                             className="watch-episode-thumb-bar"
                                                             aria-hidden
                                                         >
                                                             <div
                                                                 className="watch-episode-thumb-bar-fill"
-                                                                style={{ width: `${barPct}%` }}
+                                                                style={{ width: "100%" }}
                                                             />
                                                         </div>
                                                     )}
