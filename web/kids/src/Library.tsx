@@ -423,23 +423,35 @@ export default function Library() {
     }, [loading, items.length, continueItems.length]);
 
     // Keep focused element on screen + imperatively focus the right
-    // DOM node. The "search" kind focuses the wrap button (a non-input)
-    // so the Android TV IME does NOT auto-open just because the kid
-    // D-padded onto the search bar - the IME opens only when the kid
-    // presses Enter on it (see activate()).
+    // DOM node. preventScroll=true suppresses the browser's
+    // auto-scroll-into-view from focus(); we run the scroll explicitly
+    // so it happens once and uses our scroll-behavior (smooth).
+    //
+    // Top-area focus (tab / search / filter) snaps the page back to
+    // top so the kid is never staring at a sliver of search bar above
+    // a half-scrolled grid. Tiles in cw/grid get vertically centered.
     useEffect(() => {
+        const inTopArea =
+            focus.kind === "tab" ||
+            focus.kind === "search" ||
+            focus.kind === "filter";
         if (focus.kind === "search") {
-            searchWrapRef.current?.focus({ preventScroll: false });
-            searchWrapRef.current?.scrollIntoView({ block: "nearest" });
-            return;
+            searchWrapRef.current?.focus({ preventScroll: true });
+        } else {
+            const key = focusKey(focus);
+            const el = tileRefs.current[key];
+            if (el) el.focus({ preventScroll: true });
         }
-        const key = focusKey(focus);
-        const el = tileRefs.current[key];
-        if (el) {
-            el.focus({ preventScroll: false });
-            const block: ScrollLogicalPosition =
-                focus.kind === "cw" || focus.kind === "grid" ? "center" : "nearest";
-            el.scrollIntoView({ block, inline: "nearest" });
+        if (inTopArea) {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+        } else if (focus.kind === "cw" || focus.kind === "grid") {
+            const key = focusKey(focus);
+            const el = tileRefs.current[key];
+            el?.scrollIntoView({
+                block: "center",
+                inline: "nearest",
+                behavior: "smooth",
+            });
         }
     }, [focus]);
 

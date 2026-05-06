@@ -16,6 +16,14 @@
     --accent-soft: #ffe4fa; /* lavender-veil */
 }
 
+html {
+    /* Smooth scrolling for window-level scrolls (window.scrollTo from
+       focus changes onto top-area buttons, programmatic scrolls from
+       focus effects). The Skyworth WebView is Chromium-based and
+       respects this. */
+    scroll-behavior: smooth;
+}
+
 body {
     margin: 0;
     background: var(--bg);
@@ -320,16 +328,16 @@ a,
 
 .cw-scroll {
     display: flex;
-    gap: 1rem;
+    gap: 1.4rem;
     overflow-x: auto;
     /* CSS spec: when overflow-x is auto/scroll, overflow-y: visible is
-       coerced to auto. So the focus zoom (transform: scale 1.08) gets
-       implicitly Y-clipped. Pad enough that the zoom never reaches the
-       container's edge. */
-    padding: 1rem 0.25rem 1.5rem;
+       coerced to auto. Pad enough on every side that the focus zoom
+       (transform: scale 1.08) never reaches the container's clip rect.
+       The horizontal padding is what keeps the leftmost / rightmost
+       tile from getting clipped at its outer edge. */
+    padding: 1rem 1.25rem 1.5rem;
     scroll-snap-type: x mandatory;
-    /* contain: layout - layout isolation only, NO paint clipping. The
-       previous `contain: paint` was clipping the zoomed tile. */
+    /* contain: layout - layout isolation only, NO paint clipping. */
     contain: layout;
 }
 
@@ -345,10 +353,12 @@ a,
 .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 1.1rem 0.9rem;
-    /* Headroom so .tile.focused's scale(1.08) doesn't visually clip
-       where rows meet vertically. */
-    padding: 0.75rem 0.25rem 1rem;
+    /* Slightly bigger horizontal gap than vertical: the cards' aspect
+       ratio is 2:3 so equal x/y looks tight horizontally. */
+    gap: 1.1rem 1.25rem;
+    /* Headroom on every side so .tile.focused's scale(1.08) doesn't
+       clip at the leftmost column or where rows meet vertically. */
+    padding: 0.75rem 1.25rem 1rem;
     /* contain: layout - layout isolation only, NO paint clipping. */
     contain: layout;
 }
@@ -1014,14 +1024,15 @@ a,
 }
 .browse-row-items {
     display: flex;
-    gap: 0.85rem;
+    gap: 1.4rem;
     overflow-x: auto;
-    /* overflow-x: auto coerces overflow-y to auto by spec. Pad enough
-       on top/bottom so the focus zoom (1.08) lives inside the box. */
-    padding: 1rem 0.25rem 1.5rem;
+    /* overflow-x: auto coerces overflow-y to auto by spec. Pad
+       enough on every side so the focus zoom (1.08) lives inside
+       the box - including the LEFT side so the leftmost tile
+       doesn't clip when focused. */
+    padding: 1rem 1.25rem 1.5rem;
     scroll-snap-type: x mandatory;
-    /* contain: layout - layout isolation only, NO paint clipping.
-       Earlier `contain: layout paint` was clipping the zoomed tile. */
+    /* contain: layout - layout isolation only, NO paint clipping. */
     contain: layout;
 }
 .browse-tile {

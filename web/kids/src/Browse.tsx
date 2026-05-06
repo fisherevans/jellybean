@@ -248,9 +248,14 @@ export default function Browse() {
         }
     }
 
-    // Scroll focused tile into view + imperatively focus the DOM
-    // element when state changes. Vertically centering the focused
-    // row keeps the kid's eye-line stable as they D-pad up and down.
+    // Scroll the focused element into view + imperatively focus the
+    // DOM element. preventScroll=true suppresses the browser's
+    // automatic scroll-into-view from focus() so it doesn't race the
+    // explicit smooth scroll below (the race produces the "jump 80%
+    // then crawl the rest" feel).
+    //
+    // Tab focus snaps the page to top so the kid never lands on a
+    // sliver-of-tab-pill view; tile focus vertically centers the row.
     useEffect(() => {
         const k =
             focus.kind === "tile"
@@ -258,8 +263,10 @@ export default function Browse() {
                 : `tab:${focus.index}`;
         const el = tileRefs.current[k];
         if (!el) return;
-        el.focus({ preventScroll: false });
-        if (focus.kind === "tile") {
+        el.focus({ preventScroll: true });
+        if (focus.kind === "tab") {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+        } else {
             el.scrollIntoView({
                 block: "center",
                 inline: "center",
