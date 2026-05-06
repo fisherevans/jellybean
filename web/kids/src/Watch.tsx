@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { authHeaders, getSession, imageAuthSuffix, type Session } from "./auth";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
-import { scrollWindowToCenter } from "./smoothScroll";
+import { scrollWindowToCenter, scrollWindowToTop } from "./smoothScroll";
 import { useProgressiveBack } from "./useProgressiveBack";
 
 // Watch menu (M7). Pre-playback interstitial that surfaces a hero
@@ -133,7 +133,18 @@ export default function Watch() {
             const next = focusables[idx];
             if (next) {
                 next.focus({ preventScroll: true });
-                scrollWindowToCenter(next);
+                // Hero actions live at the top of the page; centering
+                // them would push the header off-screen. Scroll to top
+                // for anything inside .watch-hero or the back link;
+                // center for accordion buttons.
+                if (
+                    next.closest(".watch-hero") ||
+                    next.closest(".watch-back")
+                ) {
+                    scrollWindowToTop();
+                } else {
+                    scrollWindowToCenter(next);
+                }
             }
         };
         window.addEventListener("keydown", handler);
@@ -331,7 +342,9 @@ export default function Watch() {
                             <SeriesHeroActions
                                 series={item}
                                 episodes={episodes}
-                                onPlay={(epID) => goPlay(epID)}
+                                onPlay={(epID, opts) =>
+                                    goPlay(epID, opts?.restart ?? false)
+                                }
                             />
                         )}
                     </div>
@@ -384,14 +397,21 @@ function Poster({ id }: { id: string; hasPoster: boolean }) {
 type SeriesHeroActionsProps = {
     series: Item;
     episodes: EpisodesResponse | null;
-    onPlay: (id: string) => void;
+    onPlay: (id: string, opts?: { restart?: boolean }) => void;
 };
 
-// Series hero shows "Resume <S/E>" when there's a partially-watched
-// episode, "Continue with <S/E>" when there's a next-up after a
-// completed one, or "Start watching" otherwise.
+// Series hero shows up to three buttons:
+//   - Resume / Continue / Watch again (primary)
+//   - Restart (secondary, only when there's a "where the kid left off"
+//     position to restart - i.e., in-progress or completed)
+//   - Next (secondary, plays the episode AFTER the resume target so
+//     the kid can skip past whatever's currently in-progress)
 function SeriesHeroActions({ episodes, onPlay }: SeriesHeroActionsProps) {
     const target = useMemo(() => pickResumeTarget(episodes), [episodes]);
+    const next = useMemo(
+        () => pickNextEpisode(episodes, target?.episode.id),
+        [episodes, target?.episode.id],
+    );
     if (!target) {
         return (
             <button className="watch-action primary" disabled>
@@ -400,14 +420,44 @@ function SeriesHeroActions({ episodes, onPlay }: SeriesHeroActionsProps) {
         );
     }
     return (
-        <button
-            className="watch-action primary"
-            onClick={() => onPlay(target.episode.id)}
-            autoFocus
-        >
-            {target.label}
-        </button>
+        <>
+            <button
+                className="watch-action primary"
+                onClick={() => onPlay(target.episode.id)}
+                autoFocus
+            >
+                {target.label}
+            </button>
+            <button
+                className="watch-action"
+                onClick={() => onPlay(target.episode.id, { restart: true })}
+            >
+                Restart
+            </button>
+            {next && (
+                <button
+                    className="watch-action"
+                    onClick={() => onPlay(next.id)}
+                >
+                    Next ({epLabel(next)})
+                </button>
+            )}
+        </>
     );
+}
+
+function pickNextEpisode(
+    response: EpisodesResponse | null,
+    afterId: string | undefined,
+): SeriesEpisode | null {
+    if (!response || !afterId) return null;
+    const flat: SeriesEpisode[] = [];
+    for (const s of response.seasons) {
+        for (const e of s.episodes) flat.push(e);
+    }
+    const idx = flat.findIndex((e) => e.id === afterId);
+    if (idx < 0) return null;
+    return flat[idx + 1] ?? null;
 }
 
 function pickResumeTarget(
