@@ -162,7 +162,6 @@ export default function TagDetail() {
                             <TaggedItemCard
                                 key={it.Id}
                                 item={it}
-                                profileName={profile.name}
                                 onRemove={() => untagItem(it.Id)}
                             />
                         ))}
@@ -185,29 +184,22 @@ export default function TagDetail() {
     );
 }
 
-// TaggedItemCard is the same poster + metadata layout used by the
-// admin Browse page (.browse-item) but with a destructive Remove
-// action button instead of Edit. The "remove" treatment lives on
-// the action button itself - red border / red text - so the
-// destructive intent is obvious at a glance.
+// TaggedItemCard mirrors the admin Browse page card layout with a
+// destructive Remove action. Visibility state is intentionally
+// omitted - the kid client filters by visibility separately, and
+// the tag detail page is about tag membership, not the per-profile
+// visibility decision.
 type TaggedItemCardProps = {
     item: Item;
-    profileName: string;
     onRemove: () => void;
 };
 
-function TaggedItemCard({ item, profileName, onRemove }: TaggedItemCardProps) {
+function TaggedItemCard({ item, onRemove }: TaggedItemCardProps) {
     const posterURL = item.ImageTags?.Primary
         ? `/api/admin/items/${encodeURIComponent(item.Id)}/image?type=Primary&width=80&tag=${encodeURIComponent(
               item.ImageTags.Primary,
           )}`
         : null;
-    const stateLabel =
-        item.State === "visible"
-            ? "Visible"
-            : item.State === "hidden"
-              ? "Hidden"
-              : "Unset";
     return (
         <li className="browse-item">
             <div className="browse-item-link">
@@ -227,11 +219,6 @@ function TaggedItemCard({ item, profileName, onRemove }: TaggedItemCardProps) {
                     <div className="browse-item-head">
                         <div className="browse-item-name">{item.Name}</div>
                         <div className="browse-item-meta">
-                            <span
-                                className={`browse-state-pill state-${item.State ?? "unset"}`}
-                            >
-                                {stateLabel} for {profileName}
-                            </span>
                             <span className="muted">
                                 {item.Type === "Series" ? "TV" : "Movie"}
                                 {item.ProductionYear
