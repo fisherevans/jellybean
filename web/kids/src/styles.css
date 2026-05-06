@@ -1336,6 +1336,16 @@ a,
     font-size: 1.05rem;
     cursor: pointer;
     min-width: 140px;
+    /* Inline icon + label. Icons sized with em so they scale with the
+       button's text size and align to the cap height. */
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.watch-action svg {
+    width: 1.15em;
+    height: 1.15em;
+    flex-shrink: 0;
 }
 .watch-action.primary {
     background: var(--accent);

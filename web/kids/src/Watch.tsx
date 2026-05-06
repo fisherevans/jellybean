@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+    ArrowCounterClockwise,
+    Play,
+    SkipForward,
+} from "@phosphor-icons/react";
 import { authHeaders, getSession, imageAuthSuffix, type Session } from "./auth";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
 import { scrollWindowToCenter, scrollWindowToTop } from "./smoothScroll";
@@ -80,6 +85,7 @@ export default function Watch() {
     );
 
     const adminProfileId = searchParams.get("profileId");
+    const browseHref = `/browse${location.search}`;
     useEffect(() => {
         if (!session && !adminProfileId) {
             nav("/login", { replace: true });
@@ -151,8 +157,12 @@ export default function Watch() {
         return () => window.removeEventListener("keydown", handler);
     }, [override]);
 
-    // Progressive Back: collapse to the first hero action, then
-    // out to the parent.
+    // Progressive Back: collapse to the first hero action; from
+    // there, the next back navigates explicitly to /browse rather
+    // than relying on the natural popstate. Sentinel chains across
+    // pages can pop unpredictably on cheap WebViews and the user
+    // observed back-from-watch occasionally exiting the app instead
+    // of returning to Browse - explicit nav avoids that.
     useProgressiveBack(
         useCallback(() => {
             if (override) {
@@ -160,21 +170,48 @@ export default function Watch() {
                 return true;
             }
             const root = document.querySelector(".watch-screen");
-            if (!root) return false;
-            const focusables = Array.from(
-                root.querySelectorAll<HTMLElement>("button:not([disabled])"),
-            ).filter((el) => el.offsetParent !== null);
+            const focusables = root
+                ? Array.from(
+                      root.querySelectorAll<HTMLElement>(
+                          "button:not([disabled])",
+                      ),
+                  ).filter((el) => el.offsetParent !== null)
+                : [];
             const first = focusables[0];
-            if (!first) return false;
             const active = document.activeElement as HTMLElement | null;
-            if (active && active !== first) {
+            if (first && active && active !== first) {
                 first.focus({ preventScroll: true });
-                scrollWindowToCenter(first);
+                scrollWindowToTop();
                 return true;
             }
-            return false;
-        }, [override]),
+            // Already at the first focusable (or no focusables yet) -
+            // close the show menu by navigating to Browse.
+            nav(browseHref);
+            return true;
+        }, [override, nav, browseHref]),
     );
+
+    // On mount, defensively focus the first hero button + scroll to
+    // top. autoFocus on the primary hero button SHOULD handle this
+    // but on cheap WebView builds (Skyworth) the autoFocus race with
+    // mount + episode-fetch occasionally landed focus on the last
+    // episode button (the one rendered last in the open accordion
+    // season), scrolling the page to the bottom. Re-focusing
+    // explicitly when the item resolves nails the right initial state.
+    useEffect(() => {
+        if (!item) return;
+        // Defer one frame so the hero buttons have rendered.
+        const id = requestAnimationFrame(() => {
+            const root = document.querySelector(".watch-screen");
+            if (!root) return;
+            const heroBtn = root.querySelector<HTMLElement>(
+                ".watch-hero .watch-action.primary",
+            );
+            heroBtn?.focus({ preventScroll: true });
+            scrollWindowToTop();
+        });
+        return () => cancelAnimationFrame(id);
+    }, [item?.Id]);
 
     const fetchItem = useCallback(async () => {
         if (!itemId) return;
@@ -255,7 +292,6 @@ export default function Watch() {
         };
     }, [item, itemId]);
 
-    const browseHref = `/browse${location.search}`;
     if (error) {
         return (
             <div className="kids-page kids-error">
@@ -309,6 +345,7 @@ export default function Watch() {
                                 onClick={() => goPlay(item.Id)}
                                 autoFocus
                             >
+                                <Play weight="fill" aria-hidden />
                                 Resume
                             </button>
                         )}
@@ -318,6 +355,7 @@ export default function Watch() {
                                 onClick={() => goPlay(item.Id, true)}
                                 autoFocus
                             >
+                                <ArrowCounterClockwise weight="bold" aria-hidden />
                                 Watch again
                             </button>
                         )}
@@ -327,6 +365,7 @@ export default function Watch() {
                                 onClick={() => goPlay(item.Id)}
                                 autoFocus
                             >
+                                <Play weight="fill" aria-hidden />
                                 Play
                             </button>
                         )}
@@ -335,6 +374,7 @@ export default function Watch() {
                                 className="watch-action"
                                 onClick={() => goPlay(item.Id, true)}
                             >
+                                <ArrowCounterClockwise weight="bold" aria-hidden />
                                 Restart
                             </button>
                         )}
@@ -426,12 +466,14 @@ function SeriesHeroActions({ episodes, onPlay }: SeriesHeroActionsProps) {
                 onClick={() => onPlay(target.episode.id)}
                 autoFocus
             >
+                <Play weight="fill" aria-hidden />
                 {target.label}
             </button>
             <button
                 className="watch-action"
                 onClick={() => onPlay(target.episode.id, { restart: true })}
             >
+                <ArrowCounterClockwise weight="bold" aria-hidden />
                 Restart
             </button>
             {next && (
@@ -439,6 +481,7 @@ function SeriesHeroActions({ episodes, onPlay }: SeriesHeroActionsProps) {
                     className="watch-action"
                     onClick={() => onPlay(next.id)}
                 >
+                    <SkipForward weight="fill" aria-hidden />
                     Next ({epLabel(next)})
                 </button>
             )}
