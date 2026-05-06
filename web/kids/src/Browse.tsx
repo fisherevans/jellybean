@@ -9,6 +9,11 @@ import {
 import TabPill, { TAB_SLOT_COUNT, tabHref } from "./TabPill";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
 import MainMenuModal from "./MainMenuModal";
+import {
+    scrollTileIntoRowStart,
+    scrollWindowToCenter,
+    scrollWindowToTop,
+} from "./smoothScroll";
 import Tile from "./Tile";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { shouldShowWatchMenu } from "./Watch";
@@ -156,11 +161,12 @@ export default function Browse() {
     //   - tab + ArrowDown: jump back to (lastRow, lastCol) tile
     //   - tile + Enter: play
     //
-    // Out of scope here: Browse <-> Library swap via Left/Right on the
-    // tab. The pill's onClick handles that via mouse / Enter, which is
-    // sufficient for v1; D-pad-on-pill can come in a follow-up.
+    // The handler attaches to window (not the page div) so it fires
+    // even when DOM focus is on body - this happens during route
+    // transitions and on cheap WebView builds where imperative
+    // .focus() doesn't always take effect on the first try.
     const lastTileRef = useRef<{ row: number; col: number }>({ row: 0, col: 0 });
-    function onKey(e: React.KeyboardEvent) {
+    function onKey(e: KeyboardEvent) {
         if (!data) return;
         const rows = data.rows;
         if (rows.length === 0) return;
@@ -248,22 +254,12 @@ export default function Browse() {
         }
     }
 
-    // Scroll the focused element into view + imperatively focus the
-    // DOM element. preventScroll=true suppresses the browser's
-    // automatic scroll-into-view from focus() so it doesn't race the
-    // explicit smooth scroll below.
-    //
-    // Tile focus uses INSTANT scroll (default "auto" behavior).
-    // Smooth scrolling on rapid D-pad presses stutters: each new
-    // keydown cancels the in-flight smooth animation mid-ease and
-    // restarts from zero velocity, producing a visible halt-and-go
-    // pattern. Auto + CSS scroll-snap-align: start makes the row
-    // jump tile-by-tile, which reads as snappy stepping rather than
-    // stuttering. The rAF coalescing tried earlier didn't help -
-    // canceled rAFs still left scrolls mid-flight when frames missed.
-    //
-    // Window-level scroll (tab focus) stays smooth because it only
-    // fires on discrete state changes, not on rapid sequences.
+    // Scroll the focused element into view via the smoothScroll
+    // animator (rAF-driven, retargets on rapid presses instead of
+    // canceling in-flight animations like the WebView's native smooth
+    // scroll does). For tiles: scroll the row's inner scroller so the
+    // tile is at the start, AND vertically center the row in the
+    // window. For tab focus: pin window to top.
     useEffect(() => {
         const k =
             focus.kind === "tile"
@@ -273,21 +269,31 @@ export default function Browse() {
         if (!el) return;
         el.focus({ preventScroll: true });
         if (focus.kind === "tab") {
-            window.scrollTo({ top: 0, behavior: "smooth" });
-        } else {
-            el.scrollIntoView({
-                block: "center",
-                inline: "start",
-            });
+            scrollWindowToTop();
+        } else if (focus.kind === "tile") {
+            scrollTileIntoRowStart(el, 20 /* matches scroll-padding */);
+            scrollWindowToCenter(el);
         }
     }, [focus]);
+
+    // Window-level keyboard listener so D-pad navigation works even
+    // when DOM focus drifts to body (route transitions, occasional
+    // WebView quirks where imperative .focus() doesn't take effect
+    // on the first try). Skip while a modal is open - the modal owns
+    // the keys via its own bubbled handler.
+    useEffect(() => {
+        if (menuOpen || override) return;
+        const handler = (e: KeyboardEvent) => onKey(e);
+        window.addEventListener("keydown", handler);
+        return () => window.removeEventListener("keydown", handler);
+        // onKey closes over focus + data; recreate on each change.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [focus, data, menuOpen, override]);
 
     // Re-focus the Menu tab when the menu modal closes. The modal's
     // close path doesn't change `focus` state (still tab[2]), so the
     // focus effect above doesn't re-fire and DOM focus stays on body
     // (the modal's last-focused element was unmounted with the modal).
-    // Without this, the kid sees the menu pill still highlighted but
-    // pressing Enter does nothing because no element has DOM focus.
     const wasMenuOpen = useRef(false);
     useEffect(() => {
         if (wasMenuOpen.current && !menuOpen) {
@@ -324,7 +330,7 @@ export default function Browse() {
     }
 
     return (
-        <div className="browse" onKeyDown={onKey}>
+        <div className="browse">
             <TabPill
                 active="browse"
                 search={location.search}

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { authHeaders, getSession, imageAuthSuffix, type Session } from "./auth";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
+import { scrollWindowToCenter } from "./smoothScroll";
+import { useProgressiveBack } from "./useProgressiveBack";
 
 // Watch menu (M7). Pre-playback interstitial that surfaces a hero
 // (poster + title + Play / Resume / Restart) over a blurred backdrop.
@@ -83,6 +85,85 @@ export default function Watch() {
             nav("/login", { replace: true });
         }
     }, [session, adminProfileId, nav]);
+
+    // Window-level D-pad nav. Watch has a small set of focusable
+    // buttons (Back, hero actions, season heads, episodes when a
+    // season is open). Rather than build a 2D focus model, we walk
+    // every visible button under .watch-screen in DOM order on
+    // ArrowUp/ArrowDown/ArrowLeft/ArrowRight, scrolling the focused
+    // one to vertical-center. Enter/Space clicks. Accordion expansion
+    // changes the button list but the next press recomputes it.
+    useEffect(() => {
+        if (override) return;
+        const handler = (e: KeyboardEvent) => {
+            if (
+                e.key !== "ArrowUp" &&
+                e.key !== "ArrowDown" &&
+                e.key !== "ArrowLeft" &&
+                e.key !== "ArrowRight" &&
+                e.key !== "Enter" &&
+                e.key !== " "
+            ) {
+                return;
+            }
+            e.preventDefault();
+            const root = document.querySelector(".watch-screen");
+            if (!root) return;
+            const focusables = Array.from(
+                root.querySelectorAll<HTMLElement>(
+                    "a, button:not([disabled])",
+                ),
+            ).filter((el) => el.offsetParent !== null);
+            if (focusables.length === 0) return;
+            const active = document.activeElement as HTMLElement | null;
+            let idx = active ? focusables.indexOf(active) : -1;
+            if (e.key === "Enter" || e.key === " ") {
+                (active as HTMLElement | null)?.click?.();
+                return;
+            }
+            const forward =
+                e.key === "ArrowDown" || e.key === "ArrowRight";
+            if (idx < 0) {
+                idx = forward ? 0 : focusables.length - 1;
+            } else {
+                idx = forward
+                    ? Math.min(focusables.length - 1, idx + 1)
+                    : Math.max(0, idx - 1);
+            }
+            const next = focusables[idx];
+            if (next) {
+                next.focus({ preventScroll: true });
+                scrollWindowToCenter(next);
+            }
+        };
+        window.addEventListener("keydown", handler);
+        return () => window.removeEventListener("keydown", handler);
+    }, [override]);
+
+    // Progressive Back: collapse to the first hero action, then
+    // out to the parent.
+    useProgressiveBack(
+        useCallback(() => {
+            if (override) {
+                setOverride(null);
+                return true;
+            }
+            const root = document.querySelector(".watch-screen");
+            if (!root) return false;
+            const focusables = Array.from(
+                root.querySelectorAll<HTMLElement>("button:not([disabled])"),
+            ).filter((el) => el.offsetParent !== null);
+            const first = focusables[0];
+            if (!first) return false;
+            const active = document.activeElement as HTMLElement | null;
+            if (active && active !== first) {
+                first.focus({ preventScroll: true });
+                scrollWindowToCenter(first);
+                return true;
+            }
+            return false;
+        }, [override]),
+    );
 
     const fetchItem = useCallback(async () => {
         if (!itemId) return;

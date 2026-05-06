@@ -16,13 +16,10 @@
     --accent-soft: #ffe4fa; /* lavender-veil */
 }
 
-html {
-    /* Smooth scrolling for window-level scrolls (window.scrollTo from
-       focus changes onto top-area buttons, programmatic scrolls from
-       focus effects). The Skyworth WebView is Chromium-based and
-       respects this. */
-    scroll-behavior: smooth;
-}
+/* Note: NOT setting `scroll-behavior: smooth` on html. Browser-native
+   smooth scrolls cancel-restart on rapid D-pad presses and stutter
+   visibly. Smooth scrolling is run from JS via the smoothScroll
+   utility, which retargets in-place instead of canceling. */
 
 body {
     margin: 0;

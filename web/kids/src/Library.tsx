@@ -17,6 +17,11 @@ import {
 import { useOnlineStatus } from "./onlineStatus";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
 import TabPill, { TAB_SLOT_COUNT, tabHref } from "./TabPill";
+import {
+    scrollTileIntoRowStart,
+    scrollWindowToCenter,
+    scrollWindowToTop,
+} from "./smoothScroll";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { shouldShowWatchMenu } from "./Watch";
 
@@ -428,18 +433,10 @@ export default function Library() {
     }, [loading, items.length, continueItems.length]);
 
     // preventScroll=true on focus() suppresses the browser's
-    // auto-scroll-into-view so we control all scrolls explicitly.
-    //
-    // Tile scrolls (cw / grid) use INSTANT scroll (default "auto"
-    // behavior). Smooth scrolling stutters on rapid D-pad presses
-    // because each new keydown cancels the in-flight smooth scroll
-    // mid-ease and restarts from zero velocity. With auto + CSS
-    // scroll-snap, the row jumps tile-by-tile, which reads as snappy
-    // stepping rather than stuttering.
-    //
-    // Top-area focus (tab / search / filter) snaps the window to top
-    // with smooth behavior - it only fires once per discrete state
-    // change so it doesn't race itself.
+    // auto-scroll-into-view so we control all scrolls via the
+    // smoothScroll animator (rAF-driven, retargets on rapid presses
+    // instead of canceling in-flight animations like the WebView's
+    // native smooth scroll does).
     useEffect(() => {
         const inTopArea =
             focus.kind === "tab" ||
@@ -453,15 +450,81 @@ export default function Library() {
             if (el) el.focus({ preventScroll: true });
         }
         if (inTopArea) {
-            window.scrollTo({ top: 0, behavior: "smooth" });
+            scrollWindowToTop();
         } else if (focus.kind === "cw") {
             const el = tileRefs.current[focusKey(focus)];
-            el?.scrollIntoView({ block: "center", inline: "start" });
+            if (el) {
+                scrollTileIntoRowStart(el, 20);
+                scrollWindowToCenter(el);
+            }
         } else if (focus.kind === "grid") {
             const el = tileRefs.current[focusKey(focus)];
-            el?.scrollIntoView({ block: "center", inline: "nearest" });
+            if (el) scrollWindowToCenter(el);
         }
     }, [focus]);
+
+    // Calculate columns in the grid based on viewport width so the
+    // window keydown handler below knows how far ArrowUp / Down jumps.
+    const gridRef = useRef<HTMLDivElement | null>(null);
+    const columns = useGridColumns(gridRef);
+
+    // Window-level keyboard listener so D-pad navigation works even
+    // when DOM focus drifts to body (route transitions, the search
+    // wrap occasionally not taking focus on cheap WebView builds).
+    // Skip while a modal is open so the modal owns the keys.
+    useEffect(() => {
+        if (menuOpen || override) return;
+        const handler = (e: KeyboardEvent) => {
+            const k = e.key;
+            if (
+                k !== "ArrowLeft" &&
+                k !== "ArrowRight" &&
+                k !== "ArrowUp" &&
+                k !== "ArrowDown" &&
+                k !== "Enter" &&
+                k !== " "
+            ) {
+                return;
+            }
+            const target = e.target as HTMLElement | null;
+            const onSearchInput = target?.tagName === "INPUT";
+            if (onSearchInput && k !== "ArrowUp" && k !== "ArrowDown" && k !== "Enter") {
+                return;
+            }
+            e.preventDefault();
+            setFocus((f) =>
+                moveFocus(f, k, {
+                    filterCount: TYPE_FILTERS.length,
+                    cwCount: continueItems.length,
+                    gridCount: items.length,
+                    columns,
+                    onActivate: () =>
+                        activate(
+                            f,
+                            items,
+                            continueItems,
+                            filter,
+                            setFilter,
+                            nav,
+                            playSuffix,
+                            () => setMenuOpen(true),
+                            () => searchInputRef.current?.focus(),
+                        ),
+                }),
+            );
+        };
+        window.addEventListener("keydown", handler);
+        return () => window.removeEventListener("keydown", handler);
+    }, [
+        continueItems,
+        items,
+        columns,
+        filter,
+        nav,
+        playSuffix,
+        menuOpen,
+        override,
+    ]);
 
     // Re-focus the Menu tab when the menu modal closes. Without this
     // the page focus state is still tab[2] but DOM focus is on body
@@ -475,56 +538,6 @@ export default function Library() {
         }
         wasMenuOpen.current = menuOpen;
     }, [menuOpen]);
-
-    // Calculate columns in the grid based on viewport width to drive
-    // up/down navigation. The CSS grid uses auto-fill with minmax(180px),
-    // so we approximate by measuring the grid element.
-    const gridRef = useRef<HTMLDivElement | null>(null);
-    const columns = useGridColumns(gridRef);
-
-    const onKey = useCallback(
-        (e: React.KeyboardEvent) => {
-            const key = e.key;
-            if (
-                key !== "ArrowLeft" &&
-                key !== "ArrowRight" &&
-                key !== "ArrowUp" &&
-                key !== "ArrowDown" &&
-                key !== "Enter" &&
-                key !== " "
-            ) {
-                return;
-            }
-            // The search input owns its own Left/Right (caret) and
-            // anything that isn't an Up/Down/Enter. Don't preventDefault
-            // those - they need to reach the input.
-            const target = e.target as HTMLElement | null;
-            const onSearchInput = target?.tagName === "INPUT";
-            if (onSearchInput && key !== "ArrowUp" && key !== "ArrowDown" && key !== "Enter") {
-                return;
-            }
-            e.preventDefault();
-            setFocus((f) => moveFocus(f, key, {
-                filterCount: TYPE_FILTERS.length,
-                cwCount: continueItems.length,
-                gridCount: items.length,
-                columns,
-                onActivate: () =>
-                    activate(
-                        f,
-                        items,
-                        continueItems,
-                        filter,
-                        setFilter,
-                        nav,
-                        playSuffix,
-                        () => setMenuOpen(true),
-                        () => searchInputRef.current?.focus(),
-                    ),
-            }));
-        },
-        [continueItems, items, columns, filter, nav, playSuffix],
-    );
 
     // The currently-focused content tile (cw row or main grid),
     // null when focus is on the type filter.
@@ -576,7 +589,7 @@ export default function Library() {
     if (admin === undefined) return <div className="screen">Loading...</div>;
 
     return (
-        <div className="library" onKeyDown={onKey}>
+        <div className="library">
             <TabPill
                 active="library"
                 search={location.search}
