@@ -1,20 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Heart } from "@phosphor-icons/react";
 import {
     authHeaders,
     clearSession,
     getSession,
     type Session,
 } from "./auth";
+import { TAG_ICONS, isTagIconName } from "./tagIcons";
 import TabPill, { TAB_SLOT_COUNT, tabHref } from "./TabPill";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
 import MainMenuModal from "./MainMenuModal";
-import {
-    scrollTileIntoRowStart,
-    scrollWindowToCenter,
-    scrollWindowToTop,
-} from "./smoothScroll";
+import { scrollWindowToCenter, scrollWindowToTop } from "./smoothScroll";
 import Tile from "./Tile";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { shouldShowWatchMenu } from "./Watch";
@@ -43,6 +39,10 @@ type BrowseRow = {
     type: string;
     title: string;
     subtitle?: string;
+    // Optional Phosphor icon name set by the server. "Heart" for the
+    // favorites row; the tag's own icon for tag / tag_fanout rows
+    // when configured. Empty/missing = no icon.
+    icon?: string;
     items: BrowseItem[];
 };
 
@@ -340,12 +340,11 @@ export default function Browse() {
         }
     }
 
-    // Scroll the focused element into view via the smoothScroll
-    // animator (rAF-driven, retargets on rapid presses instead of
-    // canceling in-flight animations like the WebView's native smooth
-    // scroll does). For tiles: scroll the row's inner scroller so the
-    // tile is at the start, AND vertically center the row in the
-    // window. For tab focus: pin window to top.
+    // Focus DOM management. Vertical positioning uses the smoothScroll
+    // animator (window scroll). Horizontal positioning is pure CSS:
+    // each row's track is translated by `--track-col` * tile-advance
+    // so the focused tile sits at the cursor x. Track transitions
+    // smoothly between values courtesy of the CSS transition rule.
     useEffect(() => {
         const k =
             focus.kind === "tile"
@@ -357,7 +356,6 @@ export default function Browse() {
         if (focus.kind === "tab") {
             scrollWindowToTop();
         } else if (focus.kind === "tile") {
-            scrollTileIntoRowStart(el, 20 /* matches scroll-padding */);
             scrollWindowToCenter(el);
         }
     }, [focus]);
@@ -426,53 +424,70 @@ export default function Browse() {
                 }}
                 onOpenMenu={() => setMenuOpen(true)}
             />
-            {data.rows.map((row, rIdx) => (
-                <section key={row.rowId} className="browse-row">
-                    <h2 className="browse-row-title">
-                        {row.type === "favorites" && (
-                            <Heart
-                                weight="fill"
-                                className="browse-row-icon"
-                                aria-hidden
-                            />
-                        )}
-                        {row.title}
-                    </h2>
-                    <div
-                        className="browse-row-items"
-                        role="list"
-                        aria-label={row.title}
-                    >
-                        {row.items.map((item, cIdx) => {
-                            const key = `${rIdx}:${cIdx}`;
-                            const focused =
-                                focus.kind === "tile" &&
-                                focus.row === rIdx &&
-                                focus.col === cIdx;
-                            return (
-                                <Tile
-                                    key={item.Id}
-                                    item={item}
-                                    size="browse"
-                                    focused={focused}
-                                    showProgress
-                                    onClick={() => {
-                                        rememberLastFocused(item.Id);
-                                        const target = shouldShowWatchMenu(item)
-                                            ? `/watch/${encodeURIComponent(item.Id)}`
-                                            : `/play/${encodeURIComponent(item.Id)}`;
-                                        nav(`${target}${location.search}`);
-                                    }}
-                                    onFocus={() =>
-                                        setFocus({ kind: "tile", row: rIdx, col: cIdx })
-                                    }
-                                    refCallback={(el) => (tileRefs.current[key] = el)}
-                                />
-                            );
-                        })}
-                    </div>
-                </section>
-            ))}
+            {data.rows.map((row, rIdx) => {
+                // Each row's track is translated horizontally so the
+                // currently-focused tile sits at the cursor x. For
+                // inactive rows, use the remembered col (default 0)
+                // so they hold position when the kid arrows past.
+                // Pure CSS variable - the CSS rule on .browse-row-track
+                // computes translateX(-track-col * tile-advance).
+                const trackCol =
+                    focus.kind === "tile" && focus.row === rIdx
+                        ? focus.col
+                        : (rowColMemoryRef.current.get(rIdx) ?? 0);
+                return (
+                    <section key={row.rowId} className="browse-row">
+                        <h2 className="browse-row-title">
+                            <RowIcon name={row.icon} />
+                            {row.title}
+                        </h2>
+                        <div
+                            className="browse-row-items"
+                            role="list"
+                            aria-label={row.title}
+                        >
+                            <div
+                                className="browse-row-track"
+                                style={
+                                    {
+                                        "--track-col": trackCol,
+                                    } as React.CSSProperties
+                                }
+                            >
+                                {row.items.map((item, cIdx) => {
+                                    const key = `${rIdx}:${cIdx}`;
+                                    const focused =
+                                        focus.kind === "tile" &&
+                                        focus.row === rIdx &&
+                                        focus.col === cIdx;
+                                    return (
+                                        <Tile
+                                            key={item.Id}
+                                            item={item}
+                                            size="browse"
+                                            focused={focused}
+                                            showProgress
+                                            onClick={() => {
+                                                rememberLastFocused(item.Id);
+                                                const target = shouldShowWatchMenu(item)
+                                                    ? `/watch/${encodeURIComponent(item.Id)}`
+                                                    : `/play/${encodeURIComponent(item.Id)}`;
+                                                nav(`${target}${location.search}`);
+                                            }}
+                                            onFocus={() =>
+                                                setFocus({ kind: "tile", row: rIdx, col: cIdx })
+                                            }
+                                            refCallback={(el) =>
+                                                (tileRefs.current[key] = el)
+                                            }
+                                        />
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </section>
+                );
+            })}
             {override && (
                 <OverrideModal
                     itemId={override.itemId}
@@ -483,4 +498,14 @@ export default function Browse() {
             {menuOpen && <MainMenuModal onClose={() => setMenuOpen(false)} />}
         </div>
     );
+}
+
+// RowIcon resolves a server-supplied icon name from the curated
+// allow-list. Unknown names render as nothing - tolerates server
+// drift (e.g. an admin set an icon that we later removed). The
+// favorites row's "Heart" + every tag-set icon flows through here.
+function RowIcon({ name }: { name?: string }) {
+    if (!name || !isTagIconName(name)) return null;
+    const Icon = TAG_ICONS[name];
+    return <Icon weight="fill" className="browse-row-icon" aria-hidden />;
 }

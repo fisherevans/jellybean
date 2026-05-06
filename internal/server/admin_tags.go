@@ -31,6 +31,7 @@ type tagResponse struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	SortOrder   int    `json:"sortOrder"`
+	Icon        string `json:"icon,omitempty"`
 	ItemCount   int    `json:"itemCount"`
 	CreatedAt   int64  `json:"createdAt"`
 	UpdatedAt   int64  `json:"updatedAt"`
@@ -42,6 +43,7 @@ func toTagResponse(t curation.TagWithCount) tagResponse {
 		Name:        t.Name,
 		Description: t.Description,
 		SortOrder:   t.SortOrder,
+		Icon:        t.Icon,
 		ItemCount:   t.ItemCount,
 		CreatedAt:   t.CreatedAt.Unix(),
 		UpdatedAt:   t.UpdatedAt.Unix(),
@@ -54,6 +56,7 @@ func toBareTagResponse(t curation.Tag) tagResponse {
 		Name:        t.Name,
 		Description: t.Description,
 		SortOrder:   t.SortOrder,
+		Icon:        t.Icon,
 		CreatedAt:   t.CreatedAt.Unix(),
 		UpdatedAt:   t.UpdatedAt.Unix(),
 	}
@@ -104,6 +107,9 @@ type tagMutation struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description,omitempty"`
 	SortOrder   *int    `json:"sortOrder,omitempty"`
+	// Icon is a *string so PATCH with omitted field leaves the
+	// existing value, vs sending "" to clear.
+	Icon *string `json:"icon,omitempty"`
 }
 
 func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +124,9 @@ func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SortOrder != nil {
 		in.SortOrder = *req.SortOrder
+	}
+	if req.Icon != nil {
+		in.Icon = *req.Icon
 	}
 	tag, err := s.curation.CreateTag(r.Context(), in)
 	if err != nil {
@@ -159,6 +168,7 @@ func (s *Server) handleUpdateTag(w http.ResponseWriter, r *http.Request) {
 		Name:        existing.Name,
 		Description: existing.Description,
 		SortOrder:   existing.SortOrder,
+		Icon:        existing.Icon,
 	}
 	if req.Name != "" {
 		in.Name = req.Name
@@ -168,6 +178,9 @@ func (s *Server) handleUpdateTag(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SortOrder != nil {
 		in.SortOrder = *req.SortOrder
+	}
+	if req.Icon != nil {
+		in.Icon = *req.Icon
 	}
 	tag, err := s.curation.UpdateTag(r.Context(), id, in)
 	if err != nil {

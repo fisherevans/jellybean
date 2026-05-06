@@ -14,6 +14,16 @@
     --success: #06d6a0; /* emerald */
     --error: #e55381; /* blush-rose */
     --accent-soft: #ffe4fa; /* lavender-veil */
+
+    /* Browse cursor + tile metrics. Tunable: bump --browse-cursor-x
+       to peek more of the previous tile. With tile-width=180px +
+       tile-gap=1.4rem (~22px) -> tile-advance ~202px. Cursor-x of
+       5rem (80px) gives ~33% peek of the previous tile when the row
+       has scrolled. */
+    --browse-tile-width: 180px;
+    --browse-tile-gap: 1.4rem;
+    --browse-tile-advance: calc(var(--browse-tile-width) + var(--browse-tile-gap));
+    --browse-cursor-x: 5rem;
 }
 
 /* Note: NOT setting `scroll-behavior: smooth` on html. Browser-native
@@ -379,7 +389,10 @@ a,
 .tile-cw,
 .tile-browse {
     flex: 0 0 auto;
-    width: 180px;
+    width: var(--browse-tile-width);
+    /* scroll-snap-align retained for cw-scroll (Library cw still
+       uses overflow-x scrolling); Browse uses the transform-based
+       cursor-fixed layout where snap is unused. */
     scroll-snap-align: start;
 }
 
@@ -1016,28 +1029,42 @@ a,
 .browse-row-title {
     font-size: 1.3rem;
     margin: 0.25rem 0 0.6rem;
+    /* Align the title with the cursor x so it sits visually above
+       the focused tile (selected element is always at this offset). */
+    padding-left: var(--browse-cursor-x);
 }
+/* Browse rows: fixed-cursor layout. The selected tile always sits
+   at `var(--browse-cursor-x)` from the left edge of the page; the
+   inner .browse-row-track translates horizontally so col N lines up
+   with the cursor. Earlier tiles bleed off the left as a "peek"
+   indicating there's more content to scroll back to. The first
+   tile (col 0) sits flush at the cursor with empty space to its
+   left so the kid knows there's nothing earlier to scroll to.
+   Right peek comes for free - tiles past the focused one render
+   to the right and overflow into the row container's right edge. */
 .browse-row-items {
-    display: flex;
-    gap: 1.4rem;
-    overflow-x: auto;
-    /* position: relative so children's offsetLeft is relative to this
-       scroller. smoothScroll computes scrollLeft target from offsetLeft
-       (which doesn't change as the row scrolls), avoiding the math
-       drift that getBoundingClientRect would cause mid-animation. */
-    position: relative;
-    padding: 1rem 1.25rem 1.5rem;
-    /* No scroll-snap. Mandatory snap fights the JS animator -
-       scrollLeft writes mid-animation get snapped back to a tile
-       boundary, producing the visible "selection moves but row
-       doesn't follow" + non-deterministic shifts. The animator
-       handles all positioning. */
-    scrollbar-width: none;
+    overflow: hidden;
+    /* Padding-left provides the space for the cursor offset. The
+       track inside starts at this offset; translating it by
+       -col * tile-advance puts col N at the cursor. */
+    padding: 1rem 0 1.5rem var(--browse-cursor-x);
     /* contain: layout - layout isolation only, NO paint clipping. */
     contain: layout;
 }
-.browse-row-items::-webkit-scrollbar {
-    display: none;
+.browse-row-track {
+    display: flex;
+    gap: var(--browse-tile-gap);
+    /* CSS variables: --browse-tile-advance is set on :root to be
+       (tile-width + tile-gap). --track-col is set per row inline
+       (a unitless integer); calc multiplies through to a px offset.
+       Negative because increasing col shifts the row LEFT. */
+    transform: translateX(
+        calc(-1 * var(--track-col, 0) * var(--browse-tile-advance))
+    );
+    transition: transform 220ms ease-out;
+    /* will-change keeps the track on its own compositor layer so
+       transforms don't repaint neighbor content. */
+    will-change: transform;
 }
 .browse-tile {
     flex: 0 0 auto;

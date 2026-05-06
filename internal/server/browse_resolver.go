@@ -35,7 +35,13 @@ type ResolvedRow struct {
 	Type     curation.RowType
 	Title    string
 	SubTitle string
-	ItemIDs  []string
+	// Icon is an optional Phosphor name the kid client renders next
+	// to the row title. Set per row type:
+	//   - favorites             -> "Heart"
+	//   - tag, tag_fanout       -> the tag's icon (when set)
+	//   - other                 -> ""
+	Icon    string
+	ItemIDs []string
 }
 
 // browseContext bundles everything the resolver functions need.
@@ -294,7 +300,7 @@ func resolveSingleTag(b *browseContext, row curation.LayoutRow, cfg map[string]a
 	}
 	sortMode := readStringConfig(cfg, "sort", "name")
 	visible = applyTagSort(b, sortMode, visible, row.ID)
-	return []ResolvedRow{newRow(row, tag.Name, "", capItems(visible, max))}, nil
+	return []ResolvedRow{newTagRow(row, *tag, tag.Name, "", capItems(visible, max))}, nil
 }
 
 func resolveTagFanout(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
@@ -350,7 +356,7 @@ func resolveTagFanout(b *browseContext, row curation.LayoutRow, cfg map[string]a
 		if len(visible) == 0 {
 			continue
 		}
-		out = append(out, newRow(row, t.Name, fmt.Sprintf("Tag · %s", t.Name), capItems(visible, max)))
+		out = append(out, newTagRow(row, t.Tag, t.Name, fmt.Sprintf("Tag · %s", t.Name), capItems(visible, max)))
 	}
 	return out, nil
 }
@@ -502,13 +508,29 @@ func newRow(row curation.LayoutRow, defaultTitle, subtitle string, ids []string)
 	if title == "" {
 		title = defaultTitle
 	}
+	icon := ""
+	if row.Type == curation.RowFavorites {
+		icon = "Heart"
+	}
 	return ResolvedRow{
 		RowID:    row.ID,
 		Type:     row.Type,
 		Title:    title,
 		SubTitle: subtitle,
+		Icon:     icon,
 		ItemIDs:  ids,
 	}
+}
+
+// newTagRow is the tag / tag_fanout variant of newRow that pulls the
+// tag's icon onto the resolved row when set. Falls back to bare
+// newRow when icon is empty.
+func newTagRow(row curation.LayoutRow, tag curation.Tag, defaultTitle, subtitle string, ids []string) ResolvedRow {
+	r := newRow(row, defaultTitle, subtitle, ids)
+	if tag.Icon != "" {
+		r.Icon = tag.Icon
+	}
+	return r
 }
 
 func capItems(ids []string, max int) []string {

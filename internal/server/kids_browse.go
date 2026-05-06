@@ -19,7 +19,12 @@ type browseRowResponse struct {
 	Type     string          `json:"type"`
 	Title    string          `json:"title"`
 	SubTitle string          `json:"subtitle,omitempty"`
-	Items    []jellyfin.Item `json:"items"`
+	// Icon is an optional Phosphor icon name that the kid client
+	// renders next to the row title. Set by the resolver:
+	// "Heart" for favorites, the tag's icon for tag/tag_fanout
+	// when configured, "" otherwise.
+	Icon  string          `json:"icon,omitempty"`
+	Items []jellyfin.Item `json:"items"`
 }
 
 type browseResponse struct {
@@ -183,6 +188,7 @@ func (s *Server) respondBrowse(
 			Type:     string(rr.Type),
 			Title:    rr.Title,
 			SubTitle: rr.SubTitle,
+			Icon:     rr.Icon,
 			Items:    items,
 		})
 	}

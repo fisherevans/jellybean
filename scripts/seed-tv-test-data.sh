@@ -37,6 +37,17 @@ INSERT OR IGNORE INTO tags (name, description, sort_order, created_at, updated_a
   ('learning',   'Educational content',                    0, $NOW, $NOW),
   ('musical',    'Songs and singalongs',                   0, $NOW, $NOW);
 
+-- 1a. Tag icons (curated Phosphor names; kid client renders next to
+-- the row title). UPDATE so re-runs refresh the icons even on tags
+-- that already exist.
+UPDATE tags SET icon = 'Lightning'   WHERE name = 'adventure';
+UPDATE tags SET icon = 'SmileyXEyes' WHERE name = 'funny';
+UPDATE tags SET icon = 'Moon'        WHERE name = 'bedtime';
+UPDATE tags SET icon = 'Ghost'       WHERE name = 'spooky';
+UPDATE tags SET icon = 'FilmReel'    WHERE name = 'classic';
+UPDATE tags SET icon = 'GraduationCap' WHERE name = 'learning';
+UPDATE tags SET icon = 'MusicNote'   WHERE name = 'musical';
+
 -- 2. Item -> tag mapping. Distribute pseudo-randomly across visible
 --    items via the rowid hash so each tag gets a meaningful slice and
 --    items can carry multiple tags (more interesting tag_fanout).

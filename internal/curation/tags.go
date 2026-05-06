@@ -28,6 +28,11 @@ type Tag struct {
 	Name        string
 	Description string
 	SortOrder   int
+	// Icon is an optional Phosphor icon name (e.g. "Star", "Sparkle")
+	// rendered next to the tag's row title in the kid client. The
+	// admin client picks from a curated allow-list shared with the
+	// kid client. Empty string == no icon.
+	Icon        string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -105,7 +110,7 @@ func (s *Store) ListTags(ctx context.Context, sort TagSort) ([]TagWithCount, err
 	}
 	q := `
 		SELECT t.id, t.name, COALESCE(t.description, ''), t.sort_order,
-		       t.created_at, t.updated_at,
+		       COALESCE(t.icon, ''), t.created_at, t.updated_at,
 		       (SELECT COUNT(*) FROM item_tags WHERE tag_id = t.id) AS item_count
 		FROM tags t
 		ORDER BY ` + orderBy
@@ -118,12 +123,12 @@ func (s *Store) ListTags(ctx context.Context, sort TagSort) ([]TagWithCount, err
 	var out []TagWithCount
 	for rows.Next() {
 		var (
-			t          TagWithCount
-			created    int64
-			updated    int64
+			t       TagWithCount
+			created int64
+			updated int64
 		)
 		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.SortOrder,
-			&created, &updated, &t.ItemCount); err != nil {
+			&t.Icon, &created, &updated, &t.ItemCount); err != nil {
 			return nil, err
 		}
 		t.CreatedAt = time.Unix(created, 0)
@@ -136,14 +141,16 @@ func (s *Store) ListTags(ctx context.Context, sort TagSort) ([]TagWithCount, err
 // GetTag fetches a single tag by id.
 func (s *Store) GetTag(ctx context.Context, id int64) (*Tag, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, COALESCE(description, ''), sort_order, created_at, updated_at
+		SELECT id, name, COALESCE(description, ''), sort_order,
+		       COALESCE(icon, ''), created_at, updated_at
 		FROM tags WHERE id = ?`, id)
 	var (
 		t       Tag
 		created int64
 		updated int64
 	)
-	if err := row.Scan(&t.ID, &t.Name, &t.Description, &t.SortOrder, &created, &updated); err != nil {
+	if err := row.Scan(&t.ID, &t.Name, &t.Description, &t.SortOrder,
+		&t.Icon, &created, &updated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrTagNotFound
 		}
@@ -159,6 +166,11 @@ type TagInput struct {
 	Name        string
 	Description string
 	SortOrder   int
+	// Icon is the optional Phosphor icon name (e.g. "Star"). The
+	// server doesn't enforce the curated allow-list here - a typo
+	// renders as no icon on the kid client (TagIcon resolves
+	// unknown names to null). Whitespace-trimmed; empty == clear.
+	Icon string
 }
 
 // CreateTag inserts a new tag. Name is trimmed and required; UNIQUE
@@ -168,10 +180,11 @@ func (s *Store) CreateTag(ctx context.Context, in TagInput) (*Tag, error) {
 	if name == "" {
 		return nil, fmt.Errorf("tag name required")
 	}
+	icon := strings.TrimSpace(in.Icon)
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO tags (name, description, sort_order, created_at, updated_at)
-		VALUES (?, ?, ?, unixepoch(), unixepoch())`,
-		name, nullableString(in.Description), in.SortOrder)
+		INSERT INTO tags (name, description, sort_order, icon, created_at, updated_at)
+		VALUES (?, ?, ?, ?, unixepoch(), unixepoch())`,
+		name, nullableString(in.Description), in.SortOrder, nullableString(icon))
 	if err != nil {
 		if isUniqueViolation(err, "tags.name") {
 			return nil, ErrTagNameTaken
@@ -182,18 +195,19 @@ func (s *Store) CreateTag(ctx context.Context, in TagInput) (*Tag, error) {
 	return s.GetTag(ctx, id)
 }
 
-// UpdateTag mutates name + description + sort_order. Empty name is
-// rejected.
+// UpdateTag mutates name + description + sort_order + icon. Empty
+// name is rejected.
 func (s *Store) UpdateTag(ctx context.Context, id int64, in TagInput) (*Tag, error) {
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
 		return nil, fmt.Errorf("tag name required")
 	}
+	icon := strings.TrimSpace(in.Icon)
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE tags
-		SET name = ?, description = ?, sort_order = ?, updated_at = unixepoch()
+		SET name = ?, description = ?, sort_order = ?, icon = ?, updated_at = unixepoch()
 		WHERE id = ?`,
-		name, nullableString(in.Description), in.SortOrder, id)
+		name, nullableString(in.Description), in.SortOrder, nullableString(icon), id)
 	if err != nil {
 		if isUniqueViolation(err, "tags.name") {
 			return nil, ErrTagNameTaken
@@ -228,7 +242,8 @@ func (s *Store) GetTagsForItem(ctx context.Context, itemID string) ([]Tag, error
 		return nil, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT t.id, t.name, COALESCE(t.description, ''), t.sort_order, t.created_at, t.updated_at
+		SELECT t.id, t.name, COALESCE(t.description, ''), t.sort_order,
+		       COALESCE(t.icon, ''), t.created_at, t.updated_at
 		FROM tags t
 		JOIN item_tags it ON it.tag_id = t.id
 		WHERE it.jellyfin_item_id = ?
@@ -244,7 +259,8 @@ func (s *Store) GetTagsForItem(ctx context.Context, itemID string) ([]Tag, error
 			created int64
 			updated int64
 		)
-		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.SortOrder, &created, &updated); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.SortOrder,
+			&t.Icon, &created, &updated); err != nil {
 			return nil, err
 		}
 		t.CreatedAt = time.Unix(created, 0)
@@ -271,7 +287,7 @@ func (s *Store) GetTagsForItems(ctx context.Context, itemIDs []string) (map[stri
 	}
 	q := `
 		SELECT it.jellyfin_item_id, t.id, t.name, COALESCE(t.description, ''),
-		       t.sort_order, t.created_at, t.updated_at
+		       t.sort_order, COALESCE(t.icon, ''), t.created_at, t.updated_at
 		FROM item_tags it
 		JOIN tags t ON t.id = it.tag_id
 		WHERE it.jellyfin_item_id IN (` + placeholders + `)
@@ -288,7 +304,8 @@ func (s *Store) GetTagsForItems(ctx context.Context, itemIDs []string) (map[stri
 			created int64
 			updated int64
 		)
-		if err := rows.Scan(&itemID, &t.ID, &t.Name, &t.Description, &t.SortOrder, &created, &updated); err != nil {
+		if err := rows.Scan(&itemID, &t.ID, &t.Name, &t.Description,
+			&t.SortOrder, &t.Icon, &created, &updated); err != nil {
 			return nil, err
 		}
 		t.CreatedAt = time.Unix(created, 0)
