@@ -5,15 +5,15 @@ import { prefetchLibrary } from "./prefetch";
 
 // consumeDevCreds reads dev_user / dev_pass from window.location.hash
 // when the activity was launched with the DEV_LOGIN intent
-// (see MainActivity.handleDevIntent). Side effects, run once: wipe
+// (see MainActivity.handleDevIntent). Side effects on success: wipe
 // any existing session so Login's signed-in redirect doesn't bounce
 // us to /browse before we get to fill the form, and strip the hash
-// off the URL so the creds don't linger in WebView history. Returns
-// the creds when found and consumed; null otherwise.
-let devCredsConsumed = false;
+// off the URL so the creds don't linger in WebView history. Idempotent
+// on its own - calling again after a successful consume sees no hash
+// and returns null. Required to support both cold-start (hash present
+// at first mount) AND warm-start (Login already mounted, hash arrives
+// via webView.loadUrl staying on the same path).
 function consumeDevCreds(): { user: string; pass: string } | null {
-    if (devCredsConsumed) return null;
-    devCredsConsumed = true;
     if (typeof window === "undefined") return null;
     const raw = window.location.hash.replace(/^#/, "");
     if (!raw) return null;
@@ -50,9 +50,11 @@ type LoginResponse = {
 export default function Login() {
     const nav = useNavigate();
     // Lazy initializer reads (and consumes) the DEV_LOGIN hash creds
-    // exactly once. clearSession runs synchronously inside so the
-    // signed-in redirect below sees null.
-    const [devCreds] = useState(consumeDevCreds);
+    // on first mount. clearSession runs synchronously inside so the
+    // signed-in redirect below sees null. Updated below on hashchange
+    // for the warm-start case where Login is already mounted when the
+    // intent fires.
+    const [devCreds, setDevCreds] = useState(consumeDevCreds);
     const [username, setUsername] = useState(devCreds?.user ?? "");
     const [password, setPassword] = useState(devCreds?.pass ?? "");
     const [error, setError] = useState<string | null>(null);
@@ -124,12 +126,30 @@ export default function Login() {
 
     // DEV_LOGIN auto-submit. When the activity was launched with creds
     // in the hash, fire the login as soon as the form has rendered.
+    // Also reflects the values into the form's controlled inputs so
+    // the kid sees what's about to submit.
     useEffect(() => {
         if (!devCreds) return;
         if (submitting) return;
+        setUsername(devCreds.user);
+        setPassword(devCreds.pass);
         void performLogin(devCreds.user, devCreds.pass);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [devCreds, performLogin]);
+
+    // Warm-start: the activity is already running on /player/login
+    // when the DEV_LOGIN intent fires. webView.loadUrl(targetUrl)
+    // stays on the same path and only updates the hash, so React
+    // Router doesn't remount Login - we wouldn't see the new creds
+    // without a hashchange listener.
+    useEffect(() => {
+        const onHashChange = () => {
+            const fresh = consumeDevCreds();
+            if (fresh) setDevCreds(fresh);
+        };
+        window.addEventListener("hashchange", onHashChange);
+        return () => window.removeEventListener("hashchange", onHashChange);
+    }, []);
 
     async function onSubmit(e: FormEvent) {
         e.preventDefault();
