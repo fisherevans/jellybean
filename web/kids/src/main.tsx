@@ -59,3 +59,18 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         </BrowserRouter>
     </React.StrictMode>,
 );
+
+// Fade out the splash once React has mounted. Two rAFs give the browser
+// time to paint the first frame so the transition starts from a stable
+// state rather than racing the initial commit.
+requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+        const splash = document.getElementById("splash");
+        if (!splash) return;
+        splash.classList.add("hidden");
+        // Drop it from the DOM after the transition so it can't trap
+        // focus or eat input on cheap TVs that still respect display:none
+        // semantics during opacity transitions.
+        setTimeout(() => splash.remove(), 600);
+    });
+});

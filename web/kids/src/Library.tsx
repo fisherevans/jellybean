@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
     authHeaders,
-    clearSession,
     getSession,
-    imageAuthSuffix,
     probeAdmin,
     type AdminUser,
     type Session,
 } from "./auth";
+import MainMenuModal from "./MainMenuModal";
+import Tile from "./Tile";
 import {
     cacheKey as buildCacheKey,
     get as cacheGet,
@@ -16,7 +16,8 @@ import {
 } from "./libraryCache";
 import { useOnlineStatus } from "./onlineStatus";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
-import TabPill, { tabHref } from "./TabPill";
+import TabPill, { TAB_SLOT_COUNT, tabHref } from "./TabPill";
+import { useProgressiveBack } from "./useProgressiveBack";
 import { shouldShowWatchMenu } from "./Watch";
 
 // Library is the kid's main browsing screen. Layout top-to-bottom:
@@ -61,11 +62,10 @@ function filterToType(t: TypeFilter): string {
 
 type Focus =
     | { kind: "tab"; index: number }
+    | { kind: "search" }
     | { kind: "filter"; index: number }
     | { kind: "cw"; index: number }
     | { kind: "grid"; index: number };
-
-const TAB_COUNT = 2;
 
 const PAGE_SIZE = 24;
 
@@ -131,9 +131,11 @@ export default function Library() {
     const [retryNonce, setRetryNonce] = useState(0);
     const online = useOnlineStatus();
 
-    const [focus, setFocus] = useState<Focus>({ kind: "filter", index: 0 });
+    const [focus, setFocus] = useState<Focus>({ kind: "search" });
     const tileRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+    const searchRef = useRef<HTMLInputElement | null>(null);
     const sentinelRef = useRef<HTMLDivElement | null>(null);
+    const [menuOpen, setMenuOpen] = useState(false);
     // Adult-override gesture (M9): long-press UP on a focused tile
     // opens the override modal targeting that item. Mirrors Browse.
     const [override, setOverride] = useState<{
@@ -414,13 +416,23 @@ export default function Library() {
         });
     }, [loading, items.length, continueItems.length]);
 
-    // Keep focused element on screen.
+    // Keep focused element on screen + imperatively focus the right
+    // DOM node. Tab + filter pills get nearest-block scroll (small
+    // headers, no need to recenter). Tiles in cw/grid land vertically
+    // centered so the kid's eye-line stays stable as they D-pad.
     useEffect(() => {
+        if (focus.kind === "search") {
+            searchRef.current?.focus({ preventScroll: false });
+            searchRef.current?.scrollIntoView({ block: "nearest" });
+            return;
+        }
         const key = focusKey(focus);
         const el = tileRefs.current[key];
         if (el) {
             el.focus({ preventScroll: false });
-            el.scrollIntoView({ block: "nearest", inline: "nearest" });
+            const block: ScrollLogicalPosition =
+                focus.kind === "cw" || focus.kind === "grid" ? "center" : "nearest";
+            el.scrollIntoView({ block, inline: "nearest" });
         }
     }, [focus]);
 
@@ -443,6 +455,14 @@ export default function Library() {
             ) {
                 return;
             }
+            // The search input owns its own Left/Right (caret) and
+            // anything that isn't an Up/Down/Enter. Don't preventDefault
+            // those - they need to reach the input.
+            const target = e.target as HTMLElement | null;
+            const onSearchInput = target?.tagName === "INPUT";
+            if (onSearchInput && key !== "ArrowUp" && key !== "ArrowDown" && key !== "Enter") {
+                return;
+            }
             e.preventDefault();
             setFocus((f) => moveFocus(f, key, {
                 filterCount: TYPE_FILTERS.length,
@@ -450,10 +470,19 @@ export default function Library() {
                 gridCount: items.length,
                 columns,
                 onActivate: () =>
-                    activate(f, items, continueItems, filter, setFilter, nav, playSuffix),
+                    activate(
+                        f,
+                        items,
+                        continueItems,
+                        filter,
+                        setFilter,
+                        nav,
+                        playSuffix,
+                        () => setMenuOpen(true),
+                    ),
             }));
         },
-        [continueItems, items, columns, filter, nav],
+        [continueItems, items, columns, filter, nav, playSuffix],
     );
 
     // The currently-focused content tile (cw row or main grid),
@@ -475,16 +504,35 @@ export default function Library() {
         600,
     );
 
+    // Progressive Back escape: from anywhere below search, back lands
+    // on the search bar. From there, the next back exits the page.
+    useProgressiveBack(
+        useCallback(() => {
+            if (menuOpen) {
+                setMenuOpen(false);
+                return true;
+            }
+            if (override) {
+                setOverride(null);
+                return true;
+            }
+            if (focus.kind === "grid" && focus.index !== 0) {
+                setFocus({ kind: "grid", index: 0 });
+                return true;
+            }
+            if (focus.kind === "cw" && focus.index !== 0) {
+                setFocus({ kind: "cw", index: 0 });
+                return true;
+            }
+            if (focus.kind === "grid" || focus.kind === "cw" || focus.kind === "filter") {
+                setFocus({ kind: "search" });
+                return true;
+            }
+            return false;
+        }, [focus, menuOpen, override]),
+    );
+
     if (admin === undefined) return <div className="screen">Loading...</div>;
-
-    const heading = session
-        ? (session.kidName ?? session.userName)
-        : "Library";
-
-    function signOut() {
-        clearSession();
-        nav("/login", { replace: true });
-    }
 
     return (
         <div className="library" onKeyDown={onKey}>
@@ -495,40 +543,20 @@ export default function Library() {
                 tabRef={(i, el) => {
                     tileRefs.current[`tab:${i}`] = el;
                 }}
+                onOpenMenu={() => setMenuOpen(true)}
             />
             {adminProfileId && !session && <AdminPreviewBanner />}
-            <header className="library-header">
-                <div>
-                    <h1>{heading}</h1>
-                    {adminProfileId && !session && (
-                        <p className="library-sub">
-                            Admin preview: profile id {adminProfileId}
-                        </p>
-                    )}
-                </div>
-                {session ? (
-                    <button
-                        type="button"
-                        className="picker-link signout-btn"
-                        onClick={signOut}
-                    >
-                        Sign out
-                    </button>
-                ) : (
-                    <Link to="/" className="picker-link">
-                        back
-                    </Link>
-                )}
-            </header>
 
             <div className="library-controls">
                 <input
+                    ref={searchRef}
                     type="search"
-                    className="library-search"
+                    className={`library-search ${focus.kind === "search" ? "focused" : ""}`}
                     placeholder="Search"
                     aria-label="Search library"
                     value={searchInput}
                     onChange={(e) => setSearchInput(e.target.value)}
+                    onFocus={() => setFocus({ kind: "search" })}
                 />
             </div>
 
@@ -581,8 +609,9 @@ export default function Library() {
                                     <Tile
                                         key={`cw:${it.Id}`}
                                         item={it}
-                                        large={false}
+                                        size="cw"
                                         focused={isFocused(focus, "cw", i)}
+                                        showProgress
                                         onClick={() => {
                                             setFocus({ kind: "cw", index: i });
                                             const href = shouldShowWatchMenu(it)
@@ -592,7 +621,6 @@ export default function Library() {
                                         }}
                                         onFocus={() => setFocus({ kind: "cw", index: i })}
                                         refCallback={(el) => (tileRefs.current[`cw:${i}`] = el)}
-                                        focusKey={`cw:${i}`}
                                     />
                                 ))}
                             </div>
@@ -600,7 +628,6 @@ export default function Library() {
                     )}
 
                     <section aria-label="Library">
-                        <h2 className="row-title">All</h2>
                         {items.length === 0 ? (
                             <p className="library-state">
                                 Nothing here yet. Ask a parent to mark titles
@@ -612,7 +639,7 @@ export default function Library() {
                                     <Tile
                                         key={`grid:${it.Id}`}
                                         item={it}
-                                        large
+                                        size="library"
                                         focused={isFocused(focus, "grid", i)}
                                         onClick={() => {
                                             setFocus({ kind: "grid", index: i });
@@ -625,7 +652,6 @@ export default function Library() {
                                         refCallback={(el) =>
                                             (tileRefs.current[`grid:${i}`] = el)
                                         }
-                                        focusKey={`grid:${i}`}
                                     />
                                 ))}
                             </div>
@@ -642,6 +668,7 @@ export default function Library() {
                     onClose={() => setOverride(null)}
                 />
             )}
+            {menuOpen && <MainMenuModal onClose={() => setMenuOpen(false)} />}
         </div>
     );
 }
@@ -662,11 +689,14 @@ function AdminPreviewBanner() {
 }
 
 function focusKey(f: Focus): string {
+    if (f.kind === "search") return "search";
     return `${f.kind}:${f.index}`;
 }
 
-function isFocused(f: Focus, kind: Focus["kind"], index: number): boolean {
-    return f.kind === kind && f.index === index;
+function isFocused(f: Focus, kind: Focus["kind"], index?: number): boolean {
+    if (f.kind !== kind) return false;
+    if (kind === "search") return true;
+    return "index" in f && f.index === index;
 }
 
 type MoveOpts = {
@@ -686,14 +716,20 @@ function moveFocus(f: Focus, key: string, opts: MoveOpts): Focus {
         case "tab":
             if (key === "ArrowLeft") return { kind: "tab", index: Math.max(0, f.index - 1) };
             if (key === "ArrowRight")
-                return { kind: "tab", index: Math.min(TAB_COUNT - 1, f.index + 1) };
+                return { kind: "tab", index: Math.min(TAB_SLOT_COUNT - 1, f.index + 1) };
+            if (key === "ArrowDown") return { kind: "search" };
+            return f;
+        case "search":
+            // Let the input own ArrowLeft / ArrowRight (caret movement)
+            // and any printable text. Only Up / Down navigate.
+            if (key === "ArrowUp") return { kind: "tab", index: 1 };
             if (key === "ArrowDown") return { kind: "filter", index: 0 };
             return f;
         case "filter":
             if (key === "ArrowLeft") return { kind: "filter", index: Math.max(0, f.index - 1) };
             if (key === "ArrowRight")
                 return { kind: "filter", index: Math.min(opts.filterCount - 1, f.index + 1) };
-            if (key === "ArrowUp") return { kind: "tab", index: 1 };
+            if (key === "ArrowUp") return { kind: "search" };
             if (key === "ArrowDown") {
                 if (opts.cwCount > 0) return { kind: "cw", index: 0 };
                 if (opts.gridCount > 0) return { kind: "grid", index: 0 };
@@ -740,10 +776,19 @@ function activate(
     setFilter: (t: TypeFilter) => void,
     nav: ReturnType<typeof useNavigate>,
     playSuffix: string,
+    onOpenMenu: () => void,
 ) {
     if (f.kind === "tab") {
+        if (f.index === 2) {
+            onOpenMenu();
+            return;
+        }
         const target = f.index === 0 ? "browse" : "library";
         nav(tabHref(target, playSuffix));
+        return;
+    }
+    if (f.kind === "search") {
+        // No activation behavior - the input itself handles its events.
         return;
     }
     if (f.kind === "filter") {
@@ -781,51 +826,3 @@ function useGridColumns(ref: React.RefObject<HTMLDivElement>): number {
     return cols;
 }
 
-type TileProps = {
-    item: LibraryItem;
-    large: boolean;
-    focused: boolean;
-    onClick: () => void;
-    onFocus: () => void;
-    refCallback: (el: HTMLButtonElement | null) => void;
-    focusKey: string;
-};
-
-function Tile({ item, large, focused, onClick, onFocus, refCallback }: TileProps) {
-    const tag = item.ImageTags?.Primary ?? "";
-    // Tile poster CSS is 180px wide for the grid and 180px for cw (both
-    // single-column at native res; ~270px on HiDPI). Request 1.5x the
-    // rendered size and let the immutable Cache-Control + per-tag URL
-    // do the rest. Larger sizes were a 2-4x oversize on cheap TVs.
-    const width = large ? 280 : 220;
-    // <img> can't attach Authorization headers, so for the bearer-auth
-    // kid path we pass the token + userId as query params. The server's
-    // parseBearer accepts both. Admin-cookie path doesn't need this and
-    // imageAuthSuffix returns "".
-    const src = `/api/kids/items/${encodeURIComponent(item.Id)}/image?type=Primary&width=${width}${
-        tag ? `&tag=${encodeURIComponent(tag)}` : ""
-    }${imageAuthSuffix()}`;
-    const isSeries = item.Type === "Series";
-    return (
-        <button
-            ref={refCallback}
-            className={`tile ${large ? "tile-grid" : "tile-cw"} ${focused ? "focused" : ""}`}
-            onClick={onClick}
-            onFocus={onFocus}
-            tabIndex={focused ? 0 : -1}
-        >
-            <div className="tile-poster">
-                {tag ? (
-                    // decoding="async" keeps image decode off the main
-                    // thread on slow TV hardware; loading="lazy" still
-                    // defers the network fetch.
-                    <img src={src} alt={item.Name} loading="lazy" decoding="async" />
-                ) : (
-                    <div className="tile-poster-placeholder">{item.Name}</div>
-                )}
-                {isSeries && <span className="tile-badge">TV</span>}
-            </div>
-            <div className="tile-title">{item.Name}</div>
-        </button>
-    );
-}

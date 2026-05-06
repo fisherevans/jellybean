@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Heart } from "@phosphor-icons/react";
 import {
     authHeaders,
     getSession,
-    imageAuthSuffix,
     type Session,
 } from "./auth";
-import TabPill, { tabHref } from "./TabPill";
+import TabPill, { TAB_SLOT_COUNT, tabHref } from "./TabPill";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
+import MainMenuModal from "./MainMenuModal";
+import Tile from "./Tile";
+import { useProgressiveBack } from "./useProgressiveBack";
 import { shouldShowWatchMenu } from "./Watch";
 
 // Browse is the kid home (M8 #48). Renders a vertical stack of
@@ -48,8 +51,6 @@ type Focus =
     | { kind: "tab"; index: number }
     | { kind: "tile"; row: number; col: number };
 
-const TAB_COUNT = 2;
-
 export default function Browse() {
     const nav = useNavigate();
     const [searchParams] = useSearchParams();
@@ -62,6 +63,7 @@ export default function Browse() {
     const [override, setOverride] = useState<
         { itemId: string; itemName: string } | null
     >(null);
+    const [menuOpen, setMenuOpen] = useState(false);
 
     // Long-press UP on a focused tile opens the override modal. The
     // hook is gated on having a focused tile + an active session
@@ -120,6 +122,31 @@ export default function Browse() {
     useEffect(() => {
         refresh();
     }, [refresh]);
+
+    // Progressive Back escape: anywhere off (tile 0,0) collapses there
+    // first. From (tile 0,0) the next back falls through to the WebView
+    // and exits the kid app.
+    useProgressiveBack(
+        useCallback(() => {
+            if (menuOpen) {
+                setMenuOpen(false);
+                return true;
+            }
+            if (override) {
+                setOverride(null);
+                return true;
+            }
+            if (focus.kind === "tab") {
+                setFocus({ kind: "tile", row: 0, col: 0 });
+                return true;
+            }
+            if (focus.kind === "tile" && (focus.row !== 0 || focus.col !== 0)) {
+                setFocus({ kind: "tile", row: 0, col: 0 });
+                return true;
+            }
+            return false;
+        }, [focus, menuOpen, override]),
+    );
 
     // D-pad / keyboard model (kept intentionally simple for v1):
     //   - tile + ArrowRight/Left: move within row
@@ -201,15 +228,19 @@ export default function Browse() {
                     }
                     return;
                 case "ArrowRight":
-                    if (focus.index < TAB_COUNT - 1) {
+                    if (focus.index < TAB_SLOT_COUNT - 1) {
                         setFocus({ kind: "tab", index: focus.index + 1 });
                         e.preventDefault();
                     }
                     return;
                 case "Enter":
                 case " ": {
-                    const target = focus.index === 0 ? "browse" : "library";
-                    nav(tabHref(target, location.search));
+                    if (focus.index === 2) {
+                        setMenuOpen(true);
+                    } else {
+                        const target = focus.index === 0 ? "browse" : "library";
+                        nav(tabHref(target, location.search));
+                    }
                     e.preventDefault();
                     return;
                 }
@@ -218,7 +249,8 @@ export default function Browse() {
     }
 
     // Scroll focused tile into view + imperatively focus the DOM
-    // element when state changes. Both branches use the tileRefs map.
+    // element when state changes. Vertically centering the focused
+    // row keeps the kid's eye-line stable as they D-pad up and down.
     useEffect(() => {
         const k =
             focus.kind === "tile"
@@ -229,7 +261,7 @@ export default function Browse() {
         el.focus({ preventScroll: false });
         if (focus.kind === "tile") {
             el.scrollIntoView({
-                block: "nearest",
+                block: "center",
                 inline: "center",
                 behavior: "smooth",
             });
@@ -272,10 +304,20 @@ export default function Browse() {
                 tabRef={(i, el) => {
                     tileRefs.current[`tab:${i}`] = el;
                 }}
+                onOpenMenu={() => setMenuOpen(true)}
             />
             {data.rows.map((row, rIdx) => (
                 <section key={row.rowId} className="browse-row">
-                    <h2 className="browse-row-title">{row.title}</h2>
+                    <h2 className="browse-row-title">
+                        {row.type === "favorites" && (
+                            <Heart
+                                weight="fill"
+                                className="browse-row-icon"
+                                aria-hidden
+                            />
+                        )}
+                        {row.title}
+                    </h2>
                     <div
                         className="browse-row-items"
                         role="list"
@@ -287,15 +329,13 @@ export default function Browse() {
                                 focus.kind === "tile" &&
                                 focus.row === rIdx &&
                                 focus.col === cIdx;
-                            const progress = item.UserData?.PlayedPercentage ?? 0;
                             return (
-                                <button
+                                <Tile
                                     key={item.Id}
-                                    ref={(el) => (tileRefs.current[key] = el)}
-                                    className={`browse-tile ${focused ? "focused" : ""}`}
-                                    type="button"
-                                    role="listitem"
-                                    tabIndex={focused ? 0 : -1}
+                                    item={item}
+                                    size="browse"
+                                    focused={focused}
+                                    showProgress
                                     onClick={() => {
                                         const target = shouldShowWatchMenu(item)
                                             ? `/watch/${encodeURIComponent(item.Id)}`
@@ -305,17 +345,8 @@ export default function Browse() {
                                     onFocus={() =>
                                         setFocus({ kind: "tile", row: rIdx, col: cIdx })
                                     }
-                                >
-                                    <Poster id={item.Id} hasPoster={!!item.ImageTags?.Primary} />
-                                    <div className="browse-tile-name">{item.Name}</div>
-                                    {progress > 1 && progress < 99 && (
-                                        <div
-                                            className="browse-tile-progress"
-                                            style={{ width: `${progress}%` }}
-                                            aria-hidden
-                                        />
-                                    )}
-                                </button>
+                                    refCallback={(el) => (tileRefs.current[key] = el)}
+                                />
                             );
                         })}
                     </div>
@@ -328,24 +359,7 @@ export default function Browse() {
                     onClose={() => setOverride(null)}
                 />
             )}
+            {menuOpen && <MainMenuModal onClose={() => setMenuOpen(false)} />}
         </div>
-    );
-}
-
-function Poster({ id, hasPoster }: { id: string; hasPoster: boolean }) {
-    if (!hasPoster) {
-        return <div className="browse-tile-poster placeholder">?</div>;
-    }
-    // <img> can't attach Authorization headers; kids pass token + userId
-    // as query params instead (admin cookie path returns "" suffix).
-    const src = `/api/kids/items/${encodeURIComponent(id)}/image?type=Primary&width=240${imageAuthSuffix()}`;
-    return (
-        <img
-            className="browse-tile-poster"
-            src={src}
-            alt=""
-            loading="lazy"
-            decoding="async"
-        />
     );
 }

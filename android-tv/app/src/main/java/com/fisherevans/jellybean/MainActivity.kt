@@ -125,6 +125,16 @@ class MainActivity : AppCompatActivity() {
         fun recreateActivity() {
             runOnUiThread { recreate() }
         }
+
+        /**
+         * Tear the activity down so the launcher takes over. Used by the
+         * kid client's Menu -> Exit. finishAndRemoveTask() drops the task
+         * from the recents list so a casual relaunch is a clean cold start.
+         */
+        @JavascriptInterface
+        fun exitApp() {
+            runOnUiThread { finishAndRemoveTask() }
+        }
     }
 
     private fun enterImmersiveMode() {
