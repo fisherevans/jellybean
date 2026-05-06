@@ -97,7 +97,7 @@ test.describe("kids library", () => {
         await gotoLibrary(page, 1);
         // Wait for the initial fetch to finish so a click triggers a fresh
         // request we can observe.
-        await page.locator(".tile-grid, .library-state").first().waitFor();
+        await page.locator(".tile-library, .library-state").first().waitFor();
         const moviesReq = page.waitForRequest((req) => {
             const url = req.url();
             return url.includes("/api/kids/library") && url.includes("type=Movie") &&
@@ -111,7 +111,7 @@ test.describe("kids library", () => {
         await gotoLibrary(page, 1);
         // Wait for at least one tile to render. Server returns visible items
         // for the Default profile; if empty the test data is misconfigured.
-        const firstTile = page.locator(".tile-grid").first();
+        const firstTile = page.locator(".tile-library").first();
         await expect(firstTile).toBeVisible({ timeout: 10_000 });
         await firstTile.click();
         await expect(page).toHaveURL(/\/player\/play\//);
@@ -129,10 +129,10 @@ test.describe("kids library", () => {
             route.continue();
         });
         await page.goto(`/player/library?profileId=1`);
-        await expect(page.locator(".tile-grid").first()).toBeVisible({
+        await expect(page.locator(".tile-library").first()).toBeVisible({
             timeout: 15_000,
         });
-        await page.getByLabel("Search library").fill("scoo");
+        await page.locator("input.library-search").fill("scoo");
         // Debounce is 300ms; allow up to a second for the request.
         await page.waitForTimeout(800);
         expect(searches).toContain("scoo");
@@ -141,7 +141,7 @@ test.describe("kids library", () => {
     test("D-pad: ArrowDown from filter focuses a tile, Enter activates it", async ({ page }) => {
         await gotoLibrary(page, 1);
         // Wait for the grid to load.
-        await page.locator(".tile-grid").first().waitFor({ state: "visible" });
+        await page.locator(".tile-library").first().waitFor({ state: "visible" });
         // Focus the active filter pill, then ArrowDown.
         await page.getByRole("tab", { name: "Both" }).focus();
         await page.keyboard.press("ArrowDown");
@@ -153,13 +153,13 @@ test.describe("kids library", () => {
 
     test("Series tiles get a TV badge when present", async ({ page }) => {
         await gotoLibrary(page, 1);
-        await page.locator(".tile-grid, .library-state").first().waitFor();
+        await page.locator(".tile-library, .library-state").first().waitFor();
         const seriesReq = page.waitForRequest((req) =>
             req.url().includes("/api/kids/library") && req.url().includes("type=Series"),
         );
         await page.getByRole("tab", { name: "TV" }).click();
         await seriesReq;
-        const firstTile = page.locator(".tile-grid").first();
+        const firstTile = page.locator(".tile-library").first();
         await expect(firstTile).toBeVisible({ timeout: 10_000 });
         await expect(firstTile.locator(".tile-badge")).toBeVisible();
     });
@@ -222,7 +222,7 @@ test.describe("kids library cache", () => {
         // the second navigation (the "reload") sees the same state.
         await page.addInitScript(
             ({ userId, etag, tileName, allKey, cwKey }) => {
-                if (location.pathname.startsWith("/kids")) {
+                if (location.pathname.startsWith("/player")) {
                     localStorage.setItem("jellybean.kids.token", "fake-bearer-token");
                     localStorage.setItem("jellybean.kids.userId", userId);
                     localStorage.setItem("jellybean.kids.userName", "cache-test");
@@ -316,7 +316,7 @@ test.describe("kids library cache", () => {
         // under a tight cache-hit budget. The network request will most
         // likely 401 (fake bearer + no admin cookie), so this can only
         // succeed via the IDB cache.
-        const tile = page.locator(".tile-grid").first();
+        const tile = page.locator(".tile-library").first();
         await tile.waitFor({ state: "visible", timeout: 1500 });
         const elapsed = Date.now() - navStart;
         // Cache renders well before any 1s+ network round-trip would. We
@@ -369,7 +369,7 @@ test.describe("kids library cache", () => {
                 keyBothAll,
                 keyBothCw,
             }) => {
-                if (location.pathname.startsWith("/kids")) {
+                if (location.pathname.startsWith("/player")) {
                     localStorage.setItem("jellybean.kids.token", "fake-bearer-token");
                     localStorage.setItem("jellybean.kids.userId", userId);
                     localStorage.setItem("jellybean.kids.userName", "filter-switch");
@@ -485,8 +485,8 @@ test.describe("kids library cache", () => {
         await page.goto(`${KIDS_BASE}library`);
 
         // Wait for the initial "Both" render to land. The Both cache
-        // contains both tiles, so .tile-grid should be visible.
-        await expect(page.locator(".tile-grid").first()).toBeVisible({
+        // contains both tiles, so .tile-library should be visible.
+        await expect(page.locator(".tile-library").first()).toBeVisible({
             timeout: 5_000,
         });
 
@@ -501,7 +501,7 @@ test.describe("kids library cache", () => {
         await tvTab.click();
         const tvFlash = await sawLoadingDuringTv;
         expect(tvFlash).toBe(false);
-        await expect(page.locator(".tile-grid").first()).toBeVisible();
+        await expect(page.locator(".tile-library").first()).toBeVisible();
 
         // Now click Movies, same assertion.
         const moviesTab = page.getByRole("tab", { name: "Movies" });
@@ -509,7 +509,7 @@ test.describe("kids library cache", () => {
         await moviesTab.click();
         const moviesFlash = await sawLoadingDuringMovies;
         expect(moviesFlash).toBe(false);
-        await expect(page.locator(".tile-grid").first()).toBeVisible();
+        await expect(page.locator(".tile-library").first()).toBeVisible();
     });
 });
 
@@ -547,7 +547,7 @@ test.describe("kids offline", () => {
 
         await page.addInitScript(
             ({ userId, etag, tileName, allKey, cwKey }) => {
-                if (location.pathname.startsWith("/kids")) {
+                if (location.pathname.startsWith("/player")) {
                     localStorage.setItem("jellybean.kids.token", "fake-bearer-token");
                     localStorage.setItem("jellybean.kids.userId", userId);
                     localStorage.setItem("jellybean.kids.userName", "offline-test");
@@ -638,7 +638,7 @@ test.describe("kids offline", () => {
 
         await page.goto(`${KIDS_BASE}library`);
 
-        const tile = page.locator(".tile-grid").first();
+        const tile = page.locator(".tile-library").first();
         await tile.waitFor({ state: "visible", timeout: 5_000 });
         await expect(tile.locator(".tile-title")).toHaveText(CACHE_TILE_NAME);
 
@@ -674,7 +674,7 @@ test.describe("kids offline", () => {
     }) => {
         await context.clearCookies();
         await page.addInitScript(() => {
-            if (location.pathname.startsWith("/kids")) {
+            if (location.pathname.startsWith("/player")) {
                 localStorage.setItem("jellybean.kids.token", "fake-bearer-token");
                 localStorage.setItem("jellybean.kids.userId", "offline-play-user");
                 localStorage.setItem("jellybean.kids.userName", "offline-play");
@@ -710,7 +710,7 @@ test.describe("kids playback", () => {
         await clearKidsLocalStorage(page);
         await page.goto(`/player/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
-        const movieTile = page.locator(".tile-grid").first();
+        const movieTile = page.locator(".tile-library").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
 
         const streamReq = page.waitForRequest((req) =>
@@ -727,7 +727,7 @@ test.describe("kids playback", () => {
         await clearKidsLocalStorage(page);
         await page.goto(`/player/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
-        const movieTile = page.locator(".tile-grid").first();
+        const movieTile = page.locator(".tile-library").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
         await movieTile.click();
         // The library tile may route to /watch (in-progress) or /play
@@ -746,7 +746,7 @@ test.describe("kids playback", () => {
         await clearKidsLocalStorage(page);
         await page.goto(`/player/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
-        const movieTile = page.locator(".tile-grid").first();
+        const movieTile = page.locator(".tile-library").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
         await movieTile.click();
         const url = page.url();
@@ -766,7 +766,7 @@ test.describe("kids playback", () => {
         await clearKidsLocalStorage(page);
         await page.goto(`/player/library?profileId=1`);
         await page.getByRole("tab", { name: "Movies" }).click();
-        const movieTile = page.locator(".tile-grid").first();
+        const movieTile = page.locator(".tile-library").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
         await movieTile.click();
         await expect(page).toHaveURL(/\/player\/play\//);

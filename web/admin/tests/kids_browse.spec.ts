@@ -49,7 +49,7 @@ test.describe("kids browse + tab pill", () => {
         // movies still go straight to /play. Either is a valid
         // outcome for "the first tile."
         await gotoKids(page, "/player/browse?profileId=1");
-        const firstTile = page.locator(".browse-tile").first();
+        const firstTile = page.locator(".tile-browse").first();
         await expect(firstTile).toBeVisible({ timeout: 15_000 });
         await firstTile.click();
         await expect(page).toHaveURL(/\/player\/(play|watch)\//);
