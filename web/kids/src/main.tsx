@@ -52,6 +52,14 @@ function AppShell() {
     );
 }
 
+// Disable the browser's automatic scroll restoration so popstate
+// (used by useProgressiveBack's sentinel pattern) doesn't snap the
+// page back to where the kid was scrolled - we manage scroll
+// position ourselves via the focus effects.
+if ("scrollRestoration" in window.history) {
+    window.history.scrollRestoration = "manual";
+}
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
         <BrowserRouter basename="/player">

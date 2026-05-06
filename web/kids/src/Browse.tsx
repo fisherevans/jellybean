@@ -253,12 +253,14 @@ export default function Browse() {
     // automatic scroll-into-view from focus() so it doesn't race the
     // explicit smooth scroll below.
     //
-    // Tab focus pins the window to top. Tile focus uses inline:"start"
-    // (combined with scroll-padding-inline-start in CSS) so the focused
-    // tile stays anchored at a fixed left position as the kid arrows
-    // through the row - the row scrolls under a stationary cursor.
-    // Block:"center" on the row keeps the focused row vertically
-    // centered as the kid arrows down through rows.
+    // Rapid D-pad presses produce a stutter when each focus change
+    // triggers a fresh smooth scrollIntoView - the in-flight smooth
+    // scroll gets canceled mid-animation and the velocity resets.
+    // We coalesce via requestAnimationFrame: multiple focus changes
+    // within a single frame collapse to one scroll to the latest
+    // target. Visually this turns "press right 5 times fast" from
+    // 5 stuttering scrolls into a single smooth slide.
+    const scrollRafRef = useRef<number | null>(null);
     useEffect(() => {
         const k =
             focus.kind === "tile"
@@ -267,15 +269,21 @@ export default function Browse() {
         const el = tileRefs.current[k];
         if (!el) return;
         el.focus({ preventScroll: true });
-        if (focus.kind === "tab") {
-            window.scrollTo({ top: 0, behavior: "smooth" });
-        } else {
-            el.scrollIntoView({
-                block: "center",
-                inline: "start",
-                behavior: "smooth",
-            });
+        if (scrollRafRef.current !== null) {
+            cancelAnimationFrame(scrollRafRef.current);
         }
+        scrollRafRef.current = requestAnimationFrame(() => {
+            scrollRafRef.current = null;
+            if (focus.kind === "tab") {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+            } else {
+                el.scrollIntoView({
+                    block: "center",
+                    inline: "start",
+                    behavior: "smooth",
+                });
+            }
+        });
     }, [focus]);
 
     if (error) {

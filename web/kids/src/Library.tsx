@@ -428,20 +428,16 @@ export default function Library() {
     }, [loading, items.length, continueItems.length]);
 
     // Keep focused element on screen + imperatively focus the right
-    // DOM node. preventScroll=true suppresses the browser's
-    // auto-scroll-into-view from focus() so it can't race the smooth
+    // DOM node. preventScroll=true on focus() suppresses the
+    // browser's auto-scroll-into-view so it can't race the smooth
     // scroll below.
     //
-    // Top-area focus (tab / search / filter): pin window to top via
-    // a two-step window.scrollTo - the first call sets the position,
-    // and we issue it twice (rAF + immediate) because some Android
-    // WebView builds drop the second smooth-scroll call when issued
-    // mid-flight from a previous scrollIntoView. Sending it twice
-    // gives the renderer a stable target.
-    //
-    // cw / grid focus: vertically center the row, AND use inline:"start"
-    // on the cw strip so the focused tile is left-anchored (CSS
-    // scroll-padding-inline-start gives it inset breathing room).
+    // rAF-coalesce: rapid D-pad presses can trigger 4-5 focus changes
+    // in 200ms. Issuing a smooth scroll on each one cancels the
+    // previous in-flight animation and the visible velocity stutters.
+    // Coalescing to one scroll per animation frame collapses bursts
+    // into a single fluid slide.
+    const scrollRafRef = useRef<number | null>(null);
     useEffect(() => {
         const inTopArea =
             focus.kind === "tab" ||
@@ -454,28 +450,29 @@ export default function Library() {
             const el = tileRefs.current[key];
             if (el) el.focus({ preventScroll: true });
         }
-        if (inTopArea) {
-            window.scrollTo({ top: 0, behavior: "smooth" });
-            // Re-issue on the next frame in case a previous in-flight
-            // smooth scroll absorbed this one (the "halfway-stop" bug).
-            requestAnimationFrame(() => {
-                window.scrollTo({ top: 0, behavior: "smooth" });
-            });
-        } else if (focus.kind === "cw") {
-            const el = tileRefs.current[focusKey(focus)];
-            el?.scrollIntoView({
-                block: "center",
-                inline: "start",
-                behavior: "smooth",
-            });
-        } else if (focus.kind === "grid") {
-            const el = tileRefs.current[focusKey(focus)];
-            el?.scrollIntoView({
-                block: "center",
-                inline: "nearest",
-                behavior: "smooth",
-            });
+        if (scrollRafRef.current !== null) {
+            cancelAnimationFrame(scrollRafRef.current);
         }
+        scrollRafRef.current = requestAnimationFrame(() => {
+            scrollRafRef.current = null;
+            if (inTopArea) {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+            } else if (focus.kind === "cw") {
+                const el = tileRefs.current[focusKey(focus)];
+                el?.scrollIntoView({
+                    block: "center",
+                    inline: "start",
+                    behavior: "smooth",
+                });
+            } else if (focus.kind === "grid") {
+                const el = tileRefs.current[focusKey(focus)];
+                el?.scrollIntoView({
+                    block: "center",
+                    inline: "nearest",
+                    behavior: "smooth",
+                });
+            }
+        });
     }, [focus]);
 
     // Calculate columns in the grid based on viewport width to drive
@@ -600,7 +597,14 @@ export default function Library() {
                     }`}
                     tabIndex={focus.kind === "search" ? 0 : -1}
                     onClick={() => searchInputRef.current?.focus()}
-                    onFocus={() => setFocus({ kind: "search" })}
+                    // Deliberately NO onFocus here. React's onFocus
+                    // uses focusin which bubbles, so it would fire
+                    // when the inner <input> receives focus too -
+                    // calling setFocus({kind:"search"}) with a new
+                    // object ref, re-running the focus effect, and
+                    // bouncing DOM focus back from the input to the
+                    // wrap (kid couldn't type). The state is already
+                    // managed by the page's keyboard handler.
                 >
                     <input
                         ref={searchInputRef}

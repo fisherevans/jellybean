@@ -73,23 +73,39 @@ export default function MainMenuModal({ onClose }: Props) {
     }
 
     function onKey(e: React.KeyboardEvent) {
+        // The page behind the modal also has a keydown handler on its
+        // root. Without stopPropagation, every key the modal handles
+        // would also drive the page's focus model and the kid would
+        // see focus jump to elements behind the modal after the first
+        // arrow press. Stop the bubble at the modal boundary.
         switch (e.key) {
             case "Escape":
             case "Backspace":
                 e.preventDefault();
+                e.stopPropagation();
                 onClose();
                 return;
             case "ArrowDown":
                 e.preventDefault();
+                e.stopPropagation();
                 setFocus((f) => Math.min(ACTIONS.length - 1, f + 1));
                 return;
             case "ArrowUp":
                 e.preventDefault();
+                e.stopPropagation();
                 setFocus((f) => Math.max(0, f - 1));
+                return;
+            case "ArrowLeft":
+            case "ArrowRight":
+                // Swallow horizontal arrows too so they don't drive
+                // the page's tab pill behind us.
+                e.preventDefault();
+                e.stopPropagation();
                 return;
             case "Enter":
             case " ":
                 e.preventDefault();
+                e.stopPropagation();
                 activate(ACTIONS[focus].id);
                 return;
         }
