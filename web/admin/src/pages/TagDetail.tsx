@@ -157,27 +157,14 @@ export default function TagDetail() {
                         Nothing tagged yet. Use the search above to add items.
                     </p>
                 ) : (
-                    <ul className="tag-item-list">
+                    <ul className="browse-grid">
                         {items.map((it) => (
-                            <li key={it.Id} className="tag-item-row">
-                                <div className="tag-item-info">
-                                    <div className="tag-item-name">{it.Name}</div>
-                                    <div className="muted">
-                                        {it.Type}
-                                        {it.ProductionYear ? ` · ${it.ProductionYear}` : ""}
-                                        {" · "}
-                                        {it.State === "visible"
-                                            ? "Visible"
-                                            : it.State === "hidden"
-                                              ? "Hidden"
-                                              : "Unset"}{" "}
-                                        for {profile.name}
-                                    </div>
-                                </div>
-                                <button onClick={() => untagItem(it.Id)}>
-                                    Remove tag
-                                </button>
-                            </li>
+                            <TaggedItemCard
+                                key={it.Id}
+                                item={it}
+                                profileName={profile.name}
+                                onRemove={() => untagItem(it.Id)}
+                            />
                         ))}
                     </ul>
                 )}
@@ -195,6 +182,79 @@ export default function TagDetail() {
                 />
             )}
         </div>
+    );
+}
+
+// TaggedItemCard is the same poster + metadata layout used by the
+// admin Browse page (.browse-item) but with a destructive Remove
+// action button instead of Edit. The "remove" treatment lives on
+// the action button itself - red border / red text - so the
+// destructive intent is obvious at a glance.
+type TaggedItemCardProps = {
+    item: Item;
+    profileName: string;
+    onRemove: () => void;
+};
+
+function TaggedItemCard({ item, profileName, onRemove }: TaggedItemCardProps) {
+    const posterURL = item.ImageTags?.Primary
+        ? `/api/admin/items/${encodeURIComponent(item.Id)}/image?type=Primary&width=80&tag=${encodeURIComponent(
+              item.ImageTags.Primary,
+          )}`
+        : null;
+    const stateLabel =
+        item.State === "visible"
+            ? "Visible"
+            : item.State === "hidden"
+              ? "Hidden"
+              : "Unset";
+    return (
+        <li className="browse-item">
+            <div className="browse-item-link">
+                {posterURL ? (
+                    <img
+                        src={posterURL}
+                        alt=""
+                        className="browse-item-poster"
+                        loading="lazy"
+                    />
+                ) : (
+                    <div className="browse-item-poster placeholder" aria-hidden>
+                        ?
+                    </div>
+                )}
+                <div className="browse-item-body">
+                    <div className="browse-item-head">
+                        <div className="browse-item-name">{item.Name}</div>
+                        <div className="browse-item-meta">
+                            <span
+                                className={`browse-state-pill state-${item.State ?? "unset"}`}
+                            >
+                                {stateLabel} for {profileName}
+                            </span>
+                            <span className="muted">
+                                {item.Type === "Series" ? "TV" : "Movie"}
+                                {item.ProductionYear
+                                    ? ` · ${item.ProductionYear}`
+                                    : ""}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <button
+                type="button"
+                className="browse-item-edit destructive"
+                aria-label={`Remove ${item.Name} from tag`}
+                onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onRemove();
+                }}
+            >
+                Remove
+            </button>
+        </li>
     );
 }
 
@@ -423,6 +483,7 @@ function AddItemsPanel({ tag, profileId, taggedItems, onChanged }: AddItemsPanel
                                                     </div>
                                                 </div>
                                                 <button
+                                                    className="constructive"
                                                     onClick={() => add(it)}
                                                     disabled={busyIds.has(
                                                         it.Id,
@@ -459,6 +520,7 @@ function AddItemsPanel({ tag, profileId, taggedItems, onChanged }: AddItemsPanel
                                                         </div>
                                                     </div>
                                                     <button
+                                                        className="destructive"
                                                         onClick={() =>
                                                             remove(it)
                                                         }

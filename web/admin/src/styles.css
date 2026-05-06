@@ -1718,6 +1718,35 @@ a.tag-item-name:hover {
 .tag-add-popup-row-tagged {
     opacity: 0.78;
 }
+
+/* Constructive / destructive action buttons. Used in the tag-add
+   popup (Add green / Remove red) and on the tagged-item cards
+   (Remove red). Bright fills when not focused so the affordance
+   reads even on a dark background. */
+button.constructive {
+    background: var(--success, #06d6a0);
+    color: #0b2017;
+    border: 1px solid var(--success, #06d6a0);
+}
+button.constructive:hover:not(:disabled) {
+    background: #07e8ad;
+    border-color: #07e8ad;
+}
+button.destructive {
+    background: transparent;
+    color: var(--error, #e55381);
+    border: 1px solid var(--error, #e55381);
+}
+button.destructive:hover:not(:disabled) {
+    background: rgba(229, 83, 129, 0.12);
+}
+.browse-item-edit.destructive {
+    color: var(--error, #e55381);
+    border-color: var(--error, #e55381);
+}
+.browse-item-edit.destructive:hover {
+    background: rgba(229, 83, 129, 0.12);
+}
 .tag-add-popup-info {
     flex: 1;
     min-width: 0;
