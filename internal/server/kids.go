@@ -26,6 +26,26 @@ const (
 	kidsDeviceIDHeader = "X-Jellybean-DeviceId"
 )
 
+// writeUpstreamError maps a Jellyfin error onto an HTTP status the kid
+// client can react to. ErrUnauthorized propagates as 401 so the client
+// auto-redirects to /login (the only sensible recovery for a stale
+// kid bearer token); ErrNotFound becomes 404; everything else falls
+// back to 502 so the kid sees the generic "couldn't reach server" UI.
+//
+// Without this, a stale Jellyfin token used to surface as 502 and the
+// kid client got stuck rendering an error screen with no auto-recovery.
+func writeUpstreamError(w http.ResponseWriter, err error, fallbackMsg string) {
+	if errors.Is(err, jellyfin.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if jellyfin.IsUnauthorized(err) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	http.Error(w, fallbackMsg, http.StatusBadGateway)
+}
+
 // kidsRequestContext stamps the X-Jellybean-DeviceId header (when present)
 // onto the request context so any downstream jellyfin call automatically
 // picks it up via WithDeviceID. Use the returned context for every
@@ -301,7 +321,7 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		res, err := s.jellyfin.GetResumeItems(ctx, kc.JellyfinUserID, kc.JellyfinToken, limit*2)
 		if err != nil {
 			s.logger.Error().Err(err).Msg("kids resume")
-			http.Error(w, "failed to load continue watching", http.StatusBadGateway)
+			writeUpstreamError(w, err, "failed to load continue watching")
 			return
 		}
 		// EffectiveItemVisibilityBulk applies the M6 resolution
@@ -363,7 +383,7 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 	}, kc.JellyfinToken)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("kids library fetch")
-		http.Error(w, "failed to load library", http.StatusBadGateway)
+		writeUpstreamError(w, err, "failed to load library")
 		return
 	}
 
@@ -716,12 +736,8 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		item, err = s.jellyfin.GetItem(ctx, id)
 	}
 	if err != nil {
-		if errors.Is(err, jellyfin.ErrNotFound) {
-			http.Error(w, "item not found", http.StatusNotFound)
-			return
-		}
 		s.logger.Error().Err(err).Str("id", id).Msg("kids stream resolve")
-		http.Error(w, "failed to resolve item", http.StatusBadGateway)
+		writeUpstreamError(w, err, "failed to resolve item")
 		return
 	}
 
@@ -767,7 +783,7 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.logger.Error().Err(err).Str("id", id).Msg("kids stream playback info")
-		http.Error(w, "failed to negotiate playback", http.StatusBadGateway)
+		writeUpstreamError(w, err, "failed to negotiate playback")
 		return
 	}
 
@@ -854,12 +870,8 @@ func (s *Server) handleKidsItem(w http.ResponseWriter, r *http.Request) {
 		item, err = s.jellyfin.GetItem(ctx, id)
 	}
 	if err != nil {
-		if errors.Is(err, jellyfin.ErrNotFound) {
-			http.Error(w, "item not found", http.StatusNotFound)
-			return
-		}
 		s.logger.Error().Err(err).Str("id", id).Msg("kids item resolve")
-		http.Error(w, "failed to resolve item", http.StatusBadGateway)
+		writeUpstreamError(w, err, "failed to resolve item")
 		return
 	}
 	resp := kidsItemResponse{
@@ -913,7 +925,7 @@ func (s *Server) handleKidsSeriesEpisodes(w http.ResponseWriter, r *http.Request
 	res, err := fetch(jellyfin.ItemsFilter{IDs: []string{id}})
 	if err != nil {
 		s.logger.Error().Err(err).Msg("episodes: series lookup")
-		http.Error(w, "failed to load series", http.StatusBadGateway)
+		writeUpstreamError(w, err, "failed to load series")
 		return
 	}
 	if len(res.Items) == 0 || res.Items[0].Type != "Series" {
@@ -935,7 +947,7 @@ func (s *Server) handleKidsSeriesEpisodes(w http.ResponseWriter, r *http.Request
 	})
 	if err != nil {
 		s.logger.Error().Err(err).Msg("episodes: list")
-		http.Error(w, "failed to load episodes", http.StatusBadGateway)
+		writeUpstreamError(w, err, "failed to load episodes")
 		return
 	}
 	// Filter client-side to the series' episodes. Jellyfin's
@@ -1127,7 +1139,7 @@ func (s *Server) handleKidsNextUp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.logger.Error().Err(err).Str("series_id", id).Msg("kids next-up")
-		http.Error(w, "failed to resolve next-up", http.StatusBadGateway)
+		writeUpstreamError(w, err, "failed to resolve next-up")
 		return
 	}
 

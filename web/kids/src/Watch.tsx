@@ -6,7 +6,13 @@ import {
     Shuffle,
     SkipForward,
 } from "@phosphor-icons/react";
-import { authHeaders, getSession, imageAuthSuffix, type Session } from "./auth";
+import {
+    authHeaders,
+    clearSession,
+    getSession,
+    imageAuthSuffix,
+    type Session,
+} from "./auth";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
 import { scrollWindowToCenter, scrollWindowToTop } from "./smoothScroll";
 import { useProgressiveBack } from "./useProgressiveBack";
@@ -265,7 +271,14 @@ export default function Watch() {
                 credentials: "same-origin",
                 headers: authHeaders(),
             });
-            if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+            if (!res.ok) {
+                if (res.status === 401) {
+                    clearSession();
+                    nav("/login", { replace: true });
+                    return;
+                }
+                throw new Error(`${res.status}: ${await res.text()}`);
+            }
             const body = (await res.json()) as {
                 itemId: string;
                 itemName: string;
@@ -306,7 +319,14 @@ export default function Watch() {
                         headers: authHeaders(),
                     },
                 );
-                if (!res.ok) throw new Error(`${res.status}`);
+                if (!res.ok) {
+                    if (res.status === 401) {
+                        clearSession();
+                        nav("/login", { replace: true });
+                        return;
+                    }
+                    throw new Error(`${res.status}`);
+                }
                 const body = (await res.json()) as EpisodesResponse;
                 if (!cancelled) setEpisodes(body);
             } catch (err) {

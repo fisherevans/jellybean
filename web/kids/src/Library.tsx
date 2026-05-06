@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
     authHeaders,
+    clearSession,
     getSession,
     probeAdmin,
     type AdminUser,
@@ -228,6 +229,14 @@ export default function Library() {
                 return { status: "not-modified", etag };
             }
             if (!res.ok) {
+                if (res.status === 401) {
+                    // Stale bearer (kid token expired). Surface a
+                    // distinct error type so the caller can wipe local
+                    // session + redirect to /login.
+                    const e = new Error("unauthorized");
+                    (e as Error & { code?: string }).code = "UNAUTHORIZED";
+                    throw e;
+                }
                 throw new Error(`${res.status}: ${await res.text()}`);
             }
             const page = (await res.json()) as LibraryResponse;
@@ -359,6 +368,17 @@ export default function Library() {
             })
             .catch((err) => {
                 if (cancelled) return;
+                // 401 = stale bearer; wipe local session and bounce
+                // to /login. Auto-recovery, no error UI.
+                if (
+                    err &&
+                    typeof err === "object" &&
+                    (err as { code?: string }).code === "UNAUTHORIZED"
+                ) {
+                    clearSession();
+                    nav("/login", { replace: true });
+                    return;
+                }
                 // Distinguish "we had cache to fall back on" (background
                 // refresh failed, keep tiles, show small indicator) from
                 // "no cache + the network failed" (full error screen).

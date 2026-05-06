@@ -148,7 +148,7 @@ func (s *Server) respondBrowse(
 			}, userTok)
 			if err != nil {
 				s.logger.Error().Err(err).Msg("browse decorate")
-				http.Error(w, "failed to load items", http.StatusBadGateway)
+				writeUpstreamError(w, err, "failed to load items")
 				return
 			}
 			for _, it := range res.Items {

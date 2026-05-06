@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Heart } from "@phosphor-icons/react";
 import {
     authHeaders,
+    clearSession,
     getSession,
     type Session,
 } from "./auth";
@@ -114,6 +115,13 @@ export default function Browse() {
                 headers: authHeaders(),
             });
             if (!res.ok) {
+                if (res.status === 401) {
+                    // Stale bearer token. Wipe local session and bounce
+                    // to login - the only sane recovery.
+                    clearSession();
+                    nav("/login", { replace: true });
+                    return;
+                }
                 throw new Error(`${res.status}: ${await res.text()}`);
             }
             const body: BrowseResponse = await res.json();
