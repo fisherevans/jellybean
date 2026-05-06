@@ -100,6 +100,9 @@ export type Tag = {
     name: string;
     description?: string;
     sortOrder: number;
+    // Optional Phosphor icon name from the curated allow-list (see
+    // tagIcons.ts in admin + kid). Empty string = no icon.
+    icon?: string;
     itemCount?: number;
     createdAt?: number;
     updatedAt?: number;
@@ -467,11 +470,13 @@ export const api = {
         name: string;
         description?: string;
         sortOrder?: number;
+        icon?: string;
     }) => request<Tag>("POST", `/api/admin/tags`, input),
     updateTag: (id: number, input: {
         name?: string;
         description?: string;
         sortOrder?: number;
+        icon?: string;
     }) => request<Tag>("PATCH", `/api/admin/tags/${id}`, input),
     deleteTag: (id: number) => request<void>("DELETE", `/api/admin/tags/${id}`),
 

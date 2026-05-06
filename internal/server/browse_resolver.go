@@ -40,7 +40,12 @@ type ResolvedRow struct {
 	//   - favorites             -> "Heart"
 	//   - tag, tag_fanout       -> the tag's icon (when set)
 	//   - other                 -> ""
-	Icon    string
+	Icon string
+	// HasMore is true when more items exist beyond what's in
+	// ItemIDs. Only random_unwatched + recently_added populate
+	// this; everything else stays false (terminal "loop back" UI
+	// on the kid side).
+	HasMore bool
 	ItemIDs []string
 }
 
@@ -364,10 +369,15 @@ func resolveTagFanout(b *browseContext, row curation.LayoutRow, cfg map[string]a
 func resolveRecentlyAdded(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
 	max := readMaxItems(cfg)
 	lookback := readIntConfig(cfg, "lookback_days", 30)
+	// Overfetch a multiple of max so the visibility filter doesn't
+	// starve the row + we have headroom to detect HasMore. Bumping
+	// in proportion to max means load-more (which raises max) keeps
+	// the same overfetch ratio.
+	overfetchMul := 4
 	res, err := b.jelly.GetItemsAsUser(b.ctx, jellyfin.ItemsFilter{
 		IncludeItemTypes: []string{"Movie", "Series"},
 		Recursive:        true,
-		Limit:            max * 4, // overfetch to allow visibility filter
+		Limit:            max * overfetchMul,
 		SortBy:           "DateCreated",
 		SortOrder:        "Descending",
 	}, b.userTok)
@@ -391,54 +401,65 @@ func resolveRecentlyAdded(b *browseContext, row curation.LayoutRow, cfg map[stri
 	if err != nil {
 		return nil, err
 	}
-	return []ResolvedRow{newRow(row, "Recently Added", "", capItems(visible, max))}, nil
+	capped := capItems(visible, max)
+	rr := newRow(row, "Recently Added", "", capped)
+	// HasMore: at least one more visible item exists beyond what we
+	// returned. Conservative: if Jellyfin returned the full overfetch
+	// AND visibility didn't trim it below `max`, there's likely more
+	// beyond our window.
+	rr.HasMore = len(visible) > max
+	return []ResolvedRow{rr}, nil
 }
 
 func resolveRandomUnwatched(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
 	max := readMaxItems(cfg)
-	// Cache lookup.
+	// Cache stores the FULL shuffled list (not the capped slice).
+	// Slicing happens at response time so load-more can grow the
+	// returned slice without re-shuffling.
+	var fullList []string
 	if cached, _ := b.store.GetCachedRowOrder(b.ctx, b.profile.ID, b.layout.ID, row.ID, cacheTTL); cached != nil {
-		var ids []string
-		if err := json.Unmarshal([]byte(cached.ItemIDsJSON), &ids); err == nil {
-			return []ResolvedRow{newRow(row, "Discover Something New", "", capItems(ids, max))}, nil
-		}
+		_ = json.Unmarshal([]byte(cached.ItemIDsJSON), &fullList)
 	}
-	// Pull every visible item id for the profile, then shuffle. This
-	// also doubles as the IsUnplayed filter on Jellyfin: we query
-	// by ids + Filters=IsUnplayed in one go.
-	visible, err := b.store.ListEffectivelyVisibleItemIDs(b.ctx, b.profile.ID)
-	if err != nil {
-		return nil, err
-	}
-	if len(visible) == 0 {
-		return []ResolvedRow{newRow(row, "Discover Something New", "", nil)}, nil
-	}
-	// Filter to unplayed via Jellyfin (PlayCount=0). Fetch in chunks
-	// so we don't hit URL-length limits.
-	unplayed := []string{}
-	for i := 0; i < len(visible); i += jellyfinIDBatchSize {
-		end := i + jellyfinIDBatchSize
-		if end > len(visible) {
-			end = len(visible)
-		}
-		batch := visible[i:end]
-		res, err := b.jelly.GetItemsAsUser(b.ctx, jellyfin.ItemsFilter{
-			IDs:     batch,
-			Filters: []string{"IsUnplayed"},
-		}, b.userTok)
+	if fullList == nil {
+		visible, err := b.store.ListEffectivelyVisibleItemIDs(b.ctx, b.profile.ID)
 		if err != nil {
 			return nil, err
 		}
-		for _, it := range res.Items {
-			unplayed = append(unplayed, it.ID)
+		if len(visible) == 0 {
+			return []ResolvedRow{newRow(row, "Discover Something New", "", nil)}, nil
+		}
+		// Filter to unplayed via Jellyfin (PlayCount=0). Fetch in
+		// chunks so we don't hit URL-length limits.
+		unplayed := []string{}
+		for i := 0; i < len(visible); i += jellyfinIDBatchSize {
+			end := i + jellyfinIDBatchSize
+			if end > len(visible) {
+				end = len(visible)
+			}
+			batch := visible[i:end]
+			res, err := b.jelly.GetItemsAsUser(b.ctx, jellyfin.ItemsFilter{
+				IDs:     batch,
+				Filters: []string{"IsUnplayed"},
+			}, b.userTok)
+			if err != nil {
+				return nil, err
+			}
+			for _, it := range res.Items {
+				unplayed = append(unplayed, it.ID)
+			}
+		}
+		rand.Shuffle(len(unplayed), func(i, j int) {
+			unplayed[i], unplayed[j] = unplayed[j], unplayed[i]
+		})
+		fullList = unplayed
+		if buf, err := json.Marshal(fullList); err == nil {
+			_ = b.store.SetCachedRowOrder(b.ctx, b.profile.ID, b.layout.ID, row.ID, string(buf))
 		}
 	}
-	rand.Shuffle(len(unplayed), func(i, j int) { unplayed[i], unplayed[j] = unplayed[j], unplayed[i] })
-	capped := capItems(unplayed, max)
-	if buf, err := json.Marshal(capped); err == nil {
-		_ = b.store.SetCachedRowOrder(b.ctx, b.profile.ID, b.layout.ID, row.ID, string(buf))
-	}
-	return []ResolvedRow{newRow(row, "Discover Something New", "", capped)}, nil
+	capped := capItems(fullList, max)
+	rr := newRow(row, "Discover Something New", "", capped)
+	rr.HasMore = len(fullList) > max
+	return []ResolvedRow{rr}, nil
 }
 
 func resolveWatchAgain(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {

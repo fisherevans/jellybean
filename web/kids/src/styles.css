@@ -1066,6 +1066,50 @@ a,
        transforms don't repaint neighbor content. */
     will-change: transform;
 }
+
+/* Terminal tile rendered at the end of every Browse row. Sized to
+   match a regular .tile-browse so the focus zoom + per-row track
+   translation maths work uniformly; visually distinct via the
+   poster face + icon-only content. */
+.tile-terminal {
+    cursor: pointer;
+}
+.tile-terminal:disabled {
+    opacity: 0.6;
+    cursor: progress;
+}
+.tile-terminal-face {
+    /* Inherit aspect-ratio from .tile-poster. Override the dark
+       photo background with a softer card surface so the icon
+       reads against it. */
+    background: var(--card);
+    border: 2px dashed rgba(255, 255, 255, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+}
+.tile-terminal.tile-terminal-load .tile-terminal-face {
+    /* Plus / "more" variant gets the accent fill - inviting to act on. */
+    background: rgba(128, 132, 255, 0.18);
+    border-color: var(--accent);
+}
+.tile-terminal-icon {
+    width: 38%;
+    height: 38%;
+    flex-shrink: 0;
+}
+.tile-terminal-label {
+    text-align: center;
+    color: var(--accent);
+    font-weight: 600;
+}
+.tile-terminal.focused .tile-terminal-face,
+.tile-terminal:focus .tile-terminal-face {
+    /* Focused face brightens further so the focused-state ring
+       matches what regular tiles get. */
+    background: rgba(128, 132, 255, 0.28);
+}
 .browse-tile {
     flex: 0 0 auto;
     width: 160px;

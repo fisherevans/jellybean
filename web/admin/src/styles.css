@@ -2228,6 +2228,64 @@ textarea:focus {
     margin-top: 0.75rem;
 }
 
+/* Tag icon picker (TagModal). Grid of clickable icon cells; first
+   cell is the "no icon" option. Selected cell is outlined with the
+   accent color. */
+.tag-icon-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+.tag-icon-picker-label {
+    font-size: 0.95rem;
+    color: var(--fg);
+}
+.tag-icon-picker-label .muted {
+    color: var(--muted);
+    font-weight: 400;
+    margin-left: 0.4rem;
+    font-size: 0.85em;
+}
+.tag-icon-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(2.6rem, 1fr));
+    gap: 0.45rem;
+}
+.tag-icon-cell {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    padding: 0;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg);
+    cursor: pointer;
+    transition:
+        border-color 100ms ease,
+        background 100ms ease,
+        transform 100ms ease;
+}
+.tag-icon-cell:hover:not(:disabled) {
+    background: var(--card-hover, #1f2128);
+    transform: translateY(-1px);
+}
+.tag-icon-cell.selected {
+    border-color: var(--accent);
+    background: rgba(128, 132, 255, 0.15);
+}
+.tag-icon-cell svg {
+    width: 60%;
+    height: 60%;
+}
+.tag-icon-cell-none {
+    color: var(--muted);
+    font-size: 1.3rem;
+    line-height: 1;
+}
+
 /* M14 API keys page. */
 .apikey-create {
     display: flex;

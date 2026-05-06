@@ -5,6 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
+
+	"github.com/gorilla/mux"
 
 	"github.com/fisherevans/jellybean/internal/curation"
 	"github.com/fisherevans/jellybean/internal/jellyfin"
@@ -23,8 +26,14 @@ type browseRowResponse struct {
 	// renders next to the row title. Set by the resolver:
 	// "Heart" for favorites, the tag's icon for tag/tag_fanout
 	// when configured, "" otherwise.
-	Icon  string          `json:"icon,omitempty"`
-	Items []jellyfin.Item `json:"items"`
+	Icon string `json:"icon,omitempty"`
+	// HasMore is true when more items exist beyond what was
+	// returned. The kid client renders a "Load more" terminal
+	// button when true and "Loop back to start" when false.
+	// Currently set by random_unwatched + recently_added; other
+	// row types stay false.
+	HasMore bool            `json:"hasMore,omitempty"`
+	Items   []jellyfin.Item `json:"items"`
 }
 
 type browseResponse struct {
@@ -48,6 +57,183 @@ func (s *Server) handleKidsBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.respondBrowse(w, r, profileID, 0, kc.kidIDForBrowse(), kc.JellyfinUserID, kc.JellyfinToken)
+}
+
+// handleKidsBrowseRow re-resolves a single layout row at a higher
+// max_items. Backs the kid client's "Load more" button on discover
+// rows (random_unwatched, recently_added). Returns the same shape as
+// one entry of /api/kids/browse rows[].
+//
+// GET /api/kids/browse/row/:rowId?limit=N
+func (s *Server) handleKidsBrowseRow(w http.ResponseWriter, r *http.Request) {
+	kc := s.resolveKidsAuth(r)
+	if kc == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	profileID, msg := s.resolveKidsProfileID(r, kc)
+	if msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+	rowID, err := strconv.ParseInt(mux.Vars(r)["rowId"], 10, 64)
+	if err != nil || rowID <= 0 {
+		http.Error(w, "bad rowId", http.StatusBadRequest)
+		return
+	}
+	// limit caps at 500 - hard ceiling so a malicious or buggy
+	// client can't ask for the whole library at once.
+	limit := 40
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, parseErr := strconv.Atoi(l); parseErr == nil && n > 0 {
+			limit = n
+			if limit > 500 {
+				limit = 500
+			}
+		}
+	}
+	kidID := kc.kidIDForBrowse()
+	if kidID == 0 && kc.JellyfinUserID != "" {
+		if kid, err := s.curation.FindKidByJellyfinUser(r.Context(), kc.JellyfinUserID); err == nil {
+			kidID = kid.ID
+		}
+	}
+	s.respondBrowseRow(w, r, profileID, rowID, limit, kidID, kc.JellyfinUserID, kc.JellyfinToken)
+}
+
+// respondBrowseRow runs the resolver for a single row at the
+// requested limit and writes the result as a single browseRowResponse.
+func (s *Server) respondBrowseRow(
+	w http.ResponseWriter, r *http.Request,
+	profileID, rowID int64, limit int,
+	kidID int64, userID, userTok string,
+) {
+	ctx := r.Context()
+	profile, err := s.curation.GetProfile(ctx, profileID)
+	if err != nil {
+		if errors.Is(err, curation.ErrProfileNotFound) {
+			http.Error(w, "profile not found", http.StatusNotFound)
+			return
+		}
+		s.logger.Error().Err(err).Msg("browse row get profile")
+		http.Error(w, "failed to load profile", http.StatusInternalServerError)
+		return
+	}
+	layoutID := s.layoutIDForProfile(ctx, profile.ID)
+	if layoutID <= 0 {
+		def, err := s.curation.GetDefaultLayout(ctx)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("default layout missing")
+			http.Error(w, "no layout available", http.StatusInternalServerError)
+			return
+		}
+		layoutID = def.ID
+	}
+	layout, err := s.curation.GetLayoutWithRows(ctx, layoutID)
+	if err != nil {
+		s.logger.Error().Err(err).Int64("layout_id", layoutID).Msg("get layout")
+		http.Error(w, "failed to load layout", http.StatusInternalServerError)
+		return
+	}
+	var target *curation.LayoutRow
+	for i := range layout.Rows {
+		if layout.Rows[i].ID == rowID {
+			target = &layout.Rows[i]
+			break
+		}
+	}
+	if target == nil {
+		http.Error(w, "row not found", http.StatusNotFound)
+		return
+	}
+	bc := &browseContext{
+		store:   s.curation,
+		jelly:   s.jellyfin,
+		ctx:     ctx,
+		profile: *profile,
+		layout:  layout.Layout,
+		kidID:   kidID,
+		userID:  userID,
+		userTok: userTok,
+		visible: map[string]bool{},
+	}
+	resolvers := map[curation.RowType]rowResolver{
+		curation.RowContinueWatching: resolveContinueWatching,
+		curation.RowFavorites:        resolveFavorites,
+		curation.RowTag:              resolveSingleTag,
+		curation.RowTagFanout:        resolveTagFanout,
+		curation.RowRecentlyAdded:    resolveRecentlyAdded,
+		curation.RowRandomUnwatched:  resolveRandomUnwatched,
+		curation.RowWatchAgain:       resolveWatchAgain,
+	}
+	fn, ok := resolvers[target.Type]
+	if !ok {
+		http.Error(w, "row type not supported", http.StatusBadRequest)
+		return
+	}
+	cfg, _ := decodeRowConfig(target.ConfigJSON)
+	cfg["max_items"] = limit
+	resolved, err := fn(bc, *target, cfg)
+	if err != nil {
+		s.logger.Error().Err(err).Int64("row_id", rowID).Msg("browse row resolve")
+		writeUpstreamError(w, err, "failed to load row")
+		return
+	}
+	// tag_fanout returns multiple rows; load-more isn't supported
+	// for it (each fanout row would need its own rowId). Return
+	// the first one so the call doesn't 500, but HasMore stays false.
+	if len(resolved) == 0 {
+		writeJSON(w, http.StatusOK, browseRowResponse{
+			RowID: rowID, Type: string(target.Type), Items: []jellyfin.Item{},
+		})
+		return
+	}
+	rr := resolved[0]
+	idSet := map[string]struct{}{}
+	for _, id := range rr.ItemIDs {
+		idSet[id] = struct{}{}
+	}
+	ids := make([]string, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	itemsByID := map[string]jellyfin.Item{}
+	if len(ids) > 0 {
+		const batch = 100
+		for i := 0; i < len(ids); i += batch {
+			end := i + batch
+			if end > len(ids) {
+				end = len(ids)
+			}
+			res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
+				IDs: ids[i:end],
+			}, userTok)
+			if err != nil {
+				s.logger.Error().Err(err).Msg("browse row decorate")
+				writeUpstreamError(w, err, "failed to load items")
+				return
+			}
+			for _, it := range res.Items {
+				itemsByID[it.ID] = it
+			}
+		}
+	}
+	items := make([]jellyfin.Item, 0, len(rr.ItemIDs))
+	for _, id := range rr.ItemIDs {
+		if it, ok := itemsByID[id]; ok {
+			items = append(items, it)
+		}
+	}
+	applyPostFetchSort(items, rr)
+	writeJSON(w, http.StatusOK, browseRowResponse{
+		RowID:    rr.RowID,
+		Type:     string(rr.Type),
+		Title:    rr.Title,
+		SubTitle: rr.SubTitle,
+		Icon:     rr.Icon,
+		HasMore:  rr.HasMore,
+		Items:    items,
+	})
 }
 
 // kidIDForBrowse returns the kid id when the request was bearer-authed,
@@ -189,6 +375,7 @@ func (s *Server) respondBrowse(
 			Title:    rr.Title,
 			SubTitle: rr.SubTitle,
 			Icon:     rr.Icon,
+			HasMore:  rr.HasMore,
 			Items:    items,
 		})
 	}

@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type Tag } from "./api";
+import {
+    TAG_ICONS,
+    TAG_ICON_ORDER,
+    isTagIconName,
+    type TagIconName,
+} from "./tagIcons";
 
 type Props = {
     mode: "create" | "edit";
@@ -8,11 +14,14 @@ type Props = {
     onClose: () => void;
 };
 
-// TagModal handles create + rename in one component. Mirrors
-// ProfileModal's structure so the admin app stays uniform.
+// TagModal handles create + rename + icon assignment in one component.
+// Mirrors ProfileModal's structure so the admin app stays uniform.
 export default function TagModal({ mode, tag, onSaved, onClose }: Props) {
     const [name, setName] = useState(tag?.name ?? "");
     const [description, setDescription] = useState(tag?.description ?? "");
+    const [icon, setIcon] = useState<string>(
+        tag?.icon && isTagIconName(tag.icon) ? tag.icon : "",
+    );
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -32,6 +41,9 @@ export default function TagModal({ mode, tag, onSaved, onClose }: Props) {
             const payload = {
                 name: name.trim(),
                 description: description.trim(),
+                // Always send icon (including empty string) so PATCH can
+                // CLEAR an existing icon, not just leave it unset.
+                icon: icon,
             };
             if (!payload.name) {
                 throw new Error("Name is required");
@@ -77,6 +89,48 @@ export default function TagModal({ mode, tag, onSaved, onClose }: Props) {
                         />
                     </label>
 
+                    <div className="tag-icon-picker">
+                        <div className="tag-icon-picker-label">
+                            Icon{" "}
+                            <span className="muted">
+                                shown next to the row title in the kid app
+                            </span>
+                        </div>
+                        <div className="tag-icon-grid" role="radiogroup">
+                            <button
+                                type="button"
+                                className={`tag-icon-cell ${icon === "" ? "selected" : ""}`}
+                                onClick={() => setIcon("")}
+                                disabled={busy}
+                                role="radio"
+                                aria-checked={icon === ""}
+                                aria-label="No icon"
+                                title="No icon"
+                            >
+                                <span className="tag-icon-cell-none">—</span>
+                            </button>
+                            {TAG_ICON_ORDER.map((name) => {
+                                const Icon = TAG_ICONS[name];
+                                const selected = icon === name;
+                                return (
+                                    <button
+                                        key={name}
+                                        type="button"
+                                        className={`tag-icon-cell ${selected ? "selected" : ""}`}
+                                        onClick={() => setIcon(name)}
+                                        disabled={busy}
+                                        role="radio"
+                                        aria-checked={selected}
+                                        aria-label={name}
+                                        title={name}
+                                    >
+                                        <Icon weight="fill" aria-hidden />
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
                     {error && <div className="error">{error}</div>}
 
                     <div className="modal-actions">
@@ -92,3 +146,7 @@ export default function TagModal({ mode, tag, onSaved, onClose }: Props) {
         </div>
     );
 }
+
+// Re-export the type so this module is the canonical reference for
+// TagIconName when consumed elsewhere in the admin app.
+export type { TagIconName };

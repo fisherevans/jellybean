@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { ArrowUUpLeft, Plus } from "@phosphor-icons/react";
 import {
     authHeaders,
     clearSession,
@@ -43,6 +44,11 @@ type BrowseRow = {
     // favorites row; the tag's own icon for tag / tag_fanout rows
     // when configured. Empty/missing = no icon.
     icon?: string;
+    // True when more items are available beyond what was returned.
+    // Drives the terminal button: "Load more" (true) vs "Loop back
+    // to start" (false). Set by random_unwatched + recently_added;
+    // every other row type stays false.
+    hasMore?: boolean;
     items: BrowseItem[];
 };
 
@@ -74,6 +80,10 @@ export default function Browse() {
         { itemId: string; itemName: string } | null
     >(null);
     const [menuOpen, setMenuOpen] = useState(false);
+    // Tracks rows that are currently loading more items so a rapid
+    // double-Enter on the terminal button doesn't fire two parallel
+    // fetches.
+    const [loadingMore, setLoadingMore] = useState<Set<number>>(new Set());
 
     // Long-press UP on a focused tile opens the override modal. The
     // hook is gated on having a focused tile + an active session
@@ -179,6 +189,73 @@ export default function Browse() {
         setFocus({ kind: "tile", row: targetRow, col: 0 });
     }, [data]);
 
+    // loadMoreForRow asks the server for more items for one row,
+    // appends new (non-duplicate) items to the row's local state,
+    // and updates hasMore. Called when the kid hits Enter on the
+    // "Load more" terminal button. When the server says no more,
+    // hasMore flips false and the terminal button switches to
+    // "Loop back" on the next render.
+    const loadMoreForRow = useCallback(
+        async (rowIdx: number) => {
+            if (loadingMore.has(rowIdx)) return;
+            const row = data?.rows[rowIdx];
+            if (!row) return;
+            const targetLimit = row.items.length + 20;
+            setLoadingMore((s) => new Set(s).add(rowIdx));
+            try {
+                const url = new URL(
+                    `/api/kids/browse/row/${row.rowId}`,
+                    window.location.origin,
+                );
+                url.searchParams.set("limit", String(targetLimit));
+                if (!session && adminProfileId) {
+                    url.searchParams.set("profileId", adminProfileId);
+                }
+                const res = await fetch(url.toString(), {
+                    credentials: "same-origin",
+                    headers: authHeaders(),
+                });
+                if (!res.ok) {
+                    if (res.status === 401) {
+                        clearSession();
+                        nav("/login", { replace: true });
+                        return;
+                    }
+                    throw new Error(`load more: ${res.status}`);
+                }
+                const body = (await res.json()) as BrowseRow;
+                setData((prev) => {
+                    if (!prev) return prev;
+                    const next = {
+                        ...prev,
+                        rows: prev.rows.map((r, i) =>
+                            i === rowIdx
+                                ? {
+                                      ...r,
+                                      items: body.items,
+                                      hasMore: body.hasMore ?? false,
+                                  }
+                                : r,
+                        ),
+                    };
+                    return next;
+                });
+            } catch (err) {
+                // Silent failure for now: the terminal button stays
+                // visible, kid can retry. Logged for diagnosis.
+                // eslint-disable-next-line no-console
+                console.warn("load more failed", err);
+            } finally {
+                setLoadingMore((s) => {
+                    const next = new Set(s);
+                    next.delete(rowIdx);
+                    return next;
+                });
+            }
+        },
+        [data, loadingMore, nav, session, adminProfileId],
+    );
+
     function rememberLastFocused(itemId: string) {
         try {
             sessionStorage.setItem(
@@ -251,9 +328,14 @@ export default function Browse() {
         if (focus.kind === "tile") {
             const row = rows[focus.row];
             if (!row) return;
+            // Effective row length includes the terminal button at
+            // col === items.length: "Load more" when row.hasMore is
+            // true, "Loop back to start" otherwise. So col can range
+            // from 0 to items.length inclusive.
+            const lastCol = row.items.length;
             switch (e.key) {
                 case "ArrowRight":
-                    if (focus.col < row.items.length - 1) {
+                    if (focus.col < lastCol) {
                         setFocus({ kind: "tile", row: focus.row, col: focus.col + 1 });
                     }
                     return;
@@ -299,6 +381,21 @@ export default function Browse() {
                     return;
                 case "Enter":
                 case " ": {
+                    if (focus.col === lastCol) {
+                        // Terminal button. Load more when the server
+                        // says more exists; otherwise loop back to
+                        // the start of the same row.
+                        if (row.hasMore) {
+                            void loadMoreForRow(focus.row);
+                        } else {
+                            setFocus({
+                                kind: "tile",
+                                row: focus.row,
+                                col: 0,
+                            });
+                        }
+                        return;
+                    }
                     const item = row.items[focus.col];
                     if (item) {
                         rememberLastFocused(item.Id);
@@ -483,6 +580,40 @@ export default function Browse() {
                                         />
                                     );
                                 })}
+                                <TerminalTile
+                                    rowIdx={rIdx}
+                                    col={row.items.length}
+                                    focused={
+                                        focus.kind === "tile" &&
+                                        focus.row === rIdx &&
+                                        focus.col === row.items.length
+                                    }
+                                    hasMore={!!row.hasMore}
+                                    loading={loadingMore.has(rIdx)}
+                                    onClick={() => {
+                                        if (row.hasMore) {
+                                            void loadMoreForRow(rIdx);
+                                        } else {
+                                            setFocus({
+                                                kind: "tile",
+                                                row: rIdx,
+                                                col: 0,
+                                            });
+                                        }
+                                    }}
+                                    onFocus={() =>
+                                        setFocus({
+                                            kind: "tile",
+                                            row: rIdx,
+                                            col: row.items.length,
+                                        })
+                                    }
+                                    refCallback={(el) =>
+                                        (tileRefs.current[
+                                            `${rIdx}:${row.items.length}`
+                                        ] = el)
+                                    }
+                                />
                             </div>
                         </div>
                     </section>
@@ -508,4 +639,58 @@ function RowIcon({ name }: { name?: string }) {
     if (!name || !isTagIconName(name)) return null;
     const Icon = TAG_ICONS[name];
     return <Icon weight="fill" className="browse-row-icon" aria-hidden />;
+}
+
+// TerminalTile is the focusable button rendered at the end of every
+// browse row. Two modes:
+//   - hasMore  -> "Load more" (Plus icon). Enter triggers a fetch
+//                 that appends more items + flips hasMore to false
+//                 if the server has nothing left.
+//   - !hasMore -> "Loop back to start" (U-turn icon). Enter sends
+//                 focus back to col 0 of the same row.
+//
+// Visually styled like a tile so it slots into the row track and
+// gets the same focus zoom as content tiles - just with an icon +
+// label instead of a poster.
+type TerminalTileProps = {
+    rowIdx: number;
+    col: number;
+    focused: boolean;
+    hasMore: boolean;
+    loading: boolean;
+    onClick: () => void;
+    onFocus: () => void;
+    refCallback: (el: HTMLButtonElement | null) => void;
+};
+
+function TerminalTile({
+    focused,
+    hasMore,
+    loading,
+    onClick,
+    onFocus,
+    refCallback,
+}: TerminalTileProps) {
+    const Icon = hasMore ? Plus : ArrowUUpLeft;
+    const label = loading
+        ? "Loading…"
+        : hasMore
+          ? "Load more"
+          : "Back to start";
+    return (
+        <button
+            ref={refCallback}
+            type="button"
+            className={`tile tile-browse tile-terminal ${focused ? "focused" : ""} ${hasMore ? "tile-terminal-load" : "tile-terminal-loop"}`}
+            onClick={onClick}
+            onFocus={onFocus}
+            tabIndex={focused ? 0 : -1}
+            disabled={loading}
+        >
+            <div className="tile-poster tile-terminal-face">
+                <Icon weight="bold" aria-hidden className="tile-terminal-icon" />
+            </div>
+            <div className="tile-title tile-terminal-label">{label}</div>
+        </button>
+    );
 }
