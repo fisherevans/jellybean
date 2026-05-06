@@ -44,6 +44,10 @@ Commands:
   logs           tail logcat filtered to the Jellybean package
   inspect        forward localhost:9222 to the WebView's devtools socket
                  (then open Chrome -> chrome://inspect/#devices)
+  reset-auth     wipe the kid client's local session and land on /login
+  dev-login      reset-auth + auto-fill the form with the keychain creds
+                 (jellybean.JELLYBEAN_KID_USERNAME / _PASSWORD) so you
+                 don't have to type on the TV remote
   uninstall      remove the debug build
   help           this message
 
@@ -158,6 +162,52 @@ cmd_inspect() {
     color_grn "[inspect] tear down later: adb forward --remove tcp:9222"
 }
 
+# keychain_get reads a string from the macOS keychain under the
+# `jellybean.<key>` service. Mirrors scripts/jb's convention so the
+# same secret store works for both daemon-side and TV-side helpers.
+keychain_get() {
+    local key="$1"
+    security find-generic-password -s "jellybean.$key" -w 2>/dev/null || true
+}
+
+cmd_dev_login() {
+    require_device
+    local user pass
+    user="$(keychain_get JELLYBEAN_KID_USERNAME)"
+    pass="$(keychain_get JELLYBEAN_KID_PASSWORD)"
+    if [[ -z "$user" || -z "$pass" ]]; then
+        die "JELLYBEAN_KID_USERNAME / JELLYBEAN_KID_PASSWORD missing from keychain. Add them: ./scripts/jb keychain set JELLYBEAN_KID_USERNAME kids"
+    fi
+    local target
+    if adb shell pm list packages | grep -q "package:$DEBUG_PACKAGE_ID\$"; then
+        target="$DEBUG_PACKAGE_ID/$PACKAGE_ID.MainActivity"
+    else
+        target="$PACKAGE_ID/$PACKAGE_ID.MainActivity"
+    fi
+    color_yel "[dev-login] sending DEV_LOGIN intent for user=$user"
+    adb shell am start \
+        -n "$target" \
+        -a "$PACKAGE_ID.action.DEV_LOGIN" \
+        --es username "$user" \
+        --es password "$pass"
+    color_grn "[dev-login] form is auto-filling + submitting in the kid app"
+}
+
+cmd_reset_auth() {
+    require_device
+    local target
+    if adb shell pm list packages | grep -q "package:$DEBUG_PACKAGE_ID\$"; then
+        target="$DEBUG_PACKAGE_ID/$PACKAGE_ID.MainActivity"
+    else
+        target="$PACKAGE_ID/$PACKAGE_ID.MainActivity"
+    fi
+    color_yel "[reset-auth] sending DEV_LOGIN intent without creds"
+    adb shell am start \
+        -n "$target" \
+        -a "$PACKAGE_ID.action.DEV_LOGIN"
+    color_grn "[reset-auth] kid app has been signed out + landed on /login"
+}
+
 cmd_uninstall() {
     require_device
     for pkg in "$DEBUG_PACKAGE_ID" "$PACKAGE_ID"; do
@@ -179,6 +229,8 @@ main() {
         launch)     cmd_launch ;;
         logs)       cmd_logs ;;
         inspect)    cmd_inspect ;;
+        dev-login)  cmd_dev_login ;;
+        reset-auth) cmd_reset_auth ;;
         uninstall)  cmd_uninstall ;;
         help|-h|--help) usage ;;
         *) usage; exit 2 ;;

@@ -1,7 +1,9 @@
 package com.fisherevans.jellybean
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.WindowManager
@@ -29,6 +31,29 @@ import androidx.core.view.WindowInsetsControllerCompat
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+
+    companion object {
+        /**
+         * Dev intent that wipes the kid's auth state and (optionally)
+         * pre-fills the sign-in form with username/password so a
+         * subsequent test session doesn't require typing on the TV
+         * remote. Trigger from a workstation:
+         *
+         *   adb shell am start \
+         *     -n com.fisherevans.jellybean.debug/com.fisherevans.jellybean.MainActivity \
+         *     -a com.fisherevans.jellybean.action.DEV_LOGIN \
+         *     --es username "kids" --es password "kids1234"
+         *
+         * Without `username`/`password` extras, just clears auth and
+         * lands on the login screen. Gated on BuildConfig.DEBUG so a
+         * release APK ignores the action even if it's invoked.
+         *
+         * Creds are passed in the URL fragment (window.location.hash)
+         * which is never sent in network requests; it lives in the
+         * WebView's history briefly until Login.tsx consumes it.
+         */
+        private const val ACTION_DEV_LOGIN = "com.fisherevans.jellybean.action.DEV_LOGIN"
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,11 +85,69 @@ class MainActivity : AppCompatActivity() {
 
         if (savedInstanceState != null) {
             webView.restoreState(savedInstanceState)
-        } else {
+        } else if (intent?.action != ACTION_DEV_LOGIN) {
             webView.loadUrl(BuildConfig.JELLYBEAN_URL)
         }
+        // For DEV_LOGIN cold starts, handleDevIntent below issues the
+        // load to /player/login (with optional creds in the hash).
 
         webView.requestFocus()
+        handleDevIntent(intent, coldStart = true)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDevIntent(intent, coldStart = false)
+    }
+
+    /**
+     * Reset auth + (optionally) pre-fill the login form. Cold start: we
+     * skip the initial loadUrl and jump straight to /player/login here.
+     * Warm start: we navigate the existing WebView there. Either way,
+     * the kid auth localStorage keys get wiped via JS first so the
+     * Login component doesn't bounce a still-signed-in user back to
+     * /browse before reading the dev creds from the hash.
+     */
+    private fun handleDevIntent(intent: Intent?, coldStart: Boolean) {
+        if (intent == null || intent.action != ACTION_DEV_LOGIN) return
+        if (!BuildConfig.DEBUG) return
+        val username = intent.getStringExtra("username")
+        val password = intent.getStringExtra("password")
+
+        // Strip path off BuildConfig.JELLYBEAN_URL to get the origin -
+        // we always navigate to /player/login regardless of where the
+        // base URL points (e.g. some dev configs ship /player/ path).
+        val baseUri = Uri.parse(BuildConfig.JELLYBEAN_URL)
+        val origin = "${baseUri.scheme}://${baseUri.authority}"
+        val target = StringBuilder("$origin/player/login")
+        if (!username.isNullOrEmpty() && !password.isNullOrEmpty()) {
+            target.append("#dev_user=").append(Uri.encode(username))
+            target.append("&dev_pass=").append(Uri.encode(password))
+        }
+        val targetUrl = target.toString()
+
+        // localStorage clear runs in JS. On cold start the WebView
+        // doesn't have a loaded page yet so evaluateJavascript would be
+        // a no-op - just loadUrl directly and let Login.tsx clear the
+        // session synchronously when it consumes the hash. On warm
+        // start, clear first so the Login component's signed-in
+        // redirect doesn't bounce to /browse before reading the hash.
+        if (coldStart) {
+            webView.loadUrl(targetUrl)
+            return
+        }
+        val js = """
+            try {
+                ['jellybean.kids.token','jellybean.kids.userId',
+                 'jellybean.kids.userName','jellybean.kids.profileId',
+                 'jellybean.kids.profileName','jellybean.kids.kidName']
+                    .forEach(function(k){ localStorage.removeItem(k); });
+            } catch(e){}
+        """.trimIndent()
+        webView.evaluateJavascript(js) {
+            runOnUiThread { webView.loadUrl(targetUrl) }
+        }
     }
 
     private fun configureWebView(wv: WebView) {
