@@ -196,17 +196,17 @@ export default function Browse() {
                     }
                     return;
                 case "ArrowDown":
+                    // Row change always lands on col 0 - the kid's
+                    // selected tile lives at the far-left of every
+                    // row, so changing rows means starting fresh
+                    // there. Don't preserve the within-row column.
                     if (focus.row < rows.length - 1) {
-                        const nextLen = rows[focus.row + 1].items.length;
-                        const nextCol = Math.min(focus.col, Math.max(0, nextLen - 1));
-                        setFocus({ kind: "tile", row: focus.row + 1, col: nextCol });
+                        setFocus({ kind: "tile", row: focus.row + 1, col: 0 });
                     }
                     return;
                 case "ArrowUp":
                     if (focus.row > 0) {
-                        const prevLen = rows[focus.row - 1].items.length;
-                        const prevCol = Math.min(focus.col, Math.max(0, prevLen - 1));
-                        setFocus({ kind: "tile", row: focus.row - 1, col: prevCol });
+                        setFocus({ kind: "tile", row: focus.row - 1, col: 0 });
                     } else {
                         lastTileRef.current = { row: focus.row, col: focus.col };
                         setFocus({ kind: "tab", index: 0 });

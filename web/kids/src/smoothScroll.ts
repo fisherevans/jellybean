@@ -82,17 +82,32 @@ export function smoothScrollTo(
     step();
 }
 
-// scrollTileIntoView scrolls a horizontal scroller (e.g. a
+// scrollTileIntoRowStart scrolls a horizontal scroller (e.g. a
 // .browse-row-items) so the given tile lands at the start of the
-// visible area, accounting for scroll-padding-inline-start.
+// visible area, with `paddingLeft` of inset.
+//
+// Uses getBoundingClientRect math instead of offsetLeft because
+// offsetLeft is relative to the nearest positioned ancestor, which
+// often isn't the scroller (the scroller has display:flex, no
+// position: relative). The bounding-rect approach gives an absolute
+// "how far left/right from current scroll" that's robust to the
+// scroller's positioning context.
 export function scrollTileIntoRowStart(
     tile: HTMLElement,
     paddingLeft: number = 0,
 ): void {
     const scroller = tile.parentElement;
     if (!scroller) return;
-    const target = tile.offsetLeft - paddingLeft;
-    smoothScrollTo(scroller, "x", Math.max(0, target));
+    const tileRect = tile.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    const delta = tileRect.left - scrollerRect.left - paddingLeft;
+    const target = scroller.scrollLeft + delta;
+    const max = scroller.scrollWidth - scroller.clientWidth;
+    smoothScrollTo(
+        scroller,
+        "x",
+        Math.max(0, Math.min(max, target)),
+    );
 }
 
 // scrollWindowToTop animates window scroll to top.
