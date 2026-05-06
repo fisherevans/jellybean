@@ -1584,78 +1584,52 @@ a.tag-item-name:hover {
     color: var(--accent);
 }
 
-/* Tag detail edit panel: inline name + description + delete + icon
-   picker. Auto-saves on debounce. */
-.tag-edit-panel {
+/* Tag detail summary panel: read-only header with icon + name +
+   description + Edit / Delete buttons. Edit opens TagModal (same
+   modal used by "+ Add tag" so the create + edit forms are
+   identical). */
+.tag-summary-panel {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 1rem 1.1rem;
+    padding: 1rem 1.2rem;
     margin-bottom: 1.25rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
 }
-.tag-edit-header {
-    display: flex;
-    gap: 1rem;
-    align-items: flex-start;
+.tag-summary-icon {
+    width: 3rem;
+    height: 3rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: var(--accent);
 }
-.tag-edit-fields {
+.tag-summary-icon svg {
+    width: 2.4rem;
+    height: 2.4rem;
+}
+.tag-summary-info {
     flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
     min-width: 0;
 }
-.tag-edit-fields label {
+.tag-summary-name {
+    margin: 0;
+    font-size: 1.6rem;
+    line-height: 1.2;
+}
+.tag-summary-desc {
+    margin: 0.2rem 0 0;
+    font-size: 0.95rem;
+}
+.tag-summary-actions {
     display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    font-size: 0.85rem;
-    color: var(--muted);
-}
-.tag-edit-fields input,
-.tag-edit-fields textarea {
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 0.5rem 0.7rem;
-    font-size: 1rem;
-    font-family: inherit;
-    resize: vertical;
-}
-.tag-edit-fields input:focus,
-.tag-edit-fields textarea:focus {
-    outline: none;
-    border-color: var(--accent);
-}
-.tag-edit-side {
-    display: flex;
-    flex-direction: column;
     gap: 0.5rem;
-    align-items: flex-end;
     flex-shrink: 0;
-    min-width: 7rem;
 }
-.tag-edit-save {
-    font-size: 0.8rem;
-    color: var(--muted);
-    height: 1.2rem;
-    line-height: 1.2rem;
-    transition: color 200ms ease;
-}
-.tag-edit-save.saving {
-    color: var(--muted);
-}
-.tag-edit-save.saved {
-    color: var(--success, #06d6a0);
-}
-.tag-edit-save.error {
-    color: var(--error, #e55381);
-}
-.tag-edit-panel .danger {
+.tag-summary-actions .danger {
     background: transparent;
     color: var(--error, #e55381);
     border: 1px solid var(--error, #e55381);
@@ -1663,7 +1637,7 @@ a.tag-item-name:hover {
     border-radius: 6px;
     cursor: pointer;
 }
-.tag-edit-panel .danger:hover {
+.tag-summary-actions .danger:hover {
     background: rgba(229, 83, 129, 0.1);
 }
 

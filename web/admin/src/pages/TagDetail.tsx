@@ -2,17 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { api, HttpError, type Item, type Tag } from "../api";
 import { useActiveProfile } from "../activeProfile";
-import IconPicker from "../IconPicker";
 import Spinner from "../Spinner";
-import { isTagIconName } from "../tagIcons";
+import TagModal from "../TagModal";
+import { TAG_ICONS, isTagIconName } from "../tagIcons";
 
 // Tag detail page. Layout top-to-bottom:
-//   1. Back link (anchored above the editor).
-//   2. Edit panel: icon picker, name, description, delete. Auto-saves
-//      on blur (debounced) so the kid never sees a stale edit.
-//   3. Add-items: search input at the top with a popup overlay that
-//      shows search results (anchored to the input, doesn't push the
-//      page down).
+//   1. Back link (anchored above the summary).
+//   2. Summary panel: icon, name, description, Edit + Delete buttons.
+//      Edit opens TagModal (same UX as creating a new tag).
+//   3. Add-items: search input with popup overlay anchored beneath
+//      it - doesn't push the items list down the page.
 //   4. Items in this tag: the persisted member list.
 
 export default function TagDetail() {
@@ -24,6 +23,7 @@ export default function TagDetail() {
     const [tag, setTag] = useState<Tag | null>(null);
     const [items, setItems] = useState<Item[] | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [editing, setEditing] = useState(false);
 
     const refreshTag = useCallback(async () => {
         if (!Number.isFinite(tagId) || tagId <= 0) {
@@ -128,9 +128,9 @@ export default function TagDetail() {
                 ← Back to tags
             </Link>
 
-            <TagEditPanel
+            <TagSummaryPanel
                 tag={tag}
-                onChanged={refreshTag}
+                onEdit={() => setEditing(true)}
                 onDelete={removeTag}
             />
 
@@ -182,143 +182,56 @@ export default function TagDetail() {
                     </ul>
                 )}
             </section>
+
+            {editing && (
+                <TagModal
+                    mode="edit"
+                    tag={tag}
+                    onClose={() => setEditing(false)}
+                    onSaved={async () => {
+                        setEditing(false);
+                        await refreshTag();
+                    }}
+                />
+            )}
         </div>
     );
 }
 
-// TagEditPanel inlines the tag fields with debounced autosave. Each
-// field's onChange updates local state immediately (no input lag);
-// after 500ms of inactivity, a PATCH fires. Save state is shown in
-// the corner so the admin sees their changes are landing.
-type TagEditPanelProps = {
+// TagSummaryPanel is the read-only header for a tag. Shows the icon,
+// name, and description; Edit + Delete buttons sit on the right.
+// Edit opens TagModal (same modal used by "+ Add tag") so the admin
+// gets a single, consistent form for create / rename / icon / desc.
+type TagSummaryPanelProps = {
     tag: Tag;
-    onChanged: () => Promise<void>;
+    onEdit: () => void;
     onDelete: () => void;
 };
 
-function TagEditPanel({ tag, onChanged, onDelete }: TagEditPanelProps) {
-    const [name, setName] = useState(tag.name);
-    const [description, setDescription] = useState(tag.description ?? "");
-    const [icon, setIcon] = useState<string>(
-        tag.icon && isTagIconName(tag.icon) ? tag.icon : "",
-    );
-    const [saving, setSaving] = useState(false);
-    const [savedAt, setSavedAt] = useState<number | null>(null);
-    const [saveError, setSaveError] = useState<string | null>(null);
-    const initialRef = useRef({
-        name: tag.name,
-        description: tag.description ?? "",
-        icon: tag.icon ?? "",
-    });
-
-    // Debounced save. Each change schedules a save 500ms out; new
-    // changes within the window cancel the previous timer.
-    const saveTimer = useRef<number | null>(null);
-    useEffect(() => {
-        if (
-            name === initialRef.current.name &&
-            description === initialRef.current.description &&
-            icon === initialRef.current.icon
-        ) {
-            return;
-        }
-        if (saveTimer.current !== null) {
-            window.clearTimeout(saveTimer.current);
-        }
-        saveTimer.current = window.setTimeout(async () => {
-            saveTimer.current = null;
-            const trimmed = name.trim();
-            if (!trimmed) {
-                setSaveError("Name is required");
-                return;
-            }
-            setSaving(true);
-            setSaveError(null);
-            try {
-                await api.updateTag(tag.id, {
-                    name: trimmed,
-                    description: description.trim(),
-                    icon,
-                });
-                initialRef.current = {
-                    name: trimmed,
-                    description: description.trim(),
-                    icon,
-                };
-                setSavedAt(Date.now());
-                await onChanged();
-            } catch (err) {
-                setSaveError(
-                    err instanceof HttpError ? err.message : String(err),
-                );
-            } finally {
-                setSaving(false);
-            }
-        }, 500);
-        return () => {
-            if (saveTimer.current !== null) {
-                window.clearTimeout(saveTimer.current);
-            }
-        };
-    }, [name, description, icon, tag.id, onChanged]);
-
-    // Snap savedAt into a "Saved" indicator that fades out.
-    const saveLabel = saving
-        ? "Saving…"
-        : saveError
-          ? "Save failed"
-          : savedAt
-            ? "Saved"
-            : "";
-
+function TagSummaryPanel({ tag, onEdit, onDelete }: TagSummaryPanelProps) {
+    const Icon =
+        tag.icon && isTagIconName(tag.icon) ? TAG_ICONS[tag.icon] : null;
     return (
-        <section className="tag-edit-panel">
-            <div className="tag-edit-header">
-                <div className="tag-edit-fields">
-                    <label>
-                        Name
-                        <input
-                            type="text"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            placeholder="e.g. Adventure, Bedtime, Scary"
-                        />
-                    </label>
-                    <label>
-                        Description
-                        <textarea
-                            value={description}
-                            onChange={(e) => setDescription(e.target.value)}
-                            rows={2}
-                            placeholder="Optional"
-                        />
-                    </label>
-                </div>
-                <div className="tag-edit-side">
-                    <span
-                        className={`tag-edit-save ${
-                            saving
-                                ? "saving"
-                                : saveError
-                                  ? "error"
-                                  : savedAt
-                                    ? "saved"
-                                    : ""
-                        }`}
-                    >
-                        {saveLabel}
-                    </span>
-                    <button
-                        className="danger"
-                        onClick={onDelete}
-                        type="button"
-                    >
-                        Delete tag
-                    </button>
-                </div>
+        <section className="tag-summary-panel">
+            <div className="tag-summary-icon">
+                {Icon ? <Icon weight="fill" aria-hidden /> : null}
             </div>
-            {saveError && <div className="error">{saveError}</div>}
-            <IconPicker value={icon} onChange={setIcon} />
+            <div className="tag-summary-info">
+                <h1 className="tag-summary-name">{tag.name}</h1>
+                {tag.description ? (
+                    <p className="tag-summary-desc muted">{tag.description}</p>
+                ) : (
+                    <p className="tag-summary-desc muted">No description.</p>
+                )}
+            </div>
+            <div className="tag-summary-actions">
+                <button onClick={onEdit} type="button" className="primary">
+                    Edit
+                </button>
+                <button onClick={onDelete} type="button" className="danger">
+                    Delete
+                </button>
+            </div>
         </section>
     );
 }
