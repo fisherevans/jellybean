@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+    Link,
+    useLocation,
+    useNavigate,
+    useParams,
+    useSearchParams,
+} from "react-router-dom";
 import {
     ArrowCounterClockwise,
+    ArrowLeft,
+    Heart,
     Play,
     Shuffle,
     SkipForward,
@@ -14,6 +22,7 @@ import {
     withAuthRetry,
     type Session,
 } from "./auth";
+import { getHomeTab } from "./kidNav";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
 import { scrollWindowToCenter, scrollWindowToTop } from "./smoothScroll";
 import { useProgressiveBack } from "./useProgressiveBack";
@@ -46,6 +55,7 @@ type Item = {
     RunTimeTicks?: number;
     ImageTags?: { Primary?: string; Backdrop?: string };
     UserData?: ItemUserData;
+    IsFavorite?: boolean;
 };
 
 type SeriesEpisode = {
@@ -71,6 +81,7 @@ export default function Watch() {
     const { itemId } = useParams<{ itemId: string }>();
     const [searchParams] = useSearchParams();
     const nav = useNavigate();
+    const location = useLocation();
     const [session] = useState<Session | null>(() => getSession());
 
     const [item, setItem] = useState<Item | null>(null);
@@ -93,7 +104,15 @@ export default function Watch() {
     );
 
     const adminProfileId = searchParams.get("profileId");
-    const browseHref = `/browse${location.search}`;
+    // Where Back should land: the home tab the kid was last on
+    // (browse or library), tracked in sessionStorage by kidNav.ts.
+    // Independent of browser history so this works for refresh,
+    // bookmarks, and Android WebView's flaky goBack(). location.search
+    // is preserved so the admin preview tab stays scoped to the
+    // same profile across the back-nav.
+    const backHref = `/${getHomeTab()}${location.search}`;
+    // The error-fallback Link below uses the same target.
+    const browseHref = backHref;
     useEffect(() => {
         if (!session && !adminProfileId) {
             nav("/login", { replace: true });
@@ -101,7 +120,8 @@ export default function Watch() {
     }, [session, adminProfileId, nav]);
 
     // Zone-aware D-pad nav. Buttons opt into zones via data-zone:
-    //   - "back"      : the Back link (top-left).
+    //   - "back"      : the back arrow at the top-left.
+    //   - "favorite"  : the heart button above the title.
     //   - "hero"      : the hero action buttons (Resume / Restart /
     //                   Next / Random for shows; Play / Restart for
     //                   movies). Left/Right cycles within. Down
@@ -110,10 +130,13 @@ export default function Watch() {
     //                   walks them in DOM order.
     //
     // Cross-zone transitions:
-    //   back  Down            -> hero[0]
-    //   hero  Up               -> back
-    //   hero  Down             -> accordion[0]
-    //   accordion[0] Up        -> hero[0]
+    //   back      Right       -> favorite
+    //   back      Down        -> hero[0]
+    //   favorite  Left / Up   -> back
+    //   favorite  Down        -> hero[0]
+    //   hero      Up          -> favorite
+    //   hero      Down        -> accordion[0]
+    //   accordion[0] Up       -> hero[0]
     useEffect(() => {
         if (override) return;
         const handler = (e: KeyboardEvent) => {
@@ -144,6 +167,9 @@ export default function Watch() {
             const accBtns = Array.from(
                 root.querySelectorAll<HTMLElement>('[data-zone="accordion"]'),
             ).filter((el) => el.offsetParent !== null);
+            const favBtn = root.querySelector<HTMLElement>(
+                '[data-zone="favorite"]',
+            );
             const backBtn = root.querySelector<HTMLElement>(
                 '[data-zone="back"]',
             );
@@ -151,7 +177,12 @@ export default function Watch() {
             let next: HTMLElement | null = null;
 
             if (zone === "back") {
-                if (e.key === "ArrowDown") next = heroBtns[0] ?? null;
+                if (e.key === "ArrowRight") next = favBtn ?? heroBtns[0] ?? null;
+                else if (e.key === "ArrowDown") next = heroBtns[0] ?? null;
+            } else if (zone === "favorite") {
+                if (e.key === "ArrowLeft") next = backBtn ?? null;
+                else if (e.key === "ArrowUp") next = backBtn ?? null;
+                else if (e.key === "ArrowDown") next = heroBtns[0] ?? null;
             } else if (zone === "hero") {
                 const idx = active ? heroBtns.indexOf(active) : -1;
                 if (e.key === "ArrowLeft") {
@@ -159,7 +190,7 @@ export default function Watch() {
                 } else if (e.key === "ArrowRight") {
                     next = heroBtns[Math.min(heroBtns.length - 1, idx + 1)] ?? null;
                 } else if (e.key === "ArrowUp") {
-                    next = backBtn ?? null;
+                    next = favBtn ?? backBtn ?? null;
                 } else if (e.key === "ArrowDown") {
                     next = accBtns[0] ?? null;
                 }
@@ -182,7 +213,11 @@ export default function Watch() {
             if (next) {
                 next.focus({ preventScroll: true });
                 const nextZone = next.getAttribute("data-zone");
-                if (nextZone === "hero" || nextZone === "back") {
+                if (
+                    nextZone === "hero" ||
+                    nextZone === "favorite" ||
+                    nextZone === "back"
+                ) {
                     scrollWindowToTop();
                 } else {
                     scrollWindowToCenter(next);
@@ -193,38 +228,17 @@ export default function Watch() {
         return () => window.removeEventListener("keydown", handler);
     }, [override]);
 
-    // Progressive Back: collapse to the first hero action; from
-    // there, the next back navigates explicitly to /browse rather
-    // than relying on the natural popstate. Sentinel chains across
-    // pages can pop unpredictably on cheap WebViews and the user
-    // observed back-from-watch occasionally exiting the app instead
-    // of returning to Browse - explicit nav avoids that.
+    // Hardware Back: explicit nav to wherever the kid came from
+    // (?from=browse|library). Same reasoning as handleBackClick.
     useProgressiveBack(
         useCallback(() => {
             if (override) {
                 setOverride(null);
                 return true;
             }
-            const root = document.querySelector(".watch-screen");
-            const focusables = root
-                ? Array.from(
-                      root.querySelectorAll<HTMLElement>(
-                          "button:not([disabled])",
-                      ),
-                  ).filter((el) => el.offsetParent !== null)
-                : [];
-            const first = focusables[0];
-            const active = document.activeElement as HTMLElement | null;
-            if (first && active && active !== first) {
-                first.focus({ preventScroll: true });
-                scrollWindowToTop();
-                return true;
-            }
-            // Already at the first focusable (or no focusables yet) -
-            // close the show menu by navigating to Browse.
-            nav(browseHref);
+            nav(backHref);
             return true;
-        }, [override, nav, browseHref]),
+        }, [override, nav, backHref]),
     );
 
     // On mount, defensively focus the primary hero button + scroll
@@ -265,7 +279,12 @@ export default function Watch() {
                 `/api/kids/items/${encodeURIComponent(itemId)}`,
                 window.location.origin,
             );
-            if (!session && adminProfileId) {
+            // Always send adminProfileId when present. The server
+            // prefers admin cookie auth over the bearer token, so
+            // a stale kid session in localStorage doesn't help the
+            // admin preview path - the query param is what tells
+            // the server which profile to scope to.
+            if (adminProfileId) {
                 url.searchParams.set("profileId", adminProfileId);
             }
             const res = await withAuthRetry(() =>
@@ -290,6 +309,7 @@ export default function Watch() {
                 runtimeTicks?: number;
                 userData?: ItemUserData;
                 seriesId?: string;
+                isFavorite?: boolean;
             };
             setItem({
                 Id: body.itemId,
@@ -299,6 +319,7 @@ export default function Watch() {
                 RunTimeTicks: body.runtimeTicks,
                 UserData: body.userData,
                 ImageTags: {},
+                IsFavorite: body.isFavorite ?? false,
             });
         } catch (err) {
             setError(err instanceof Error ? err.message : "load failed");
@@ -308,6 +329,17 @@ export default function Watch() {
     useEffect(() => {
         fetchItem();
     }, [fetchItem]);
+
+    // No auto-skip: /watch always renders the menu. Earlier we tried
+    // to keep the "tile click -> play immediately" UX for fresh
+    // movies by auto-pushing /play, but every approach to "remember
+    // we already skipped this entry on the back-visit" was unreliable
+    // on Android WebView (state.skipDone was dropped on goBack(),
+    // location.key wasn't always preserved either). The result was a
+    // /watch -> /play loop on Back. Keeping the menu in the forward
+    // path costs the kid one extra tap on fresh movies but makes
+    // navigation predictable: Back always lands on /watch with the
+    // menu, Back again lands on Browse.
 
     // For series, also pull the episode list.
     useEffect(() => {
@@ -374,22 +406,74 @@ export default function Watch() {
     const inProgress = pct >= 5 && pct < 90;
     const completed = pct >= 90 || (item.UserData?.Played ?? false);
 
+    const isFavorite = item.IsFavorite ?? false;
+    const toggleFavorite = async () => {
+        if (!session) return; // admin preview - server returns 403 anyway
+        const next = !isFavorite;
+        // Optimistic update so the heart flips immediately on the cheap
+        // WebView. Roll back on server error.
+        setItem((prev) => (prev ? { ...prev, IsFavorite: next } : prev));
+        try {
+            const res = await withAuthRetry(() =>
+                fetch(
+                    `/api/kids/items/${encodeURIComponent(item.Id)}/favorite`,
+                    {
+                        method: "POST",
+                        credentials: "same-origin",
+                        headers: {
+                            ...authHeaders(),
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ state: next ? "add" : "remove" }),
+                    },
+                ),
+            );
+            if (!res.ok) throw new Error(`${res.status}`);
+        } catch {
+            setItem((prev) =>
+                prev ? { ...prev, IsFavorite: !next } : prev,
+            );
+        }
+    };
+
+    const handleBackClick = () => {
+        // Forward-nav to wherever the kid came from (?from=browse|
+        // library). nav(-1) was unreliable on Android WebView's
+        // goBack() history (back from /watch sometimes no-oped,
+        // sometimes landed on /play). Explicit nav is consistent;
+        // the destination's sessionStorage cache restores focus +
+        // scroll across the new entry.
+        nav(backHref);
+    };
+
     return (
-        <div className="watch-screen">
+        <div className={`watch-screen ${isSeries ? "is-series" : "is-movie"}`}>
             <BackdropImage itemId={item.Id} />
-            <header className="watch-back">
-                <Link
-                    to={browseHref}
-                    className="watch-back-link"
-                    aria-label="Back"
-                    data-zone="back"
-                >
-                    ← Back
-                </Link>
-            </header>
-            <div className="watch-hero">
-                <Poster id={item.Id} hasPoster />
+            <button
+                type="button"
+                className="watch-back-btn"
+                onClick={handleBackClick}
+                data-zone="back"
+                aria-label="Back"
+            >
+                <ArrowLeft weight="fill" size={32} aria-hidden />
+            </button>
+            <div className={`watch-hero ${isSeries ? "is-series" : "is-movie"}`}>
+                <Poster id={item.Id} isSeries={isSeries} />
                 <div className="watch-hero-text">
+                    <button
+                        type="button"
+                        className={`watch-fav ${isFavorite ? "active" : ""}`}
+                        onClick={toggleFavorite}
+                        data-zone="favorite"
+                        aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+                        aria-pressed={isFavorite}
+                    >
+                        <Heart
+                            weight={isFavorite ? "fill" : "regular"}
+                            aria-hidden
+                        />
+                    </button>
                     <h1>{item.Name}</h1>
                     <p className="watch-hero-meta">
                         {item.ProductionYear ? `${item.ProductionYear}` : ""}
@@ -486,13 +570,30 @@ function BackdropImage({ itemId }: { itemId: string }) {
     );
 }
 
-function Poster({ id }: { id: string; hasPoster: boolean }) {
+// Poster renders the hero image for the watch screen. Movies get the
+// vertical Primary poster (Jellyfin's standard 2:3); series get the
+// landscape Backdrop so the hero is shorter and the episode accordion
+// gets more vertical real estate. Backdrop is always available for
+// series in our library (BackdropImage above already relies on it).
+// On Backdrop fetch failure (rare - admin uploaded only Primary?),
+// we fall back to Primary so the kid still sees something.
+function Poster({ id, isSeries }: { id: string; isSeries: boolean }) {
+    const type = isSeries ? "Backdrop" : "Primary";
+    const width = isSeries ? 720 : 480;
     return (
         <img
-            className="watch-poster"
-            src={`/api/kids/items/${encodeURIComponent(id)}/image?type=Primary&width=480${imageAuthSuffix()}`}
+            className={isSeries ? "watch-thumb" : "watch-poster"}
+            src={`/api/kids/items/${encodeURIComponent(id)}/image?type=${type}&width=${width}${imageAuthSuffix()}`}
             alt=""
             loading="eager"
+            onError={(e) => {
+                const img = e.currentTarget;
+                if (isSeries && !img.dataset.fellBack) {
+                    img.dataset.fellBack = "1";
+                    img.src = `/api/kids/items/${encodeURIComponent(id)}/image?type=Primary&width=480${imageAuthSuffix()}`;
+                    img.className = "watch-poster";
+                }
+            }}
         />
     );
 }
@@ -799,14 +900,3 @@ function formatRuntime(ticks: number): string {
     return `${minutes}m`;
 }
 
-// shouldShowWatchMenu is the routing helper (used by Browse +
-// Library) to decide between /watch and /play. Exported so callers
-// can keep the rule in one place.
-export function shouldShowWatchMenu(item: {
-    Type: string;
-    UserData?: ItemUserData;
-}): boolean {
-    if (item.Type === "Series") return true;
-    const pct = item.UserData?.PlayedPercentage ?? 0;
-    return pct >= 5;
-}

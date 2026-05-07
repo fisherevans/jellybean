@@ -162,6 +162,17 @@ export default function Layout({ user, onLogout }: Props) {
                             </select>
                         </label>
                     )}
+                    {profile && (
+                        <a
+                            className="topbar-preview"
+                            href={`/player/browse?profileId=${profile.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`Open the kid view for ${profile.name} in a new tab. Admin cookie auth, no resume / continue-watching.`}
+                        >
+                            Watch as {profile.name}
+                        </a>
+                    )}
                     <span>{user.name}</span>
                     <button onClick={handleLogout}>Sign out</button>
                 </div>

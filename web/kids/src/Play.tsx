@@ -6,8 +6,8 @@ import {
     useState,
 } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft } from "@phosphor-icons/react";
-import { authHeaders } from "./auth";
+import { ArrowLeft, Heart } from "@phosphor-icons/react";
+import { authHeaders, withAuthRetry } from "./auth";
 import HlsVideo from "./HlsVideo";
 import PlayerTransport from "./PlayerTransport";
 import { type MediaErrorKind, playSessionIdFromUrl } from "./playerHelpers";
@@ -44,6 +44,9 @@ type StreamResponse = {
     };
     mediaSourceId?: string;
     playbackPath?: string;
+    favoriteItemId?: string;
+    isFavorite?: boolean;
+    runtimeTicks?: number;
 };
 
 type NextUpResponse = {
@@ -119,8 +122,15 @@ export default function Play() {
 
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const backRef = useRef<HTMLAnchorElement | null>(null);
+    const favoriteRef = useRef<HTMLButtonElement | null>(null);
     const reportedStart = useRef(false);
     const [transportVisible, setTransportVisible] = useState(false);
+    // Local mirror of stream.isFavorite so the heart toggle on the
+    // header can flip optimistically without re-fetching the stream
+    // (which would re-negotiate transcode and stutter playback).
+    // Reset to the server value whenever the stream itself changes
+    // (initial fetch, next-episode swap).
+    const [isFavorite, setIsFavorite] = useState(false);
 
     const stream = (() => {
         switch (status.kind) {
@@ -132,6 +142,42 @@ export default function Play() {
                 return null;
         }
     })();
+
+    // Pull initial favorite state from the stream response. This fires
+    // on the initial fetch + on next-episode swaps; mid-stream toggles
+    // are local-only via setIsFavorite below.
+    const streamFavId = stream?.favoriteItemId ?? "";
+    const streamFavInitial = stream?.isFavorite ?? false;
+    useEffect(() => {
+        if (!streamFavId) return;
+        setIsFavorite(streamFavInitial);
+    }, [streamFavId, streamFavInitial]);
+
+    const toggleFavorite = useCallback(async () => {
+        if (!stream?.favoriteItemId) return;
+        const next = !isFavorite;
+        setIsFavorite(next);
+        try {
+            const res = await withAuthRetry(() =>
+                fetch(
+                    `/api/kids/items/${encodeURIComponent(stream.favoriteItemId!)}/favorite`,
+                    {
+                        method: "POST",
+                        credentials: "same-origin",
+                        headers: {
+                            ...authHeaders(),
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ state: next ? "add" : "remove" }),
+                    },
+                ),
+            );
+            if (!res.ok) throw new Error(`${res.status}`);
+        } catch {
+            // Roll back on error so the heart stays truthful.
+            setIsFavorite(!next);
+        }
+    }, [isFavorite, stream?.favoriteItemId]);
 
     // Back target for the player. Prefer the series page when we're on
     // an episode so the kid lands on the episode picker, else the item
@@ -153,7 +199,14 @@ export default function Play() {
     // scope.
     useEffect(() => {
         function onKey(e: KeyboardEvent) {
-            if (e.key === "Escape") nav(watchHref);
+            if (e.key === "Escape") {
+                // True history-back so the /watch auto-skip marker
+                // restored on the original entry suppresses the
+                // bounce-back to /play. Same reasoning as the
+                // visible Back link's onClick handler below.
+                if (window.history.length > 1) nav(-1);
+                else nav(watchHref);
+            }
         }
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
@@ -167,6 +220,7 @@ export default function Play() {
         dispatch({ type: "reset" });
         reportedStart.current = false;
         setIsBuffering(false);
+        setIsFavorite(false);
 
         (async () => {
             try {
@@ -469,6 +523,23 @@ export default function Play() {
                     ref={backRef}
                     className="play-back"
                     aria-label="Back"
+                    onClick={(e) => {
+                        // Use a true history-back rather than a forward
+                        // push to /watch. The /watch auto-skip is keyed
+                        // by location.key, so a forward push creates a
+                        // new key, the marker doesn't match, the skip
+                        // re-fires, and the kid bounces right back to
+                        // /play. nav(-1) restores the original /watch
+                        // entry where the marker is set, so the menu
+                        // renders. Falls through to the Link's default
+                        // (forward push to watchHref) only when there's
+                        // no history to go back to (e.g. deep link
+                        // straight to /play).
+                        if (window.history.length > 1) {
+                            e.preventDefault();
+                            nav(-1);
+                        }
+                    }}
                 >
                     <ArrowLeft weight="fill" size={32} aria-hidden />
                 </Link>
@@ -486,10 +557,39 @@ export default function Play() {
                                 )}
                         </p>
                     )}
-                    {stream.productionYear ? (
-                        <p className="play-year">{stream.productionYear}</p>
-                    ) : null}
+                    {(stream.productionYear || stream.runtimeTicks) && (
+                        <p className="play-year">
+                            {stream.productionYear ?? ""}
+                            {stream.productionYear && stream.runtimeTicks
+                                ? " · "
+                                : ""}
+                            {stream.runtimeTicks
+                                ? formatRuntimeShort(stream.runtimeTicks)
+                                : ""}
+                        </p>
+                    )}
                 </div>
+                {stream.favoriteItemId && (
+                    <button
+                        type="button"
+                        ref={favoriteRef}
+                        className={`play-fav ${isFavorite ? "active" : ""}`}
+                        onClick={toggleFavorite}
+                        aria-label={
+                            isFavorite ? "Remove from favorites" : "Add to favorites"
+                        }
+                        aria-pressed={isFavorite}
+                        title={
+                            isFavorite ? "Remove from favorites" : "Add to favorites"
+                        }
+                    >
+                        <Heart
+                            weight={isFavorite ? "fill" : "regular"}
+                            size={28}
+                            aria-hidden
+                        />
+                    </button>
+                )}
                 {stream.playbackPath && (
                     <div className="play-quality" aria-hidden>
                         {formatPlaybackPath(stream.playbackPath)}
@@ -511,11 +611,35 @@ export default function Play() {
                 onRestart={handleRestart}
                 onNextEpisode={showNextEpisode ? handleNextEpisode : undefined}
                 onVisibleChange={setTransportVisible}
-                onBack={() => nav(watchHref)}
+                onBack={() => {
+                    // Same nav(-1) reasoning as the visible Back link
+                    // onClick - keep the original /watch entry instead
+                    // of pushing a fresh one.
+                    if (window.history.length > 1) nav(-1);
+                    else nav(watchHref);
+                }}
                 backRef={backRef}
+                onToggleFavorite={
+                    stream.favoriteItemId ? toggleFavorite : undefined
+                }
+                favoriteRef={favoriteRef}
             />
         </div>
     );
+}
+
+// formatRuntimeShort renders Jellyfin's 100ns-tick runtime as a
+// compact "1h 32m" / "47m". Used in the player header next to the
+// year. Dropping the seconds keeps the header line readable at TV
+// distance; the precise time-into / time-remaining counters under
+// the scrubber carry the second-level resolution.
+function formatRuntimeShort(ticks: number): string {
+    const totalMin = Math.max(0, Math.round(ticks / 600_000_000));
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    if (h <= 0) return `${m}m`;
+    if (m === 0) return `${h}h`;
+    return `${h}h ${m}m`;
 }
 
 function formatPlaybackPath(path: string | undefined): string {

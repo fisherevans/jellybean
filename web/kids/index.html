@@ -5,6 +5,21 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <link rel="icon" type="image/png" href="/kids/favicon.png" />
         <title>Jellybean Kids</title>
+        <!-- Body + title fonts. Cause for prose, DynaPuff for the
+             playful row / section / hero titles. preconnect kicks
+             off the TLS handshake to Google's font CDN before the
+             stylesheet request lands so the font show up on first
+             paint instead of after a swap. -->
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link
+            rel="preconnect"
+            href="https://fonts.gstatic.com"
+            crossorigin
+        />
+        <link
+            rel="stylesheet"
+            href="https://fonts.googleapis.com/css2?family=Cause:wght@400;500;600;700&family=DynaPuff:wght@400;500;600;700&display=swap"
+        />
         <style>
             /* Splash screen rendered before the JS bundle parses so cheap
                TVs see something animated instead of a black screen during
@@ -14,16 +29,16 @@
                self-contained - no font fetch, no external assets. */
             html, body {
                 margin: 0;
-                background: #0a0a12;
-                color: #fff;
-                font-family: system-ui, -apple-system, sans-serif;
+                background: #faf6ee;
+                color: #20162e;
+                font-family: "Cause", system-ui, -apple-system, sans-serif;
             }
             .splash {
                 position: fixed;
                 inset: 0;
                 display: grid;
                 place-items: center;
-                background: radial-gradient(circle at 50% 35%, #1a1d3a 0%, #0a0a12 70%);
+                background: radial-gradient(circle at 50% 35%, #ffe7c2 0%, #faf6ee 70%);
                 z-index: 9999;
                 transition: opacity 400ms ease, visibility 0s 400ms;
             }
@@ -45,12 +60,12 @@
                 font-size: 1.8rem;
                 font-weight: 700;
                 letter-spacing: 0.04em;
-                color: #fff;
+                color: #20162e;
             }
             .splash-sub {
                 margin-top: 0.5rem;
                 font-size: 1rem;
-                color: #8a8db0;
+                color: #6e6b7a;
                 letter-spacing: 0.08em;
                 text-transform: uppercase;
             }

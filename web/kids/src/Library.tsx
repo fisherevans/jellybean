@@ -17,7 +17,7 @@ import {
     set as cacheSet,
 } from "./libraryCache";
 import { useOnlineStatus } from "./onlineStatus";
-import AlphaBar, { firstIndexByLetter } from "./AlphaBar";
+import AlphaPickerModal from "./AlphaPickerModal";
 import OverrideModal, { useLongPressUp } from "./OverrideModal";
 import TabPill, { TAB_SLOT_COUNT, tabHref } from "./TabPill";
 import {
@@ -25,8 +25,8 @@ import {
     scrollWindowToCenter,
     scrollWindowToTop,
 } from "./smoothScroll";
+import { consumeTabFocus, flagTabFocus, setHomeTab } from "./kidNav";
 import { useProgressiveBack } from "./useProgressiveBack";
-import { shouldShowWatchMenu } from "./Watch";
 
 // Library is the kid's main browsing screen. Layout top-to-bottom:
 //
@@ -57,12 +57,17 @@ type LibraryResponse = {
     HasMore?: boolean;
     NextStartIndex?: number;
     ProfileId?: number;
+    // Server-computed mapping from starting letter ("A" - "Z" plus
+    // "#") to its index in the FULL sorted library. The alpha-picker
+    // modal uses this so the kid can jump to letters past the first
+    // paginated page without having loaded those items yet.
+    LettersByName?: Record<string, number>;
 };
 
-type TypeFilter = "Both" | "Movies" | "TV";
+type TypeFilter = "All" | "Movies" | "TV";
 
 const FILTER_STORAGE = "jellybean.kids.typeFilter";
-const TYPE_FILTERS: TypeFilter[] = ["Both", "Movies", "TV"];
+const TYPE_FILTERS: TypeFilter[] = ["All", "Movies", "TV"];
 
 function filterToType(t: TypeFilter): string {
     return t === "Movies" ? "Movie" : t === "TV" ? "Series" : "Movie,Series";
@@ -70,15 +75,21 @@ function filterToType(t: TypeFilter): string {
 
 type Focus =
     | { kind: "tab"; index: number }
+    | { kind: "alphaBtn" }
     | { kind: "search" }
     | { kind: "filter"; index: number }
     | { kind: "cw"; index: number }
-    | { kind: "grid"; index: number }
-    | { kind: "alpha"; index: number };
+    | { kind: "grid"; index: number };
 
-const ALPHA_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-
-const PAGE_SIZE = 24;
+// PAGE_SIZE is the per-page item count for the library grid. Set
+// large enough that most kids' libraries arrive in a single fetch -
+// the alpha-picker modal needs the loaded list to span the whole
+// library to support letter jumps without re-fetching. The infinite-
+// scroll sentinel still kicks in for libraries past this size, but
+// they'll lose alpha-picker accuracy for the unloaded tail until
+// the kid scrolls there. Slim payload keeps the wire weight tame
+// even at 5000 items (~250-300KB before gzip).
+const PAGE_SIZE = 5000;
 
 export default function Library() {
     const nav = useNavigate();
@@ -100,6 +111,12 @@ export default function Library() {
             );
         };
     }, []);
+
+    // Stamp the kid's current home tab so /watch's Back knows where
+    // to send them. See kidNav.ts.
+    useEffect(() => {
+        setHomeTab("library");
+    }, []);
     const restoredScrollRef = useRef(false);
     // Preserve search params (e.g. admin's profileId) when navigating to
     // /play so the back link can return to the same filtered library
@@ -108,7 +125,9 @@ export default function Library() {
 
     const [filter, setFilter] = useState<TypeFilter>(() => {
         const v = localStorage.getItem(FILTER_STORAGE);
-        return TYPE_FILTERS.includes(v as TypeFilter) ? (v as TypeFilter) : "Both";
+        // Migrate the old "Both" persisted value to the new "All".
+        if (v === "Both") return "All";
+        return TYPE_FILTERS.includes(v as TypeFilter) ? (v as TypeFilter) : "All";
     });
     // Search box (M8 #49). Server-side filter via /api/kids/library
     // ?search=. Debounced through `searchDebounced` so each keystroke
@@ -122,6 +141,11 @@ export default function Library() {
 
     const [continueItems, setContinueItems] = useState<LibraryItem[]>([]);
     const [items, setItems] = useState<LibraryItem[]>([]);
+    // Server-computed letter -> grid-index map for the FULL library
+    // (covers items beyond what's currently loaded). Drives the
+    // alpha-picker modal.
+    const [lettersByName, setLettersByName] = useState<Record<string, number>>({});
+    const [alphaModalOpen, setAlphaModalOpen] = useState(false);
     const [hasMore, setHasMore] = useState(false);
     const [nextStart, setNextStart] = useState(0);
     const [loading, setLoading] = useState(true);
@@ -142,7 +166,13 @@ export default function Library() {
     const [retryNonce, setRetryNonce] = useState(0);
     const online = useOnlineStatus();
 
-    const [focus, setFocus] = useState<Focus>({ kind: "search" });
+    const [focus, setFocus] = useState<Focus>(() => {
+        // Tab-arrow navigation from /browse seeds focus on the
+        // landing tab pill so the kid can keep arrowing.
+        const tabSlot = consumeTabFocus();
+        if (tabSlot !== null) return { kind: "tab", index: tabSlot };
+        return { kind: "search" };
+    });
     const tileRefs = useRef<Record<string, HTMLButtonElement | null>>({});
     // Two refs for the search affordance:
     //   searchWrapRef - the D-pad target (a tabbable div wrapping the
@@ -320,6 +350,7 @@ export default function Library() {
                 setItems(cached.Items ?? []);
                 setHasMore(!!cached.HasMore);
                 setNextStart(cached.NextStartIndex ?? (cached.Items?.length ?? 0));
+                setLettersByName(cached.LettersByName ?? {});
                 allEtag = allHit.etag;
                 // Cached content is rendered: drop the spinner.
                 setLoading(false);
@@ -357,6 +388,7 @@ export default function Library() {
                     setNextStart(
                         all.page.NextStartIndex ?? (all.page.Items?.length ?? 0),
                     );
+                    setLettersByName(all.page.LettersByName ?? {});
                     if (allK && all.etag) {
                         cacheSet(allK, all.page, all.etag).catch(() => {});
                     }
@@ -474,22 +506,31 @@ export default function Library() {
     // smoothScroll animator (rAF-driven, retargets on rapid presses
     // instead of canceling in-flight animations like the WebView's
     // native smooth scroll does).
+    // Calculate columns in the grid based on viewport width so the
+    // window keydown handler below knows how far ArrowUp / Down jumps.
+    // Declared before the focus-scroll effect so the effect can use it.
+    const gridRef = useRef<HTMLDivElement | null>(null);
+    const columns = useGridColumns(gridRef, items.length);
+
     useEffect(() => {
         const inTopArea =
             focus.kind === "tab" ||
+            focus.kind === "alphaBtn" ||
             focus.kind === "search" ||
             focus.kind === "filter";
         if (focus.kind === "search") {
             searchWrapRef.current?.focus({ preventScroll: true });
-        } else if (focus.kind === "alpha") {
-            const el = tileRefs.current[`alpha:${focus.index}`];
-            if (el) el.focus({ preventScroll: true });
         } else {
             const key = focusKey(focus);
             const el = tileRefs.current[key];
             if (el) el.focus({ preventScroll: true });
         }
-        if (inTopArea) {
+        // First grid row pins to the top alongside the controls row,
+        // so the kid sees the tab pill / search / first row together
+        // at the start. Deeper rows center on the focused tile.
+        const onFirstGridRow =
+            focus.kind === "grid" && focus.index < columns;
+        if (inTopArea || onFirstGridRow) {
             scrollWindowToTop();
         } else if (focus.kind === "cw") {
             const el = tileRefs.current[focusKey(focus)];
@@ -501,17 +542,19 @@ export default function Library() {
             const el = tileRefs.current[focusKey(focus)];
             if (el) scrollWindowToCenter(el);
         }
-    }, [focus]);
-
-    // Calculate columns in the grid based on viewport width so the
-    // window keydown handler below knows how far ArrowUp / Down jumps.
-    const gridRef = useRef<HTMLDivElement | null>(null);
-    const columns = useGridColumns(gridRef);
+    }, [focus, columns]);
 
     // Window-level keyboard listener so D-pad navigation works even
     // when DOM focus drifts to body (route transitions, the search
     // wrap occasionally not taking focus on cheap WebView builds).
     // Skip while a modal is open so the modal owns the keys.
+    //
+    // lastMoveRef + REPEAT_MIN_MS rate-limit OS-synthesized
+    // e.repeat events (held-down arrow). Manual taps are unthrottled.
+    // Same pattern + cadence as Browse so the two pages feel
+    // consistent under sustained input.
+    const lastMoveRef = useRef(0);
+    const REPEAT_MIN_MS = 90;
     useEffect(() => {
         if (menuOpen || override) return;
         const handler = (e: KeyboardEvent) => {
@@ -532,6 +575,24 @@ export default function Library() {
                 return;
             }
             e.preventDefault();
+            if (e.repeat) {
+                const now = performance.now();
+                if (now - lastMoveRef.current < REPEAT_MIN_MS) return;
+                lastMoveRef.current = now;
+            } else {
+                lastMoveRef.current = performance.now();
+            }
+            // Tab[1] + ArrowLeft: nav to /browse and land focus on
+            // its tab pill. Mirror of Browse.tsx's tab[0] + Right.
+            if (
+                focus.kind === "tab" &&
+                focus.index === 1 &&
+                k === "ArrowLeft"
+            ) {
+                flagTabFocus(0);
+                nav(`/browse${playSuffix}`);
+                return;
+            }
             setFocus((f) =>
                 moveFocus(f, k, {
                     filterCount: TYPE_FILTERS.length,
@@ -549,8 +610,7 @@ export default function Library() {
                             playSuffix,
                             () => setMenuOpen(true),
                             () => searchInputRef.current?.focus(),
-                            (gridIdx) =>
-                                setFocus({ kind: "grid", index: gridIdx }),
+                            () => setAlphaModalOpen(true),
                         ),
                 }),
             );
@@ -600,8 +660,9 @@ export default function Library() {
         600,
     );
 
-    // Progressive Back escape: from anywhere below search, back lands
-    // on the search bar. From there, the next back exits the page.
+    // Progressive Back: anywhere on the page collapses focus up to
+    // the Library pill in the top nav (index 1). From there, a second
+    // Back falls through to the WebView and exits.
     useProgressiveBack(
         useCallback(() => {
             if (menuOpen) {
@@ -612,20 +673,17 @@ export default function Library() {
                 setOverride(null);
                 return true;
             }
-            if (focus.kind === "grid" && focus.index !== 0) {
-                setFocus({ kind: "grid", index: 0 });
+            if (alphaModalOpen) {
+                setAlphaModalOpen(false);
+                setFocus({ kind: "alphaBtn" });
                 return true;
             }
-            if (focus.kind === "cw" && focus.index !== 0) {
-                setFocus({ kind: "cw", index: 0 });
-                return true;
-            }
-            if (focus.kind === "grid" || focus.kind === "cw" || focus.kind === "filter") {
-                setFocus({ kind: "search" });
+            if (focus.kind !== "tab" || focus.index !== 1) {
+                setFocus({ kind: "tab", index: 1 });
                 return true;
             }
             return false;
-        }, [focus, menuOpen, override]),
+        }, [focus, menuOpen, override, alphaModalOpen]),
     );
 
     if (admin === undefined) return <div className="screen">Loading...</div>;
@@ -644,6 +702,20 @@ export default function Library() {
             {adminProfileId && !session && <AdminPreviewBanner />}
 
             <div className="library-controls">
+                <button
+                    type="button"
+                    ref={(el) => (tileRefs.current["alphaBtn"] = el)}
+                    className={`library-alpha-btn ${
+                        focus.kind === "alphaBtn" ? "focused" : ""
+                    }`}
+                    onClick={() => setAlphaModalOpen(true)}
+                    onFocus={() => setFocus({ kind: "alphaBtn" })}
+                    tabIndex={focus.kind === "alphaBtn" ? 0 : -1}
+                    aria-label="Jump to letter"
+                    title="Jump to letter"
+                >
+                    A-Z
+                </button>
                 <div
                     ref={searchWrapRef}
                     role="button"
@@ -681,31 +753,32 @@ export default function Library() {
                         onClick={(e) => e.stopPropagation()}
                     />
                 </div>
-            </div>
-
-            <div className="filter-row" role="tablist">
-                {TYPE_FILTERS.map((f, i) => {
-                    const k = `filter:${i}`;
-                    const active = filter === f;
-                    return (
-                        <button
-                            key={f}
-                            ref={(el) => (tileRefs.current[k] = el)}
-                            className={`filter-pill ${active ? "active" : ""} ${
-                                isFocused(focus, "filter", i) ? "focused" : ""
-                            }`}
-                            onClick={() => {
-                                setFilter(f);
-                                setFocus({ kind: "filter", index: i });
-                            }}
-                            onFocus={() => setFocus({ kind: "filter", index: i })}
-                            tabIndex={isFocused(focus, "filter", i) ? 0 : -1}
-                            role="tab"
-                        >
-                            {f}
-                        </button>
-                    );
-                })}
+                <div className="filter-row" role="tablist">
+                    {TYPE_FILTERS.map((f, i) => {
+                        const k = `filter:${i}`;
+                        const active = filter === f;
+                        return (
+                            <button
+                                key={f}
+                                ref={(el) => (tileRefs.current[k] = el)}
+                                className={`filter-pill ${active ? "active" : ""} ${
+                                    isFocused(focus, "filter", i) ? "focused" : ""
+                                }`}
+                                onClick={() => {
+                                    setFilter(f);
+                                    setFocus({ kind: "filter", index: i });
+                                }}
+                                onFocus={() =>
+                                    setFocus({ kind: "filter", index: i })
+                                }
+                                tabIndex={isFocused(focus, "filter", i) ? 0 : -1}
+                                role="tab"
+                            >
+                                {f}
+                            </button>
+                        );
+                    })}
+                </div>
             </div>
 
             {error && <p className="error">{error}</p>}
@@ -737,10 +810,7 @@ export default function Library() {
                                         showProgress
                                         onClick={() => {
                                             setFocus({ kind: "cw", index: i });
-                                            const href = shouldShowWatchMenu(it)
-                                                ? `/watch/${encodeURIComponent(it.Id)}${playSuffix}`
-                                                : `/play/${encodeURIComponent(it.Id)}${playSuffix}`;
-                                            nav(href);
+                                            nav(`/watch/${encodeURIComponent(it.Id)}${playSuffix}`);
                                         }}
                                         onFocus={() => setFocus({ kind: "cw", index: i })}
                                         refCallback={(el) => (tileRefs.current[`cw:${i}`] = el)}
@@ -766,10 +836,7 @@ export default function Library() {
                                         focused={isFocused(focus, "grid", i)}
                                         onClick={() => {
                                             setFocus({ kind: "grid", index: i });
-                                            const href = shouldShowWatchMenu(it)
-                                                ? `/watch/${encodeURIComponent(it.Id)}${playSuffix}`
-                                                : `/play/${encodeURIComponent(it.Id)}${playSuffix}`;
-                                            nav(href);
+                                            nav(`/watch/${encodeURIComponent(it.Id)}${playSuffix}`);
                                         }}
                                         onFocus={() => setFocus({ kind: "grid", index: i })}
                                         refCallback={(el) =>
@@ -791,15 +858,20 @@ export default function Library() {
                     onClose={() => setOverride(null)}
                 />
             )}
-            {items.length > 0 && (
-                <AlphaBar
-                    items={items}
-                    focusedIndex={focus.kind === "alpha" ? focus.index : null}
-                    letterRef={(i, el) => {
-                        tileRefs.current[`alpha:${i}`] = el;
-                    }}
-                    onLetterClick={(_letter, gridIdx) => {
+            {alphaModalOpen && (
+                <AlphaPickerModal
+                    lettersByName={lettersByName}
+                    onPick={(gridIdx) => {
+                        // Close the modal AND drop focus on the
+                        // target tile in one batch so the focus
+                        // effect picks up the grid index (not
+                        // alphaBtn, which the cancel path lands on).
+                        setAlphaModalOpen(false);
                         setFocus({ kind: "grid", index: gridIdx });
+                    }}
+                    onClose={() => {
+                        setAlphaModalOpen(false);
+                        setFocus({ kind: "alphaBtn" });
                     }}
                 />
             )}
@@ -825,6 +897,7 @@ function AdminPreviewBanner() {
 
 function focusKey(f: Focus): string {
     if (f.kind === "search") return "search";
+    if (f.kind === "alphaBtn") return "alphaBtn";
     return `${f.kind}:${f.index}`;
 }
 
@@ -847,6 +920,16 @@ function moveFocus(f: Focus, key: string, opts: MoveOpts): Focus {
         opts.onActivate();
         return f;
     }
+    // Where vertical Up/Down from the grid / cw lands. Search is the
+    // anchor of the controls row; alphaBtn / filter are siblings on
+    // the same horizontal line. Going "up" from a tile drops on
+    // search rather than guessing at horizontal position.
+    const downFromControls: Focus =
+        opts.cwCount > 0
+            ? { kind: "cw", index: 0 }
+            : opts.gridCount > 0
+              ? { kind: "grid", index: 0 }
+              : f;
     switch (f.kind) {
         case "tab":
             if (key === "ArrowLeft") return { kind: "tab", index: Math.max(0, f.index - 1) };
@@ -854,27 +937,39 @@ function moveFocus(f: Focus, key: string, opts: MoveOpts): Focus {
                 return { kind: "tab", index: Math.min(TAB_SLOT_COUNT - 1, f.index + 1) };
             if (key === "ArrowDown") return { kind: "search" };
             return f;
-        case "search":
-            // Let the input own ArrowLeft / ArrowRight (caret movement)
-            // and any printable text. Only Up / Down navigate.
+        case "alphaBtn":
+            // Leftmost element of the controls row: only Right / Up /
+            // Down navigate; Left clamps.
+            if (key === "ArrowRight") return { kind: "search" };
             if (key === "ArrowUp") return { kind: "tab", index: 1 };
-            if (key === "ArrowDown") return { kind: "filter", index: 0 };
+            if (key === "ArrowDown") return downFromControls;
+            return f;
+        case "search":
+            // Search bar sits between alphaBtn (left) and filter pills
+            // (right) on the controls row. Let the input own typed
+            // characters when DOM focus is on it; D-pad arrows route
+            // here only when the wrap is highlighted (kid hasn't
+            // pressed Enter to open the IME yet).
+            if (key === "ArrowLeft") return { kind: "alphaBtn" };
+            if (key === "ArrowRight") return { kind: "filter", index: 0 };
+            if (key === "ArrowUp") return { kind: "tab", index: 1 };
+            if (key === "ArrowDown") return downFromControls;
             return f;
         case "filter":
-            if (key === "ArrowLeft") return { kind: "filter", index: Math.max(0, f.index - 1) };
+            if (key === "ArrowLeft") {
+                if (f.index <= 0) return { kind: "search" };
+                return { kind: "filter", index: f.index - 1 };
+            }
             if (key === "ArrowRight")
                 return { kind: "filter", index: Math.min(opts.filterCount - 1, f.index + 1) };
-            if (key === "ArrowUp") return { kind: "search" };
-            if (key === "ArrowDown") {
-                if (opts.cwCount > 0) return { kind: "cw", index: 0 };
-                if (opts.gridCount > 0) return { kind: "grid", index: 0 };
-            }
+            if (key === "ArrowUp") return { kind: "tab", index: 1 };
+            if (key === "ArrowDown") return downFromControls;
             return f;
         case "cw":
             if (key === "ArrowLeft") return { kind: "cw", index: Math.max(0, f.index - 1) };
             if (key === "ArrowRight")
                 return { kind: "cw", index: Math.min(opts.cwCount - 1, f.index + 1) };
-            if (key === "ArrowUp") return { kind: "filter", index: 0 };
+            if (key === "ArrowUp") return { kind: "search" };
             if (key === "ArrowDown") {
                 if (opts.gridCount > 0) return { kind: "grid", index: 0 };
             }
@@ -887,12 +982,11 @@ function moveFocus(f: Focus, key: string, opts: MoveOpts): Focus {
                 return { kind: "grid", index: i - 1 };
             }
             if (key === "ArrowRight") {
-                // At the rightmost column, ArrowRight jumps into the
-                // A-Z bar so the kid can hit the jumpscroll without
-                // backtracking up to filter row.
-                if ((i + 1) % cols === 0 || i === opts.gridCount - 1) {
-                    return { kind: "alpha", index: 0 };
-                }
+                // Right at the row edge clamps. The old design jumped
+                // into a vertical alpha strip; that strip is now a
+                // modal, reachable from the alphaBtn on the controls
+                // row.
+                if ((i + 1) % cols === 0 || i === opts.gridCount - 1) return f;
                 return { kind: "grid", index: i + 1 };
             }
             if (key === "ArrowDown") {
@@ -904,29 +998,9 @@ function moveFocus(f: Focus, key: string, opts: MoveOpts): Focus {
                 if (i < cols) {
                     if (opts.cwCount > 0)
                         return { kind: "cw", index: Math.min(opts.cwCount - 1, i) };
-                    return { kind: "filter", index: 0 };
+                    return { kind: "search" };
                 }
                 return { kind: "grid", index: i - cols };
-            }
-            return f;
-        }
-        case "alpha": {
-            // Vertical strip on the right side of the page. Up/Down
-            // walks letters, Left returns to the grid, Enter activates.
-            // Pressing Up at the topmost letter exits to filter row.
-            if (key === "ArrowUp") {
-                if (f.index <= 0) return { kind: "filter", index: 0 };
-                return { kind: "alpha", index: f.index - 1 };
-            }
-            if (key === "ArrowDown") {
-                return {
-                    kind: "alpha",
-                    index: Math.min(ALPHA_LETTERS.length - 1, f.index + 1),
-                };
-            }
-            if (key === "ArrowLeft") {
-                if (opts.gridCount > 0) return { kind: "grid", index: 0 };
-                return { kind: "filter", index: 0 };
             }
             return f;
         }
@@ -943,7 +1017,7 @@ function activate(
     playSuffix: string,
     onOpenMenu: () => void,
     onOpenSearch: () => void,
-    onAlphaJump: (index: number) => void,
+    onOpenAlpha: () => void,
 ) {
     if (f.kind === "tab") {
         if (f.index === 2) {
@@ -954,17 +1028,15 @@ function activate(
         nav(tabHref(target, playSuffix));
         return;
     }
+    if (f.kind === "alphaBtn") {
+        onOpenAlpha();
+        return;
+    }
     if (f.kind === "search") {
         // Enter on the highlighted search bar promotes DOM focus to
         // the real <input>, which opens the Android TV IME. Pure D-pad
         // navigation onto search just highlights it, no IME.
         onOpenSearch();
-        return;
-    }
-    if (f.kind === "alpha") {
-        const letter = ALPHA_LETTERS[f.index];
-        const idx = firstIndexByLetter(items)[letter];
-        if (idx !== undefined) onAlphaJump(idx);
         return;
     }
     if (f.kind === "filter") {
@@ -974,31 +1046,52 @@ function activate(
     }
     const target = f.kind === "cw" ? cw[f.index] : items[f.index];
     if (target) {
-        const href = shouldShowWatchMenu(target)
-            ? `/watch/${encodeURIComponent(target.Id)}${playSuffix}`
-            : `/play/${encodeURIComponent(target.Id)}${playSuffix}`;
-        nav(href);
+        nav(`/watch/${encodeURIComponent(target.Id)}${playSuffix}`);
     }
     void filter;
 }
 
-function useGridColumns(ref: React.RefObject<HTMLDivElement>): number {
+function useGridColumns(
+    ref: React.RefObject<HTMLDivElement>,
+    itemCount: number,
+): number {
     const [cols, setCols] = useState(4);
     useEffect(() => {
         if (!ref.current) return;
         const el = ref.current;
         const update = () => {
-            const style = window.getComputedStyle(el);
-            const cs = style.getPropertyValue("grid-template-columns");
-            // "180px 180px 180px 180px" -> 4
-            const n = cs.split(" ").filter(Boolean).length;
-            if (n > 0) setCols(n);
+            // Count children that share the first row's offsetTop.
+            // Reading grid-template-columns from getComputedStyle was
+            // unreliable - the computed string occasionally over- or
+            // under-reported track count (extra trailing minmax token,
+            // auto-fill reserving an empty track) and the off-by-one
+            // showed up as Down landing one column to the side and
+            // the rightmost column being unreachable. Measuring real
+            // DOM positions gives the actual rendered column count
+            // regardless of how the grid resolves.
+            const children = el.children;
+            if (children.length === 0) return;
+            const first = children[0] as HTMLElement;
+            const firstTop = first.offsetTop;
+            let count = 0;
+            for (let i = 0; i < children.length; i++) {
+                const c = children[i] as HTMLElement;
+                if (Math.abs(c.offsetTop - firstTop) > 1) break;
+                count++;
+            }
+            if (count > 0) setCols(count);
         };
         update();
         const obs = new ResizeObserver(update);
         obs.observe(el);
         return () => obs.disconnect();
-    }, [ref]);
+        // itemCount in deps so the effect re-runs when items finally
+        // load. Without it, the initial mount had .grid empty (the
+        // "Loading..." path renders a different element entirely),
+        // so the count stayed on the default of 4 even after items
+        // arrived. The ref re-points to the .grid node when it
+        // mounts, but the effect doesn't re-fire on ref change alone.
+    }, [ref, itemCount]);
     return cols;
 }
 

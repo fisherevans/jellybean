@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router-dom";
+import { Books, House } from "@phosphor-icons/react";
 
 // TabPill is the shared top-of-page nav. Three slots:
 //   - Browse + Library (centered, equal spacing) for tab switching
@@ -51,7 +52,10 @@ export default function TabPill({
     return (
         <nav className="kids-tabpill" aria-label="Top-level navigation">
             <div className="kids-tabpill-spacer" aria-hidden />
-            <div className="kids-tabpill-tabs">
+            <div
+                className={`kids-tabpill-tabs is-${active}`}
+                data-active={active}
+            >
                 <button
                     type="button"
                     ref={(el) => tabRef?.(TAB_SLOT_BROWSE, el)}
@@ -63,7 +67,12 @@ export default function TabPill({
                     data-tab-pill="browse"
                     tabIndex={focusedIndex === TAB_SLOT_BROWSE ? 0 : -1}
                 >
-                    Browse
+                    <House
+                        weight="fill"
+                        className="kids-tabpill-icon kids-tabpill-icon-browse"
+                        aria-hidden
+                    />
+                    <span className="kids-tabpill-btn-label">Browse</span>
                 </button>
                 <button
                     type="button"
@@ -76,7 +85,12 @@ export default function TabPill({
                     data-tab-pill="library"
                     tabIndex={focusedIndex === TAB_SLOT_LIBRARY ? 0 : -1}
                 >
-                    Library
+                    <Books
+                        weight="fill"
+                        className="kids-tabpill-icon kids-tabpill-icon-library"
+                        aria-hidden
+                    />
+                    <span className="kids-tabpill-btn-label">Library</span>
                 </button>
             </div>
             <div className="kids-tabpill-side">

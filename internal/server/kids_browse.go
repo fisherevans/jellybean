@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/gorilla/mux"
 
@@ -18,10 +19,10 @@ import (
 // Jellyfin item bodies so the kid client can render tiles directly.
 
 type browseRowResponse struct {
-	RowID    int64           `json:"rowId"`
-	Type     string          `json:"type"`
-	Title    string          `json:"title"`
-	SubTitle string          `json:"subtitle,omitempty"`
+	RowID    int64  `json:"rowId"`
+	Type     string `json:"type"`
+	Title    string `json:"title"`
+	SubTitle string `json:"subtitle,omitempty"`
 	// Icon is an optional Phosphor icon name that the kid client
 	// renders next to the row title. Set by the resolver:
 	// "Heart" for favorites, the tag's icon for tag/tag_fanout
@@ -32,8 +33,45 @@ type browseRowResponse struct {
 	// button when true and "Loop back to start" when false.
 	// Currently set by random_unwatched + recently_added; other
 	// row types stay false.
-	HasMore bool            `json:"hasMore,omitempty"`
-	Items   []jellyfin.Item `json:"items"`
+	HasMore bool         `json:"hasMore,omitempty"`
+	Items   []browseItem `json:"items"`
+}
+
+// browseItem is the slim per-tile payload shipped to the kid client.
+// Used to be []jellyfin.Item, but the client only reads five fields
+// (Id, Name, Type, ImageTags.Primary, UserData) and the full
+// jellyfin.Item includes MediaStreams, Genres, Studios, etc. - over
+// 80% of the wire weight. JSON keys keep the capitalized Jellyfin
+// shape so the existing client TypeScript types still match.
+type browseItem struct {
+	ID        string                 `json:"Id"`
+	Name      string                 `json:"Name"`
+	Type      string                 `json:"Type"`
+	ImageTags *browseImageTags       `json:"ImageTags,omitempty"`
+	UserData  *jellyfin.ItemUserData `json:"UserData,omitempty"`
+}
+
+// browseImageTags carries only the Primary tag - the kid client uses
+// it to build the image proxy URL (the value is part of the cache
+// key for content-addressed posters). Backdrop / Logo / Thumb are
+// never read on the browse page.
+type browseImageTags struct {
+	Primary string `json:"Primary,omitempty"`
+}
+
+// toBrowseItem trims a Jellyfin Item down to what the kid browse
+// page renders.
+func toBrowseItem(it jellyfin.Item) browseItem {
+	out := browseItem{
+		ID:       it.ID,
+		Name:     it.Name,
+		Type:     it.Type,
+		UserData: it.UserData,
+	}
+	if it.ImageTags.Primary != "" {
+		out.ImageTags = &browseImageTags{Primary: it.ImageTags.Primary}
+	}
+	return out
 }
 
 type browseResponse struct {
@@ -184,7 +222,7 @@ func (s *Server) respondBrowseRow(
 	// the first one so the call doesn't 500, but HasMore stays false.
 	if len(resolved) == 0 {
 		writeJSON(w, http.StatusOK, browseRowResponse{
-			RowID: rowID, Type: string(target.Type), Items: []jellyfin.Item{},
+			RowID: rowID, Type: string(target.Type), Items: []browseItem{},
 		})
 		return
 	}
@@ -225,6 +263,13 @@ func (s *Server) respondBrowseRow(
 		}
 	}
 	applyPostFetchSort(items, rr)
+	if rr.MaxItems > 0 && len(items) > rr.MaxItems {
+		items = items[:rr.MaxItems]
+	}
+	slim := make([]browseItem, len(items))
+	for i, it := range items {
+		slim[i] = toBrowseItem(it)
+	}
 	writeJSON(w, http.StatusOK, browseRowResponse{
 		RowID:    rr.RowID,
 		Type:     string(rr.Type),
@@ -232,7 +277,7 @@ func (s *Server) respondBrowseRow(
 		SubTitle: rr.SubTitle,
 		Icon:     rr.Icon,
 		HasMore:  rr.HasMore,
-		Items:    items,
+		Items:    slim,
 	})
 }
 
@@ -328,21 +373,41 @@ func (s *Server) respondBrowse(
 	if len(ids) > 0 {
 		// Batch the IDs query. Jellyfin's URL-length limits cap at a
 		// few thousand bytes; chunking at 100 keeps us safe.
+		// Run the batches concurrently - they're independent reads
+		// against Jellyfin and previously dominated wall-time
+		// (3-4 sequential round trips over the tunnel).
 		const batch = 100
+		type batchResult struct {
+			items []jellyfin.Item
+			err   error
+		}
+		chunkCount := (len(ids) + batch - 1) / batch
+		results := make(chan batchResult, chunkCount)
 		for i := 0; i < len(ids); i += batch {
 			end := i + batch
 			if end > len(ids) {
 				end = len(ids)
 			}
-			res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
-				IDs: ids[i:end],
-			}, userTok)
-			if err != nil {
-				s.logger.Error().Err(err).Msg("browse decorate")
-				writeUpstreamError(w, err, "failed to load items")
+			chunk := ids[i:end]
+			go func() {
+				res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
+					IDs: chunk,
+				}, userTok)
+				if err != nil {
+					results <- batchResult{err: err}
+					return
+				}
+				results <- batchResult{items: res.Items}
+			}()
+		}
+		for i := 0; i < chunkCount; i++ {
+			r := <-results
+			if r.err != nil {
+				s.logger.Error().Err(r.err).Msg("browse decorate")
+				writeUpstreamError(w, r.err, "failed to load items")
 				return
 			}
-			for _, it := range res.Items {
+			for _, it := range r.items {
 				itemsByID[it.ID] = it
 			}
 		}
@@ -362,12 +427,19 @@ func (s *Server) respondBrowse(
 		}
 		// Tag rows + tag_fanout sometimes need their tag-sort to be
 		// applied AFTER we have full Item bodies (so we can sort by
-		// Name etc). The resolver sets ItemIDs in the right order
-		// for the "name" sort using Jellyfin's batch return, which
-		// happens to be id-order; do the post-sort here.
+		// Name / DateCreated). For those modes the resolver
+		// overfetches; cap to MaxItems after sorting so we surface
+		// the right "first N" instead of a random N sorted.
 		applyPostFetchSort(items, rr)
+		if rr.MaxItems > 0 && len(items) > rr.MaxItems {
+			items = items[:rr.MaxItems]
+		}
 		if len(items) == 0 {
 			continue
+		}
+		slim := make([]browseItem, len(items))
+		for i, it := range items {
+			slim[i] = toBrowseItem(it)
 		}
 		out = append(out, browseRowResponse{
 			RowID:    rr.RowID,
@@ -376,7 +448,7 @@ func (s *Server) respondBrowse(
 			SubTitle: rr.SubTitle,
 			Icon:     rr.Icon,
 			HasMore:  rr.HasMore,
-			Items:    items,
+			Items:    slim,
 		})
 	}
 
@@ -388,21 +460,64 @@ func (s *Server) respondBrowse(
 	})
 }
 
-// applyPostFetchSort handles row-type-specific sorting that needs
-// full Item bodies. For most rows we keep the resolver's order
-// (continue_watching is already sorted by Jellyfin, recently_added
-// is DateCreated desc, random_unwatched is shuffled). Tag rows fall
-// through to alphabetical-by-Name as a sane default.
+// applyPostFetchSort handles tag-row sorting that needs full Item
+// bodies. The resolver's applyTagSort can only do work that fits an
+// id list (random shuffle); modes that look at item fields (name,
+// date) defer to here.
+//
+// Dispatch is on row.SortMode, populated by the tag / tag_fanout
+// resolvers from row config:
+//   - "name"           -> alphabetical by Item.Name
+//   - "random"         -> no-op; trust the resolver's shuffled order
+//   - "recently_added" -> Item.DateCreated desc; items with empty /
+//                         unparseable DateCreated sink to the bottom
+//                         while preserving relative order
+//   - "" / unknown     -> no-op (covers non-tag rows + any future
+//                         resolver that hasn't set SortMode yet)
+//
+// Other row types (continue_watching, recently_added, random_unwatched,
+// favorites, watch_again) leave SortMode empty - their resolver owns
+// the order and we don't touch it here.
 func applyPostFetchSort(items []jellyfin.Item, row ResolvedRow) {
 	if len(items) <= 1 {
 		return
 	}
-	switch row.Type {
-	case curation.RowTag, curation.RowTagFanout:
+	if row.Type != curation.RowTag && row.Type != curation.RowTagFanout {
+		return
+	}
+	switch row.SortMode {
+	case "name":
 		sort.SliceStable(items, func(i, j int) bool {
 			return items[i].Name < items[j].Name
 		})
+	case "recently_added":
+		sort.SliceStable(items, func(i, j int) bool {
+			ti, oki := parseItemDate(items[i].DateCreated)
+			tj, okj := parseItemDate(items[j].DateCreated)
+			// Items with no parseable date go to the bottom.
+			if !oki && !okj {
+				return false
+			}
+			if !oki {
+				return false
+			}
+			if !okj {
+				return true
+			}
+			return ti.After(tj)
+		})
 	}
+}
+
+func parseItemDate(s string) (time.Time, bool) {
+	if s == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 // layoutIDForProfile reads the profile's layout_id directly. We

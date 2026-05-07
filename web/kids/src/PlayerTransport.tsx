@@ -50,15 +50,41 @@ type PlayerTransportProps = {
     // there, plus the activation callback.
     onBack?: () => void;
     backRef?: React.RefObject<HTMLElement | null>;
+    // Favorite heart in the header. Focus reaches it from "back" via
+    // ArrowRight or from "scrubber" via ArrowUp (preferring favorite
+    // over back when it's available). Activation is owned by the
+    // parent via onToggleFavorite; the transport just routes focus
+    // and Enter.
+    onToggleFavorite?: () => void;
+    favoriteRef?: React.RefObject<HTMLElement | null>;
 };
 
 type FocusState =
     | { kind: "scrubber" }
     | { kind: "button"; index: number }
-    | { kind: "back" };
+    | { kind: "back" }
+    | { kind: "favorite" };
 
-const HIDE_TIMEOUT_MS = 3000;
-const SEEK_STEP_SECONDS = 15;
+const HIDE_TIMEOUT_MS = 7000;
+// Held-arrow seek ramp on the scrubber. Kids hold left/right to
+// jump further faster; the step grows the longer the key is held.
+// First press always uses the smallest step. Repeats fire at
+// SEEK_REPEAT_THROTTLE_MS to keep the seek rate sane (raw OS
+// repeats can hit 30 Hz).
+const SEEK_STEP_SECONDS = 15; // first press / short hold
+const SEEK_REPEAT_THROTTLE_MS = 180;
+// Quiet period after the last seek event before we commit the
+// debounced v.currentTime write. Long enough to absorb a held-arrow
+// gesture; short enough that a single tap feels responsive. With
+// SEEK_REPEAT_THROTTLE_MS=180 a hold fires keydowns ~5/sec, so 350ms
+// of quiet reliably means the kid has released the key.
+const SEEK_COMMIT_DELAY_MS = 350;
+const SEEK_RAMP: { afterMs: number; stepSeconds: number }[] = [
+    { afterMs: 0, stepSeconds: 15 },
+    { afterMs: 1000, stepSeconds: 30 },
+    { afterMs: 2500, stepSeconds: 60 },
+    { afterMs: 5000, stepSeconds: 120 },
+];
 const TIME_TICK_MS = 250;
 
 type ButtonDef = {
@@ -77,6 +103,8 @@ export default function PlayerTransport({
     onVisibleChange,
     onBack,
     backRef,
+    onToggleFavorite,
+    favoriteRef,
 }: PlayerTransportProps) {
     // High-level UI state. These flip on human-cadence events so they
     // can drive React renders without thrashing.
@@ -103,6 +131,13 @@ export default function PlayerTransport({
     const fillRef = useRef<HTMLDivElement | null>(null);
     const thumbRef = useRef<HTMLDivElement | null>(null);
     const timeLabelRef = useRef<HTMLSpanElement | null>(null);
+    // Split time labels: elapsed sits to the left of the rail, remaining
+    // to the right. The combined "0:00 / 0:00" label was readable but
+    // wasted the natural eye-line on either end of the scrubber.
+    const timeIntoRef = useRef<HTMLSpanElement | null>(null);
+    const timeRemainingRef = useRef<HTMLSpanElement | null>(null);
+    // Wall-clock end time ("Ends at 4:17pm"), bottom-right of screen.
+    const endsAtRef = useRef<HTMLSpanElement | null>(null);
     const railRef = useRef<HTMLDivElement | null>(null);
 
     const hideTimerRef = useRef<number | null>(null);
@@ -116,16 +151,58 @@ export default function PlayerTransport({
     // hold-to-repeat doesn't accumulate beyond what was just applied.
     const lastSeekTargetRef = useRef<number | null>(null);
 
-    // Reset the auto-hide timer. While paused, the transport stays
-    // visible regardless (mirrors Netflix). While playing, schedule a
-    // 3s hide.
+    // Debounce for the actual v.currentTime write. Each held-arrow
+    // press updates lastSeekTargetRef + the visual scrubber
+    // immediately for instant feedback, but the real seek only fires
+    // after SEEK_COMMIT_DELAY_MS of quiet. Without this, every
+    // keydown during a hold triggers an HLS segment cancel + retarget,
+    // and Jellyfin's transcoder has to cold-start at each new offset
+    // - that's the 15-30s "bouncing jellybean" the user saw.
+    const seekCommitTimerRef = useRef<number | null>(null);
+
+    // While a seek gesture is in flight we pause the video so the
+    // 250ms time-tick poll (from applyScrubberPosition's interval)
+    // doesn't keep advancing the thumb back to the actual playhead -
+    // that's what made the scrubber visibly bounce while seeking
+    // mid-playback. wasPlayingBeforeSeekRef remembers whether the
+    // video was playing when the gesture started; the commit
+    // resumes if so. Cleared on manual pause/play so we don't fight
+    // the kid's intent.
+    const wasPlayingBeforeSeekRef = useRef(false);
+
+    // Held-arrow seek state. Tracks the active hold so each
+    // keydown can compute "how long has the kid been holding" ->
+    // step size from SEEK_RAMP. We don't trust e.repeat: Android
+    // WebView's behavior varies by version (some emit a stream of
+    // e.repeat=false keydowns for held keys instead of toggling
+    // e.repeat). Time-since-last-keydown is robust across both
+    // patterns - if two arrows arrive within 250ms, we treat it
+    // as the same hold and accumulate elapsed time.
+    const seekHoldRef = useRef<{
+        key: "ArrowLeft" | "ArrowRight";
+        startedAt: number;
+        lastEventAt: number;
+        lastSeekAt: number;
+    } | null>(null);
+
+    // bufferingRef tracks whether the <video> is currently waiting on
+    // data (buffering). The auto-hide timer is suppressed while
+    // buffering: the kid expects the transport to stay up while the
+    // loading bean is on screen, so they can see seek targets land
+    // and progress resume without the controls disappearing in the
+    // middle of a stall.
+    const bufferingRef = useRef(false);
+
+    // Reset the auto-hide timer. The transport stays visible while
+    // paused (mirrors Netflix) AND while buffering. While actively
+    // playing, schedule a hide after HIDE_TIMEOUT_MS.
     const armHideTimer = useCallback(() => {
         if (hideTimerRef.current !== null) {
             window.clearTimeout(hideTimerRef.current);
             hideTimerRef.current = null;
         }
         const v = videoRef.current;
-        if (v && !v.paused) {
+        if (v && !v.paused && !bufferingRef.current) {
             hideTimerRef.current = window.setTimeout(() => {
                 setVisible(false);
             }, HIDE_TIMEOUT_MS);
@@ -176,8 +253,27 @@ export default function PlayerTransport({
         const onDurationChange = () => {
             setDuration(isFinite(v.duration) ? v.duration : 0);
         };
+        // `waiting` fires when playback stalls for buffering (post
+        // seek, network hiccup, transcoder cold-start). `playing`
+        // fires when data resumes. While buffering we cancel any
+        // pending auto-hide so the kid keeps the controls visible
+        // for the duration of the stall, then re-arm on resume.
+        const onWaiting = () => {
+            bufferingRef.current = true;
+            if (hideTimerRef.current !== null) {
+                window.clearTimeout(hideTimerRef.current);
+                hideTimerRef.current = null;
+            }
+            if (hasStartedRef.current) setVisible(true);
+        };
+        const onPlaying = () => {
+            bufferingRef.current = false;
+            armHideTimer();
+        };
         v.addEventListener("play", onPlay);
         v.addEventListener("pause", onPause);
+        v.addEventListener("waiting", onWaiting);
+        v.addEventListener("playing", onPlaying);
         v.addEventListener("durationchange", onDurationChange);
         // Sync once at mount in case the events already fired.
         setPaused(v.paused);
@@ -185,6 +281,8 @@ export default function PlayerTransport({
         return () => {
             v.removeEventListener("play", onPlay);
             v.removeEventListener("pause", onPause);
+            v.removeEventListener("waiting", onWaiting);
+            v.removeEventListener("playing", onPlaying);
             v.removeEventListener("durationchange", onDurationChange);
         };
     }, [videoRef, armHideTimer]);
@@ -198,10 +296,23 @@ export default function PlayerTransport({
         if (!v) return;
         let raf = 0;
         const tick = () => {
-            if (!draggingRef.current) {
-                applyScrubberPosition(v.currentTime, v.duration, fillRef, thumbRef);
-                applyTimeLabel(v.currentTime, v.duration, timeLabelRef);
-            }
+            // Skip the tick when the kid is actively scrubbing (pointer
+            // drag OR a debounced keyboard seek hasn't committed yet).
+            // Otherwise the poll reads v.currentTime (the OLD position,
+            // since we pause during seeks) and stomps the seek preview
+            // we just wrote, making the thumb visibly bounce between
+            // the old position and the kid's target.
+            if (draggingRef.current) return;
+            if (seekCommitTimerRef.current !== null) return;
+            applyScrubberPosition(v.currentTime, v.duration, fillRef, thumbRef);
+            applyTimeLabel(
+                v.currentTime,
+                v.duration,
+                timeLabelRef,
+                timeIntoRef,
+                timeRemainingRef,
+                endsAtRef,
+            );
         };
         tick();
         const id = window.setInterval(tick, TIME_TICK_MS);
@@ -296,14 +407,61 @@ export default function PlayerTransport({
             if (!v || !isFinite(v.duration)) return;
             const base = lastSeekTargetRef.current ?? v.currentTime;
             const next = Math.max(0, Math.min(v.duration - 1, base + deltaSeconds));
-            v.currentTime = next;
+            // Update the visual scrubber + label immediately so the
+            // kid sees feedback per press. The actual seek (v.currentTime)
+            // is debounced - one commit per gesture, not per press.
             lastSeekTargetRef.current = next;
             applyScrubberPosition(next, v.duration, fillRef, thumbRef);
-            applyTimeLabel(next, v.duration, timeLabelRef);
+            applyTimeLabel(
+                next,
+                v.duration,
+                timeLabelRef,
+                timeIntoRef,
+                timeRemainingRef,
+                endsAtRef,
+            );
+            // First seek of the gesture: if playing, pause and remember
+            // to resume on commit. Subsequent seeks within the same
+            // gesture (debounce timer still pending) are no-ops here.
+            if (seekCommitTimerRef.current === null && !v.paused) {
+                wasPlayingBeforeSeekRef.current = true;
+                v.pause();
+            }
+            if (seekCommitTimerRef.current !== null) {
+                clearTimeout(seekCommitTimerRef.current);
+            }
+            seekCommitTimerRef.current = window.setTimeout(() => {
+                seekCommitTimerRef.current = null;
+                const vid = videoRef.current;
+                if (!vid) return;
+                const target = lastSeekTargetRef.current;
+                if (target === null) return;
+                vid.currentTime = target;
+                if (wasPlayingBeforeSeekRef.current) {
+                    wasPlayingBeforeSeekRef.current = false;
+                    void vid.play().catch(() => {});
+                }
+            }, SEEK_COMMIT_DELAY_MS);
+        }
+        // stepForElapsed picks the seek size based on how long the kid
+        // has been holding the arrow. Walks SEEK_RAMP backwards so the
+        // largest matching tier wins.
+        function stepForElapsed(elapsedMs: number): number {
+            for (let i = SEEK_RAMP.length - 1; i >= 0; i--) {
+                if (elapsedMs >= SEEK_RAMP[i].afterMs) {
+                    return SEEK_RAMP[i].stepSeconds;
+                }
+            }
+            return SEEK_STEP_SECONDS;
         }
         function togglePlay() {
             const v = videoRef.current;
             if (!v) return;
+            // Kid's manual play/pause overrides any pending seek-
+            // resume so we don't fight their intent. If they hit pause
+            // mid-seek, the debounced commit will still seek but won't
+            // auto-play after.
+            wasPlayingBeforeSeekRef.current = false;
             if (v.paused) {
                 attemptPlay(v);
             } else {
@@ -323,6 +481,8 @@ export default function PlayerTransport({
                     ? "scrubber"
                     : focus.kind === "back"
                     ? "back"
+                    : focus.kind === "favorite"
+                    ? "favorite"
                     : `button:${focus.index}`;
             const vState = v
                 ? `paused=${v.paused} ct=${v.currentTime.toFixed(2)} rs=${v.readyState}`
@@ -331,6 +491,60 @@ export default function PlayerTransport({
                 `[player] key="${e.key}" repeat=${e.repeat} ` +
                 `visible=${visState} focus=${focusState} ${vState}`,
             );
+
+            // Scrubber + arrow: special-case BEFORE the global
+            // e.repeat skip below. Held repeats are deliberate here -
+            // the kid is scrubbing - and the step accelerates with
+            // hold duration. We detect "held" by time-since-last-
+            // event rather than e.repeat (unreliable on Android
+            // WebView). SEEK_REPEAT_THROTTLE_MS bounds the seek rate
+            // when the OS feeds keydowns faster than that.
+            if (
+                focus.kind === "scrubber" &&
+                (e.key === "ArrowLeft" || e.key === "ArrowRight")
+            ) {
+                e.preventDefault();
+                const wasRevealed = showOnInput();
+                if (wasRevealed) {
+                    // Transport was hidden - first arrow only reveals,
+                    // matches the consumed-press pattern below.
+                    return;
+                }
+                const now = performance.now();
+                const direction = e.key === "ArrowRight" ? 1 : -1;
+                let hold = seekHoldRef.current;
+                const isContinuingHold =
+                    hold !== null &&
+                    hold.key === e.key &&
+                    now - hold.lastEventAt < 250;
+                if (!isContinuingHold) {
+                    hold = {
+                        key: e.key,
+                        startedAt: now,
+                        lastEventAt: now,
+                        lastSeekAt: 0,
+                    };
+                    seekHoldRef.current = hold;
+                } else {
+                    hold!.lastEventAt = now;
+                }
+                if (now - hold!.lastSeekAt < SEEK_REPEAT_THROTTLE_MS) {
+                    return;
+                }
+                hold!.lastSeekAt = now;
+                const elapsed = now - hold!.startedAt;
+                const step = stepForElapsed(elapsed);
+                seek(direction * step);
+                console.log(
+                    `[player]   seek held=${elapsed.toFixed(0)}ms step=${step}s ` +
+                    `continuing=${isContinuingHold}`,
+                );
+                armHideTimer();
+                return;
+            }
+            // Any other key clears the seek-hold tracker so the next
+            // arrow press starts from the smallest step.
+            seekHoldRef.current = null;
 
             // TV remotes auto-repeat keydown when the OK button is held
             // even briefly - a single user tap can fire keydown
@@ -430,8 +644,12 @@ export default function PlayerTransport({
                     return;
                 }
                 if (e.key === "ArrowUp") {
-                    // Scrubber -> back arrow (header) when wired.
+                    // Scrubber -> back arrow. Favorite is reachable
+                    // via ArrowRight from back; landing on back keeps
+                    // the up-from-scrubber motion predictable
+                    // regardless of whether favorite is wired.
                     if (onBack) setFocus({ kind: "back" });
+                    else if (onToggleFavorite) setFocus({ kind: "favorite" });
                     return;
                 }
                 if (e.key === "Enter" || e.key === " ") {
@@ -441,7 +659,27 @@ export default function PlayerTransport({
                 }
                 return;
             }
+            if (focus.kind === "favorite") {
+                if (e.key === "ArrowLeft") {
+                    if (onBack) setFocus({ kind: "back" });
+                    return;
+                }
+                if (e.key === "ArrowDown") {
+                    setFocus({ kind: "scrubber" });
+                    return;
+                }
+                if (e.key === "Enter" || e.key === " ") {
+                    onToggleFavorite?.();
+                    return;
+                }
+                // ArrowRight / ArrowUp: clamp.
+                return;
+            }
             if (focus.kind === "back") {
+                if (e.key === "ArrowRight") {
+                    if (onToggleFavorite) setFocus({ kind: "favorite" });
+                    return;
+                }
                 if (e.key === "ArrowDown") {
                     setFocus({ kind: "scrubber" });
                     return;
@@ -487,6 +725,23 @@ export default function PlayerTransport({
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
     }, [focus, buttons, showOnInput, videoRef, onBack]);
+
+    // Cancel any pending debounced seek commit on UNMOUNT only. A
+    // half-finished hold would otherwise fire v.currentTime on a
+    // torn-down video element. Critically NOT bundled with the
+    // keydown effect's cleanup above: that cleanup fires on every
+    // dep change (e.g. paused-state flips when we pause for a seek,
+    // which mutates `buttons`), and clearing the timer there made
+    // every first-press reset back to the original position because
+    // the tick guard was lifted while the video was still paused.
+    useEffect(() => {
+        return () => {
+            if (seekCommitTimerRef.current !== null) {
+                clearTimeout(seekCommitTimerRef.current);
+                seekCommitTimerRef.current = null;
+            }
+        };
+    }, []);
 
     // Pointer / mouse-move: any movement reveals the transport and
     // resets the timer. A click on the video toggles visibility (the
@@ -550,7 +805,14 @@ export default function PlayerTransport({
                 v.currentTime = t;
                 lastSeekTargetRef.current = t;
                 applyScrubberPosition(t, v.duration, fillRef, thumbRef);
-                applyTimeLabel(t, v.duration, timeLabelRef);
+                applyTimeLabel(
+                    t,
+                    v.duration,
+                    timeLabelRef,
+                    timeIntoRef,
+                    timeRemainingRef,
+                    endsAtRef,
+                );
             };
             apply(e.clientX);
             const move = (ev: PointerEvent) => apply(ev.clientX);
@@ -592,10 +854,12 @@ export default function PlayerTransport({
             scrubberRef.current?.focus({ preventScroll: true });
         } else if (focus.kind === "back") {
             backRef?.current?.focus({ preventScroll: true });
+        } else if (focus.kind === "favorite") {
+            favoriteRef?.current?.focus({ preventScroll: true });
         } else {
             buttonRefs.current[focus.index]?.focus({ preventScroll: true });
         }
-    }, [focus, visible, backRef]);
+    }, [focus, visible, backRef, favoriteRef]);
 
     return (
         <div
@@ -611,6 +875,13 @@ export default function PlayerTransport({
                     focus.kind === "scrubber" ? "focused" : ""
                 }`}
             >
+                <span
+                    ref={timeIntoRef}
+                    className="pt-time pt-time-into"
+                    aria-label="Time elapsed"
+                >
+                    0:00
+                </span>
                 <div
                     ref={(el) => {
                         railRef.current = el;
@@ -628,9 +899,22 @@ export default function PlayerTransport({
                     <div ref={fillRef} className="pt-fill" />
                     <div ref={thumbRef} className="pt-thumb" />
                 </div>
-                <span ref={timeLabelRef} className="pt-time">
-                    0:00 / 0:00
+                <span
+                    ref={timeRemainingRef}
+                    className="pt-time pt-time-remaining"
+                    aria-label="Time remaining"
+                >
+                    -0:00
                 </span>
+                {/* Hidden legacy combined label kept so any aria
+                    consumers / chrome inspect logs that referenced
+                    .pt-time still resolve. The visible labels above
+                    are the user-facing surface. */}
+                <span
+                    ref={timeLabelRef}
+                    className="pt-time pt-time-combined"
+                    aria-hidden
+                />
             </div>
             <div className="pt-buttons">
                 {buttons.map((b, i) => (
@@ -663,6 +947,11 @@ export default function PlayerTransport({
                     </button>
                 ))}
             </div>
+            <span
+                ref={endsAtRef}
+                className="pt-ends-at"
+                aria-live="off"
+            />
         </div>
     );
 }
@@ -726,12 +1015,45 @@ function applyTimeLabel(
     currentTime: number,
     duration: number,
     labelRef: React.RefObject<HTMLSpanElement | null>,
+    intoRef?: React.RefObject<HTMLSpanElement | null>,
+    remainingRef?: React.RefObject<HTMLSpanElement | null>,
+    endsAtRef?: React.RefObject<HTMLSpanElement | null>,
 ) {
-    if (!labelRef.current) return;
     const totalIsLong = isFinite(duration) && duration >= 3600;
     const cur = formatTime(currentTime, totalIsLong);
     const tot = isFinite(duration) ? formatTime(duration, totalIsLong) : "0:00";
-    labelRef.current.textContent = `${cur} / ${tot}`;
+    if (labelRef.current) {
+        labelRef.current.textContent = `${cur} / ${tot}`;
+    }
+    if (intoRef?.current) {
+        intoRef.current.textContent = cur;
+    }
+    if (remainingRef?.current) {
+        const remainingSec = Math.max(0, (duration || 0) - currentTime);
+        remainingRef.current.textContent = `-${formatTime(remainingSec, totalIsLong)}`;
+    }
+    if (endsAtRef?.current) {
+        if (isFinite(duration) && duration > 0) {
+            const remainingSec = Math.max(0, duration - currentTime);
+            const end = new Date(Date.now() + remainingSec * 1000);
+            endsAtRef.current.textContent = `Ends at ${formatClock(end)}`;
+        } else {
+            endsAtRef.current.textContent = "";
+        }
+    }
+}
+
+// formatClock renders a Date in 12-hour h:mm AM/PM style (e.g.
+// "4:17pm"). Lower-case suffix matches the user-facing copy "ends
+// at 4:17pm" so it reads conversationally rather than like a system
+// clock readout.
+function formatClock(d: Date): string {
+    let h = d.getHours();
+    const m = d.getMinutes();
+    const suffix = h >= 12 ? "pm" : "am";
+    h = h % 12;
+    if (h === 0) h = 12;
+    return `${h}:${String(m).padStart(2, "0")}${suffix}`;
 }
 
 function formatTime(seconds: number, longForm: boolean): string {

@@ -46,7 +46,22 @@ type ResolvedRow struct {
 	// this; everything else stays false (terminal "loop back" UI
 	// on the kid side).
 	HasMore bool
-	ItemIDs []string
+	// SortMode signals to the post-fetch sort step what to do once
+	// full Item bodies are loaded. Only the tag / tag_fanout rows
+	// populate this; everything else leaves it empty and the post-
+	// fetch step is a no-op for them. Values: "name" (alphabetical
+	// by Item.Name), "random" (preserve resolver-shuffled order),
+	// "recently_added" (Item.DateCreated desc). Empty string =
+	// no post-fetch sort.
+	SortMode string
+	// MaxItems is the post-fetch cap applied AFTER applyPostFetchSort
+	// has run. The resolver overfetches when SortMode needs full Item
+	// bodies to make a correct cap decision (e.g. "name" needs Names
+	// to pick the alphabetically-first N; "recently_added" needs
+	// DateCreated to pick the most-recent N). 0 = no post-fetch cap;
+	// use ItemIDs as-is.
+	MaxItems int
+	ItemIDs  []string
 }
 
 // browseContext bundles everything the resolver functions need.
@@ -295,7 +310,12 @@ func resolveSingleTag(b *browseContext, row curation.LayoutRow, cfg map[string]a
 	if err != nil {
 		return nil, err
 	}
-	rawIDs, err := b.store.ListItemIDsByTag(b.ctx, tagID, hardMaxItems*2, 0)
+	// Pass 0 for "no limit" so the random shuffle / alphabetical sort
+	// considers the full tag, not just the most-recently-tagged 200.
+	// For tags larger than that ceiling (e.g. "Funny" with 269 items)
+	// a tight limit silently excludes the oldest taggings from
+	// selection entirely.
+	rawIDs, err := b.store.ListItemIDsByTag(b.ctx, tagID, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +325,19 @@ func resolveSingleTag(b *browseContext, row curation.LayoutRow, cfg map[string]a
 	}
 	sortMode := readStringConfig(cfg, "sort", "name")
 	visible = applyTagSort(b, sortMode, visible, row.ID)
-	return []ResolvedRow{newTagRow(row, *tag, tag.Name, "", capItems(visible, max))}, nil
+	// Overfetch when the cap decision depends on full Item bodies.
+	// "random" produced a uniform shuffle over the full visible set
+	// above, so the first max items are a valid sample - cap immediately.
+	// "name" + "recently_added" need Item.Name / DateCreated to pick
+	// the right N; defer the cap to post-fetch.
+	capLimit := max
+	if sortMode == "name" || sortMode == "recently_added" {
+		capLimit = hardMaxItems
+	}
+	rr := newTagRow(row, *tag, tag.Name, "", capItems(visible, capLimit))
+	rr.SortMode = sortMode
+	rr.MaxItems = max
+	return []ResolvedRow{rr}, nil
 }
 
 func resolveTagFanout(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
@@ -349,7 +381,9 @@ func resolveTagFanout(b *browseContext, row curation.LayoutRow, cfg map[string]a
 	}
 	out := make([]ResolvedRow, 0, len(picked))
 	for _, t := range picked {
-		rawIDs, err := b.store.ListItemIDsByTag(b.ctx, t.ID, hardMaxItems*2, 0)
+		// Unlimited so per-tag random / alpha sorts cover the full pool.
+		// See the matching note in resolveSingleTag.
+		rawIDs, err := b.store.ListItemIDsByTag(b.ctx, t.ID, 0, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -361,7 +395,14 @@ func resolveTagFanout(b *browseContext, row curation.LayoutRow, cfg map[string]a
 		if len(visible) == 0 {
 			continue
 		}
-		out = append(out, newTagRow(row, t.Tag, t.Name, fmt.Sprintf("Tag · %s", t.Name), capItems(visible, max)))
+		capLimit := max
+		if withinSort == "name" || withinSort == "recently_added" {
+			capLimit = hardMaxItems
+		}
+		rr := newTagRow(row, t.Tag, t.Name, fmt.Sprintf("Tag · %s", t.Name), capItems(visible, capLimit))
+		rr.SortMode = withinSort
+		rr.MaxItems = max
+		out = append(out, rr)
 	}
 	return out, nil
 }

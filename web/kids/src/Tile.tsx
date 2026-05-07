@@ -80,7 +80,14 @@ export default function Tile({
                 ) : (
                     <div className="tile-poster-placeholder">{item.Name}</div>
                 )}
-                {isSeries && <span className="tile-badge">TV</span>}
+                {isSeries && (
+                    <img
+                        src="/player/tv-show.png"
+                        alt=""
+                        className="tile-badge tile-badge-tv"
+                        aria-label="TV show"
+                    />
+                )}
                 {showProgress && progress > 1 && progress < 99 && (
                     <div
                         className="tile-progress"
@@ -89,7 +96,9 @@ export default function Tile({
                     />
                 )}
             </div>
-            <div className="tile-title">{item.Name}</div>
+            <div className="tile-title">
+                <span className="tile-title-text">{item.Name}</span>
+            </div>
         </button>
     );
 }

@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+    useCallback,
+    useEffect,
+    useRef,
+    useState,
+    type ReactNode,
+} from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowUUpLeft, Plus } from "@phosphor-icons/react";
 import {
@@ -14,8 +20,9 @@ import OverrideModal, { useLongPressUp } from "./OverrideModal";
 import MainMenuModal from "./MainMenuModal";
 import { scrollWindowToCenter, scrollWindowToTop } from "./smoothScroll";
 import Tile from "./Tile";
+import { consumeTabFocus, flagTabFocus, setHomeTab } from "./kidNav";
+import { useBrowseRowAnimator } from "./useBrowseRowAnimator";
 import { useProgressiveBack } from "./useProgressiveBack";
-import { shouldShowWatchMenu } from "./Watch";
 
 // Browse is the kid home (M8 #48). Renders a vertical stack of
 // horizontally-scrolling rows from /api/kids/browse. Each row's
@@ -68,14 +75,80 @@ type Focus =
 // focus when the kid pops back from /watch or /play).
 const LAST_FOCUSED_KEY = "jellybean.kids.browse.lastFocused";
 
+// sessionStorage cache for the most recent /api/kids/browse response.
+// Keyed by profileId (admin preview varies; bearer-auth path uses "kid").
+// On Back navigation from /watch or /play, react-router unmounts +
+// remounts Browse, which would otherwise fire a fresh /browse fetch
+// and show a 3-4s "Loading..." while the layout cache + Jellyfin
+// hits resolve. With sessionStorage primed, the initial render uses
+// the cached body and the user sees their previous state instantly;
+// the network fetch still runs in the background and replaces if
+// anything changed (stale-while-revalidate).
+const CACHE_KEY_PREFIX = "jellybean.kids.browse.cache.";
+function browseCacheKey(profileId: string | null): string {
+    return CACHE_KEY_PREFIX + (profileId ?? "kid");
+}
+function readBrowseCache(profileId: string | null): BrowseResponse | null {
+    try {
+        const raw = sessionStorage.getItem(browseCacheKey(profileId));
+        if (!raw) return null;
+        return JSON.parse(raw) as BrowseResponse;
+    } catch {
+        return null;
+    }
+}
+function writeBrowseCache(profileId: string | null, body: BrowseResponse) {
+    try {
+        sessionStorage.setItem(browseCacheKey(profileId), JSON.stringify(body));
+    } catch {
+        // Quota exceeded or storage disabled - ignore; the page still
+        // renders fine without the cache, just with the loading flash.
+    }
+}
+
+// findItemPosition returns the (row, col) of an item id in a browse
+// response, or null when the item isn't in any row. Used to seed
+// initial focus from cached data + LAST_FOCUSED_KEY.
+function findItemPosition(
+    data: BrowseResponse | null,
+    itemId: string | null,
+): { row: number; col: number } | null {
+    if (!data || !itemId) return null;
+    for (let r = 0; r < data.rows.length; r++) {
+        const c = data.rows[r].items.findIndex((it) => it.Id === itemId);
+        if (c >= 0) return { row: r, col: c };
+    }
+    return null;
+}
+function readLastFocusedId(): string | null {
+    try {
+        const raw = sessionStorage.getItem(LAST_FOCUSED_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as { itemId?: string };
+        return parsed.itemId ?? null;
+    } catch {
+        return null;
+    }
+}
+
 export default function Browse() {
     const nav = useNavigate();
     const [searchParams] = useSearchParams();
     const [session] = useState<Session | null>(() => getSession());
     const adminProfileId = searchParams.get("profileId");
-    const [data, setData] = useState<BrowseResponse | null>(null);
+    // Synchronously prime data + focus from sessionStorage so back-
+    // navigation lands instantly on the same tile the kid was on,
+    // without a loading flash or post-fetch focus animation.
+    const [data, setData] = useState<BrowseResponse | null>(() =>
+        readBrowseCache(adminProfileId),
+    );
     const [error, setError] = useState<string | null>(null);
-    const [focus, setFocus] = useState<Focus>({ kind: "tile", row: 0, col: 0 });
+    const [focus, setFocus] = useState<Focus>(() => {
+        const cached = readBrowseCache(adminProfileId);
+        const pos = findItemPosition(cached, readLastFocusedId());
+        if (pos) return { kind: "tile", row: pos.row, col: pos.col };
+        return { kind: "tile", row: 0, col: 0 };
+    });
     const tileRefs = useRef<Record<string, HTMLElement | null>>({});
     const [override, setOverride] = useState<
         { itemId: string; itemName: string } | null
@@ -111,6 +184,25 @@ export default function Browse() {
         }
     }, [session, adminProfileId, nav]);
 
+    // Stamp the kid's current home tab so /watch's Back knows where
+    // to send them. See kidNav.ts.
+    useEffect(() => {
+        setHomeTab("browse");
+    }, []);
+
+    // Tab-arrow navigation from /library lands here with the
+    // tabFocus flag set; consume on mount BEFORE the data-loaded
+    // effect runs so focus pins to the tab pill from the very first
+    // paint instead of flashing through a default tile focus.
+    const initialFocusSetRef = useRef(false);
+    useEffect(() => {
+        const slot = consumeTabFocus();
+        if (slot !== null) {
+            setFocus({ kind: "tab", index: slot });
+            initialFocusSetRef.current = true;
+        }
+    }, []);
+
     // Fetch on mount. Gated on having either a kid session or an
     // admin ?profileId - the auth gate above redirects to /login in
     // either-missing case, but without this guard we'd briefly
@@ -122,7 +214,13 @@ export default function Browse() {
                 "/api/kids/browse",
                 window.location.origin,
             );
-            if (!session && adminProfileId) {
+            // Always include adminProfileId when present, regardless
+            // of whether localStorage has a kid session. The server
+            // gives admin cookie auth priority over the bearer token
+            // (resolveKidsAuth), so a stale kid session doesn't help
+            // the admin preview path - it needs the profileId in the
+            // query string to know which profile to load.
+            if (adminProfileId) {
                 url.searchParams.set("profileId", adminProfileId);
             }
             // withAuthRetry: a single 401 retries once after 800ms
@@ -146,6 +244,7 @@ export default function Browse() {
             }
             const body: BrowseResponse = await res.json();
             setData(body);
+            writeBrowseCache(adminProfileId, body);
             setError(null);
         } catch (err) {
             setError(err instanceof Error ? err.message : "load failed");
@@ -162,9 +261,9 @@ export default function Browse() {
     //      Enter / click). When present and findable in the loaded
     //      rows, restore focus there - the kid pressed back from
     //      /watch or /play and expects to land where they came from.
-    //   2. Otherwise, focus the first tile of the favorites row (or
-    //      row 0 if there's no favorites row in the current layout).
-    const initialFocusSetRef = useRef(false);
+    //   2. Otherwise, focus the first tile of the first row in the
+    //      kid's layout. The default page-load entry is always (0,0)
+    //      regardless of which row type is at the top.
     useEffect(() => {
         if (initialFocusSetRef.current) return;
         if (!data || data.rows.length === 0) return;
@@ -189,10 +288,7 @@ export default function Browse() {
                 }
             }
         }
-        const favIdx = data.rows.findIndex((r) => r.type === "favorites");
-        const targetRow =
-            favIdx >= 0 && data.rows[favIdx].items.length > 0 ? favIdx : 0;
-        setFocus({ kind: "tile", row: targetRow, col: 0 });
+        setFocus({ kind: "tile", row: 0, col: 0 });
     }, [data]);
 
     // loadMoreForRow asks the server for more items for one row,
@@ -214,7 +310,7 @@ export default function Browse() {
                     window.location.origin,
                 );
                 url.searchParams.set("limit", String(targetLimit));
-                if (!session && adminProfileId) {
+                if (adminProfileId) {
                     url.searchParams.set("profileId", adminProfileId);
                 }
                 const res = await withAuthRetry(() =>
@@ -275,9 +371,9 @@ export default function Browse() {
         }
     }
 
-    // Progressive Back escape: anywhere off (tile 0,0) collapses there
-    // first. From (tile 0,0) the next back falls through to the WebView
-    // and exits the kid app.
+    // Progressive Back: anywhere on the page collapses focus up to
+    // the Browse pill in the top nav. From there, a second Back
+    // falls through to the WebView and exits the kid app.
     useProgressiveBack(
         useCallback(() => {
             if (menuOpen) {
@@ -288,12 +384,8 @@ export default function Browse() {
                 setOverride(null);
                 return true;
             }
-            if (focus.kind === "tab") {
-                setFocus({ kind: "tile", row: 0, col: 0 });
-                return true;
-            }
-            if (focus.kind === "tile" && (focus.row !== 0 || focus.col !== 0)) {
-                setFocus({ kind: "tile", row: 0, col: 0 });
+            if (focus.kind !== "tab" || focus.index !== 0) {
+                setFocus({ kind: "tab", index: 0 });
                 return true;
             }
             return false;
@@ -318,6 +410,13 @@ export default function Browse() {
     // row instead of resetting to 0. So row 1 col 3 -> down to row 2
     // -> right to row 2 col 5 -> up returns to row 1 col 3.
     const rowColMemoryRef = useRef<Map<number, number>>(new Map());
+    // Throttle for held-down arrow repeats. Manual taps go through
+    // immediately; OS-synthesized e.repeat events get rate-limited so
+    // the renderer + row animator have time to catch each step. At
+    // ~90ms minimum interval the kid still scrolls fast (~11 Hz)
+    // without state updates piling up faster than React can render.
+    const lastMoveRef = useRef(0);
+    const REPEAT_MIN_MS = 90;
     function onKey(e: KeyboardEvent) {
         if (!data) return;
         const rows = data.rows;
@@ -332,124 +431,159 @@ export default function Browse() {
             e.key === "ArrowDown" ||
             e.key === "Enter" ||
             e.key === " ";
-        if (isHandled) e.preventDefault();
-        if (focus.kind === "tile") {
-            const row = rows[focus.row];
-            if (!row) return;
-            // Effective row length includes the terminal button at
-            // col === items.length: "Load more" when row.hasMore is
-            // true, "Loop back to start" otherwise. So col can range
-            // from 0 to items.length inclusive.
-            const lastCol = row.items.length;
-            switch (e.key) {
-                case "ArrowRight":
-                    if (focus.col < lastCol) {
-                        setFocus({ kind: "tile", row: focus.row, col: focus.col + 1 });
-                    }
-                    return;
-                case "ArrowLeft":
-                    if (focus.col > 0) {
-                        setFocus({ kind: "tile", row: focus.row, col: focus.col - 1 });
-                    }
-                    return;
-                case "ArrowDown":
-                    // Row change restores the destination row's last
-                    // visited col (default 0). Save the current row's
-                    // col first so coming back lands on the right tile.
-                    if (focus.row < rows.length - 1) {
-                        rowColMemoryRef.current.set(focus.row, focus.col);
-                        const nextRow = focus.row + 1;
-                        const remembered =
-                            rowColMemoryRef.current.get(nextRow) ?? 0;
-                        const nextLen = rows[nextRow].items.length;
-                        const col = Math.min(
-                            remembered,
-                            Math.max(0, nextLen - 1),
-                        );
-                        setFocus({ kind: "tile", row: nextRow, col });
-                    }
-                    return;
-                case "ArrowUp":
-                    if (focus.row > 0) {
-                        rowColMemoryRef.current.set(focus.row, focus.col);
-                        const prevRow = focus.row - 1;
-                        const remembered =
-                            rowColMemoryRef.current.get(prevRow) ?? 0;
-                        const prevLen = rows[prevRow].items.length;
-                        const col = Math.min(
-                            remembered,
-                            Math.max(0, prevLen - 1),
-                        );
-                        setFocus({ kind: "tile", row: prevRow, col });
+        if (!isHandled) return;
+        e.preventDefault();
+
+        // Held-down repeat: drop events that arrive faster than
+        // REPEAT_MIN_MS. Manual presses (e.repeat=false) reset the
+        // window so the next held repeat doesn't suppress the very
+        // next manual tap.
+        if (e.repeat) {
+            const now = performance.now();
+            if (now - lastMoveRef.current < REPEAT_MIN_MS) return;
+            lastMoveRef.current = now;
+        } else {
+            lastMoveRef.current = performance.now();
+        }
+
+        const key = e.key;
+
+        // Enter / Space activate against the closure-captured focus.
+        // That matches what the kid sees on screen: if a render is
+        // queued behind a flurry of arrows, the visual focus is what
+        // they pressed against. Activations don't repeat, so this
+        // doesn't have the stale-state problem the arrows do.
+        if (key === "Enter" || key === " ") {
+            if (focus.kind === "tile") {
+                const row = rows[focus.row];
+                if (!row) return;
+                const lastCol = row.items.length;
+                if (focus.col === lastCol) {
+                    if (row.hasMore) {
+                        void loadMoreForRow(focus.row);
                     } else {
-                        rowColMemoryRef.current.set(focus.row, focus.col);
-                        lastTileRef.current = { row: focus.row, col: focus.col };
-                        setFocus({ kind: "tab", index: 0 });
+                        setFocus({ kind: "tile", row: focus.row, col: 0 });
                     }
                     return;
-                case "Enter":
-                case " ": {
-                    if (focus.col === lastCol) {
-                        // Terminal button. Load more when the server
-                        // says more exists; otherwise loop back to
-                        // the start of the same row.
-                        if (row.hasMore) {
-                            void loadMoreForRow(focus.row);
-                        } else {
-                            setFocus({
-                                kind: "tile",
-                                row: focus.row,
-                                col: 0,
-                            });
+                }
+                const item = row.items[focus.col];
+                if (item) {
+                    rememberLastFocused(item.Id);
+                    // Always land on /watch first - the interstitial
+                    // auto-pushes /play for items that have nothing
+                    // useful to show in the menu, but the /watch
+                    // history entry stays so Back from /play returns
+                    // here instead of skipping straight to /browse.
+                    nav(`/watch/${encodeURIComponent(item.Id)}${location.search}`);
+                }
+                return;
+            }
+            if (focus.kind === "tab") {
+                if (focus.index === 2) {
+                    setMenuOpen(true);
+                } else {
+                    const target = focus.index === 0 ? "browse" : "library";
+                    nav(tabHref(target, location.search));
+                }
+                return;
+            }
+            return;
+        }
+
+        // Arrows: functional setter so each press resolves against the
+        // latest committed focus, not the closure-captured one. Without
+        // this, two presses arriving before the next render both read
+        // the same stale focus and only one move sticks - the
+        // double-tap-only-moves-once symptom.
+        setFocus((prev) => {
+            if (prev.kind === "tile") {
+                const row = rows[prev.row];
+                if (!row) return prev;
+                const lastCol = row.items.length;
+                switch (key) {
+                    case "ArrowRight":
+                        return prev.col < lastCol
+                            ? { kind: "tile", row: prev.row, col: prev.col + 1 }
+                            : prev;
+                    case "ArrowLeft":
+                        return prev.col > 0
+                            ? { kind: "tile", row: prev.row, col: prev.col - 1 }
+                            : prev;
+                    case "ArrowDown":
+                        if (prev.row < rows.length - 1) {
+                            rowColMemoryRef.current.set(prev.row, prev.col);
+                            const nextRow = prev.row + 1;
+                            const remembered =
+                                rowColMemoryRef.current.get(nextRow) ?? 0;
+                            const nextLen = rows[nextRow].items.length;
+                            const col = Math.min(
+                                remembered,
+                                Math.max(0, nextLen - 1),
+                            );
+                            return { kind: "tile", row: nextRow, col };
                         }
-                        return;
-                    }
-                    const item = row.items[focus.col];
-                    if (item) {
-                        rememberLastFocused(item.Id);
-                        const target = shouldShowWatchMenu(item)
-                            ? `/watch/${encodeURIComponent(item.Id)}`
-                            : `/play/${encodeURIComponent(item.Id)}`;
-                        nav(`${target}${location.search}`);
-                    }
-                    return;
+                        return prev;
+                    case "ArrowUp":
+                        if (prev.row > 0) {
+                            rowColMemoryRef.current.set(prev.row, prev.col);
+                            const prevRow = prev.row - 1;
+                            const remembered =
+                                rowColMemoryRef.current.get(prevRow) ?? 0;
+                            const prevLen = rows[prevRow].items.length;
+                            const col = Math.min(
+                                remembered,
+                                Math.max(0, prevLen - 1),
+                            );
+                            return { kind: "tile", row: prevRow, col };
+                        }
+                        rowColMemoryRef.current.set(prev.row, prev.col);
+                        lastTileRef.current = { row: prev.row, col: prev.col };
+                        return { kind: "tab", index: 0 };
                 }
+                return prev;
             }
-        }
-        if (focus.kind === "tab") {
-            switch (e.key) {
-                case "ArrowDown":
-                    setFocus({ kind: "tile", ...lastTileRef.current });
-                    return;
-                case "ArrowLeft":
-                    if (focus.index > 0) {
-                        setFocus({ kind: "tab", index: focus.index - 1 });
-                    }
-                    return;
-                case "ArrowRight":
-                    if (focus.index < TAB_SLOT_COUNT - 1) {
-                        setFocus({ kind: "tab", index: focus.index + 1 });
-                    }
-                    return;
-                case "Enter":
-                case " ": {
-                    if (focus.index === 2) {
-                        setMenuOpen(true);
-                    } else {
-                        const target = focus.index === 0 ? "browse" : "library";
-                        nav(tabHref(target, location.search));
-                    }
-                    return;
+            if (prev.kind === "tab") {
+                switch (key) {
+                    case "ArrowDown":
+                        return { kind: "tile", ...lastTileRef.current };
+                    case "ArrowLeft":
+                        return prev.index > 0
+                            ? { kind: "tab", index: prev.index - 1 }
+                            : prev;
+                    case "ArrowRight":
+                        // From the Browse tab (slot 0), Right both
+                        // navigates to /library AND lands focus on
+                        // the Library tab. flagTabFocus carries the
+                        // intent across the page swap so the kid can
+                        // keep arrowing without re-establishing focus.
+                        if (prev.index === 0) {
+                            flagTabFocus(1);
+                            nav(`/library${location.search}`);
+                            return prev;
+                        }
+                        return prev.index < TAB_SLOT_COUNT - 1
+                            ? { kind: "tab", index: prev.index + 1 }
+                            : prev;
                 }
+                return prev;
             }
-        }
+            return prev;
+        });
     }
 
     // Focus DOM management. Vertical positioning uses the smoothScroll
-    // animator (window scroll). Horizontal positioning is pure CSS:
-    // each row's track is translated by `--track-col` * tile-advance
-    // so the focused tile sits at the cursor x. Track transitions
-    // smoothly between values courtesy of the CSS transition rule.
+    // animator (window scroll). Horizontal positioning is owned by
+    // useBrowseRowAnimator inside <AnimatedRowTrack> below: focus.col
+    // updates the row's targetCol prop, the animator eases its track
+    // toward that target on its own rAF loop. Decoupled from React's
+    // render so rapid D-pad presses stay smooth.
+    //
+    // The very first focus scroll after mount is instant (no
+    // animation) so a back-navigation with a primed cache lands
+    // immediately on the previously-focused tile rather than
+    // animating into place. Subsequent focus changes (kid moving the
+    // D-pad) use the smooth animator.
+    const didInitialFocusScroll = useRef(false);
     useEffect(() => {
         const k =
             focus.kind === "tile"
@@ -458,10 +592,28 @@ export default function Browse() {
         const el = tileRefs.current[k];
         if (!el) return;
         el.focus({ preventScroll: true });
-        if (focus.kind === "tab") {
-            scrollWindowToTop();
+        const isFirst = !didInitialFocusScroll.current;
+        didInitialFocusScroll.current = true;
+        // Vertical scroll target: tab + first content row pin to the
+        // top of the page; deeper rows center on the focused tile.
+        // Pinning row 0 to the top means the kid sees the tab pill +
+        // row 0 together, which matches the "you're at the start"
+        // mental model.
+        const pinToTop =
+            focus.kind === "tab" ||
+            (focus.kind === "tile" && focus.row === 0);
+        if (pinToTop) {
+            if (isFirst) window.scrollTo({ top: 0 });
+            else scrollWindowToTop();
         } else if (focus.kind === "tile") {
-            scrollWindowToCenter(el);
+            if (isFirst) {
+                const rect = el.getBoundingClientRect();
+                const elCenter = rect.top + window.scrollY + rect.height / 2;
+                const target = Math.max(0, elCenter - window.innerHeight / 2);
+                window.scrollTo({ top: target });
+            } else {
+                scrollWindowToCenter(el);
+            }
         }
     }, [focus]);
 
@@ -530,12 +682,12 @@ export default function Browse() {
                 onOpenMenu={() => setMenuOpen(true)}
             />
             {data.rows.map((row, rIdx) => {
-                // Each row's track is translated horizontally so the
-                // currently-focused tile sits at the cursor x. For
-                // inactive rows, use the remembered col (default 0)
-                // so they hold position when the kid arrows past.
-                // Pure CSS variable - the CSS rule on .browse-row-track
-                // computes translateX(-track-col * tile-advance).
+                // Each row's targetCol drives useBrowseRowAnimator:
+                // active row tracks the kid's focus.col, inactive rows
+                // hold their remembered col (default 0) so they don't
+                // drift when the kid arrows past. The animator on each
+                // row owns its own translateX; React just sets the
+                // target.
                 const trackCol =
                     focus.kind === "tile" && focus.row === rIdx
                         ? focus.col
@@ -551,14 +703,7 @@ export default function Browse() {
                             role="list"
                             aria-label={row.title}
                         >
-                            <div
-                                className="browse-row-track"
-                                style={
-                                    {
-                                        "--track-col": trackCol,
-                                    } as React.CSSProperties
-                                }
-                            >
+                            <AnimatedRowTrack targetCol={trackCol}>
                                 {row.items.map((item, cIdx) => {
                                     const key = `${rIdx}:${cIdx}`;
                                     const focused =
@@ -574,10 +719,7 @@ export default function Browse() {
                                             showProgress
                                             onClick={() => {
                                                 rememberLastFocused(item.Id);
-                                                const target = shouldShowWatchMenu(item)
-                                                    ? `/watch/${encodeURIComponent(item.Id)}`
-                                                    : `/play/${encodeURIComponent(item.Id)}`;
-                                                nav(`${target}${location.search}`);
+                                                nav(`/watch/${encodeURIComponent(item.Id)}${location.search}`);
                                             }}
                                             onFocus={() =>
                                                 setFocus({ kind: "tile", row: rIdx, col: cIdx })
@@ -622,7 +764,7 @@ export default function Browse() {
                                         ] = el)
                                     }
                                 />
-                            </div>
+                            </AnimatedRowTrack>
                         </div>
                     </section>
                 );
@@ -635,6 +777,32 @@ export default function Browse() {
                 />
             )}
             {menuOpen && <MainMenuModal onClose={() => setMenuOpen(false)} />}
+        </div>
+    );
+}
+
+// AnimatedRowTrack is the .browse-row-track div with an rAF-driven
+// horizontal scroll animator attached. The wrapper exists so the
+// hook can own a stable trackRef per row (React forbids hooks in
+// loops, so the .map can't call useBrowseRowAnimator inline).
+//
+// Each row mounts one of these; React reuses the same component
+// instance across re-renders thanks to the parent <section> being
+// keyed by row.rowId. The hook's effect only re-runs when targetCol
+// actually changes, so inactive rows are zero-cost across
+// rapid-press flurries on the active row.
+function AnimatedRowTrack({
+    targetCol,
+    children,
+}: {
+    targetCol: number;
+    children: ReactNode;
+}) {
+    const ref = useRef<HTMLDivElement | null>(null);
+    useBrowseRowAnimator(ref, targetCol);
+    return (
+        <div className="browse-row-track" ref={ref}>
+            {children}
         </div>
     );
 }
@@ -697,8 +865,8 @@ function TerminalTile({
         >
             <div className="tile-poster tile-terminal-face">
                 <Icon weight="bold" aria-hidden className="tile-terminal-icon" />
+                <span className="tile-terminal-label">{label}</span>
             </div>
-            <div className="tile-title tile-terminal-label">{label}</div>
         </button>
     );
 }

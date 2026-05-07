@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { getSession, hydrateAuthFromBridge } from "./auth";
+import { startPerfMonitor } from "./perfMode";
 import Browse from "./Browse";
 import KidOverlays from "./KidOverlays";
 import Library from "./Library";
@@ -60,12 +61,69 @@ if ("scrollRestoration" in window.history) {
     window.history.scrollRestoration = "manual";
 }
 
+// Desktop-keyboard parity for the Android remote. Two pieces:
+//   1. preventDefault on arrow keys app-wide (capture phase) so the
+//      browser never scrolls the page in response. Per-page handlers
+//      already do this, but a window listener at capture phase is the
+//      defense-in-depth: race conditions between mount and a fast
+//      keypress can otherwise let one or two arrows slip through and
+//      scroll the page.
+//   2. Backspace fires the back handler. Chrome stopped mapping
+//      Backspace to history.back years ago; without this shim, the
+//      key does nothing in the kid app on desktop. The Android
+//      remote BACK is intercepted at the Activity layer
+//      (window.__jellybeanBack) and never reaches keydown, so this
+//      desktop shim doesn't double-fire there.
+//
+// Skip when an input/textarea/contenteditable is focused (no such
+// elements in the kid client today, but a search field could land
+// here later).
+window.addEventListener(
+    "keydown",
+    (e) => {
+        const target = e.target as HTMLElement | null;
+        const isTextInput =
+            target &&
+            (target.tagName === "INPUT" ||
+                target.tagName === "TEXTAREA" ||
+                target.isContentEditable);
+        if (isTextInput) return;
+        if (
+            e.key === "ArrowUp" ||
+            e.key === "ArrowDown" ||
+            e.key === "ArrowLeft" ||
+            e.key === "ArrowRight"
+        ) {
+            e.preventDefault();
+            return;
+        }
+        if (e.key === "Backspace") {
+            const onShell = typeof (
+                window as unknown as { JellybeanShell?: unknown }
+            ).JellybeanShell !== "undefined";
+            if (onShell) return; // Activity owns BACK on Android
+            e.preventDefault();
+            const handler = window.__jellybeanBack;
+            if (handler && handler()) return;
+            // No page handler consumed it - fall through to history.
+            window.history.back();
+        }
+    },
+    { capture: true },
+);
+
 // Replay the kid auth blob from Android SharedPreferences back into
 // localStorage when localStorage is empty but the bridge has a blob
 // (i.e. WebView storage was pruned but the APK still has the
 // session). Synchronous JNI call - React's first render below sees
 // the rehydrated localStorage. No-op in browser.
 hydrateAuthFromBridge();
+
+// Stamp body[data-perf] from device heuristics + a brief FPS
+// sample. CSS + JS animators scale their timings against this so
+// slow Android TVs get snappier (shorter) transitions while fast
+// devices keep the polished defaults.
+startPerfMonitor();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>

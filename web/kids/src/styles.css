@@ -1,19 +1,64 @@
 :root {
-    --bg: #000000;
-    --fg: #f0f0f0;
-    --muted: #888888;
-    --card: #16181c;
-    --border: #2a2c30;
-    /* Brand palette (shared with admin app). Periwinkle is the primary
-       accent; pollen for warm highlights; emerald + rose for success +
-       error; lavender for soft surfaces. */
-    --accent: #8084ff; /* soft-periwinkle */
+    /* Kid client default theme ("daytime"). Bright, warm off-white
+       surface; candy-curated palette tuned so adjacent rows don't
+       fight each other when stacked vertically. NOT pure RGB neon.
+       Themes override these tokens via body[data-theme="..."] so
+       every consuming rule auto-themes. M13 modes (bedtime, morning,
+       focus) plug in here. */
+
+    /* Surface tokens. */
+    --bg: #faf6ee;          /* warm off-white */
+    --fg: #20162e;          /* deep aubergine for body text */
+    --muted: #6e6b7a;       /* secondary copy */
+    --card: #ffffff;        /* surfaces over the page bg */
+    --border: rgba(32, 22, 46, 0.14);
+    --shadow-row: 0 6px 18px rgba(32, 22, 46, 0.18),
+                  0 2px 4px rgba(32, 22, 46, 0.10);
+    --shadow-tile: 0 8px 22px rgba(32, 22, 46, 0.22);
+
+    /* Page-level decorative bg. Browse pins the bg to surface; library
+       overrides with a vertical rainbow. Themes can swap either or
+       both - bedtime uses a midnight gradient on .library AND a
+       deep-night fade on body. */
+    --page-bg: var(--bg);
+    --library-bg: linear-gradient(
+        180deg,
+        #E81819 0%,
+        #FA8943 14%,
+        #FAFA49 28%,
+        #56CA5E 43%,
+        #18BFC7 57%,
+        #4F8AF7 72%,
+        #C438D7 86%,
+        #FF6EAA 100%
+    );
+    --library-card-bg: rgba(255, 255, 255, 0.94);
+
+    /* Browse-row palette. Each .browse-row picks --row-bg-N via
+       nth-child cycling so colors are stable across re-renders.
+       Subtle 135deg gradient gives dimension. row-fg-N is the text
+       color that reads on that bg (yellow needs dark text). */
+    --row-bg-1: linear-gradient(135deg, #E81819 0%, #B81212 100%);
+    --row-bg-2: linear-gradient(135deg, #FA8943 0%, #DB6D24 100%);
+    --row-bg-3: linear-gradient(135deg, #FAFA49 0%, #D6D634 100%);
+    --row-bg-4: linear-gradient(135deg, #56CA5E 0%, #379C40 100%);
+    --row-bg-5: linear-gradient(135deg, #18BFC7 0%, #0E91A3 100%);
+    --row-bg-6: linear-gradient(135deg, #4F8AF7 0%, #2E63D1 100%);
+    --row-bg-7: linear-gradient(135deg, #C438D7 0%, #921FA8 100%);
+    --row-bg-8: linear-gradient(135deg, #FF6EAA 0%, #E04887 100%);
+
+    --row-fg-default: #ffffff;
+    --row-fg-3: #20162e;     /* yellow row */
+
+    /* Action accent. Hot purple pops against the warm bg without
+       fighting the row palette. */
+    --accent: #C438D7;
     --accent-fg: #ffffff;
-    --accent-warm: #ffd166; /* golden-pollen */
-    --accent-warm-fg: #1a1422;
-    --success: #06d6a0; /* emerald */
-    --error: #e55381; /* blush-rose */
-    --accent-soft: #ffe4fa; /* lavender-veil */
+    --accent-warm: #FA8943;
+    --accent-warm-fg: #20162e;
+    --success: #56CA5E;
+    --error:   #E81819;
+    --accent-soft: #ffe4fa;
 
     /* Browse cursor + tile metrics. Tunable: bump --browse-cursor-x
        to peek more of the previous tile. With tile-width=180px +
@@ -21,9 +66,75 @@
        5rem (80px) gives ~33% peek of the previous tile when the row
        has scrolled. */
     --browse-tile-width: 180px;
-    --browse-tile-gap: 1.4rem;
+    --browse-tile-gap: 1.9rem;
     --browse-tile-advance: calc(var(--browse-tile-width) + var(--browse-tile-gap));
     --browse-cursor-x: 5rem;
+
+    /* Motion durations. perfMode.ts stamps body[data-perf="slow"]
+       on cheap WebView builds (low FPS detected); the rule below
+       cuts these roughly in half so transitions complete in fewer
+       frames. JS animators (smoothScroll, useBrowseRowAnimator)
+       read getPerfMode() to bump their ease constants similarly. */
+    --motion-quick: 120ms;
+    --motion-mid: 200ms;
+    --motion-slow: 320ms;
+}
+
+body[data-perf="slow"] {
+    --motion-quick: 70ms;
+    --motion-mid: 110ms;
+    --motion-slow: 180ms;
+}
+
+/* Bedtime theme. Midnight blue → deep purple gradient; muted accents;
+   subtler text. M13 will toggle data-theme="bedtime" on <body>; for
+   now any UI exercising the theme infra (`document.body.dataset.theme
+   = "bedtime"` from devtools) will pick it up. */
+body[data-theme="bedtime"] {
+    --bg: #0E1132;
+    --fg: #d8d4ea;
+    --muted: #8a86a3;
+    --card: rgba(255, 255, 255, 0.06);
+    --border: rgba(216, 212, 234, 0.16);
+    --shadow-row: 0 4px 14px rgba(0, 0, 0, 0.45);
+    --shadow-tile: 0 6px 18px rgba(0, 0, 0, 0.55);
+
+    --page-bg: linear-gradient(
+        180deg,
+        #0B0E2A 0%,
+        #1A1245 50%,
+        #2A1B4A 100%
+    );
+    --library-bg: linear-gradient(
+        180deg,
+        #0B0E2A 0%,
+        #1A1245 30%,
+        #2D1F5C 60%,
+        #1A1245 100%
+    );
+    --library-card-bg: rgba(20, 17, 50, 0.78);
+
+    /* Bedtime rows are dim and indigo-leaning so the page reads
+       quiet. Same N=8 cycle so existing nth-child rules just work. */
+    --row-bg-1: linear-gradient(135deg, #1B1F4A 0%, #0E1132 100%);
+    --row-bg-2: linear-gradient(135deg, #2A1F5C 0%, #1A1245 100%);
+    --row-bg-3: linear-gradient(135deg, #1F2D5C 0%, #0F1B40 100%);
+    --row-bg-4: linear-gradient(135deg, #1F4A4F 0%, #0E2D31 100%);
+    --row-bg-5: linear-gradient(135deg, #2D2D5C 0%, #1A1A40 100%);
+    --row-bg-6: linear-gradient(135deg, #3A1F5C 0%, #220F40 100%);
+    --row-bg-7: linear-gradient(135deg, #4A1F45 0%, #2D0F2D 100%);
+    --row-bg-8: linear-gradient(135deg, #1F2D4A 0%, #0F1B2D 100%);
+
+    --row-fg-default: #d8d4ea;
+    --row-fg-3: #d8d4ea;     /* no high-contrast row in bedtime */
+
+    --accent: #9C7BFF;
+    --accent-fg: #0E1132;
+    --accent-warm: #FFC078;
+    --accent-warm-fg: #0E1132;
+    --success: #6FBF8C;
+    --error:   #E08585;
+    --accent-soft: #2A1F5C;
 }
 
 /* Note: NOT setting `scroll-behavior: smooth` on html. Browser-native
@@ -33,9 +144,39 @@
 
 body {
     margin: 0;
-    background: var(--bg);
+    background: var(--page-bg);
     color: var(--fg);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    /* Body font: Cause - a friendly expressive sans for kid copy.
+       Falls back to system fonts if the Google Fonts CDN fetch
+       fails or is still in flight. Title-class elements override
+       to DynaPuff via the rule below. */
+    font-family: "Cause", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, sans-serif;
+    /* Cover the viewport so themes' page gradients fill on short
+       pages too (login, error states). */
+    min-height: 100vh;
+}
+
+/* DynaPuff for section / row / hero titles - bubble-y display font
+   that matches the playful, colorful kid vibe. The selectors below
+   cover every place a "title" appears: row titles in browse,
+   watch-menu hero, player header, library headings. Generic h1/h2
+   default to DynaPuff so any new heading we add picks it up. */
+h1,
+h2,
+.browse-row-title,
+.row-title,
+.library-header h1,
+.watch-hero-text h1,
+.play-titles h1,
+.kids-empty h1,
+.alpha-picker-title,
+.kids-menu-title {
+    font-family: "DynaPuff", "Cause", -apple-system, BlinkMacSystemFont,
+        "Segoe UI", Roboto, sans-serif;
+    /* DynaPuff has a slightly tighter natural line-height; loosen
+       it back so multi-line titles don't collide. */
+    line-height: 1.2;
 }
 
 .screen {
@@ -152,7 +293,7 @@ a,
     flex-direction: column;
     align-items: center;
     gap: 0.75rem;
-    transition: transform 120ms ease;
+    transition: transform var(--motion-quick) ease;
     margin: 0;
 }
 
@@ -203,9 +344,20 @@ a,
 }
 
 .library {
+    /* The library page sits on top of an "infinite" rainbow gradient
+       (--library-bg). Bedtime + other themes redefine that token to
+       a quiet midnight gradient. The page bg is set on the .library
+       container (not body) so it scales with content height -
+       scrolling further reveals more of the gradient rather than
+       repeating. */
     padding: 1.5rem 2rem 4rem;
     max-width: 1600px;
     margin: 0 auto;
+    min-height: 100vh;
+    background: var(--library-bg);
+    /* Soften the saturation so cards on top still read. The bg
+       gradient is the decoration; the content stays primary. */
+    background-blend-mode: lighten;
 }
 
 /* Banner shown only when previewing the kids client from the admin app
@@ -298,24 +450,28 @@ a,
 .filter-row {
     display: flex;
     gap: 0.75rem;
-    margin: 0.5rem 0 1.5rem;
+    align-items: center;
+    /* No top/bottom margin: the row now lives inline with the search
+       bar inside .library-controls, which owns the spacing below. */
 }
 
 .filter-pill {
-    background: #222;
-    color: #ddd;
-    border: 2px solid transparent;
+    background: var(--card);
+    color: var(--fg);
+    border: 2px solid var(--border);
     border-radius: 999px;
     padding: 0.5rem 1.25rem;
     font-size: 1rem;
     font-weight: 600;
     cursor: pointer;
     transition: all 100ms ease;
+    box-shadow: 0 2px 6px rgba(32, 22, 46, 0.10);
 }
 
 .filter-pill.active {
     background: var(--accent);
     color: var(--accent-fg);
+    border-color: var(--accent);
 }
 
 .filter-pill.focused,
@@ -379,11 +535,21 @@ a,
     margin: 0;
     cursor: pointer;
     color: inherit;
+    /* `<button>` elements default to the UA system font and don't
+       inherit body's font-family. Tile is a button so we have to
+       restate inherit here for the title's Cause font to land. */
+    font-family: inherit;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    transition: transform 120ms ease;
-    text-align: left;
+    /* No dim on unselected tiles - it made the page feel flat. The
+       focused tile reads as selected via scale + bright white outline
+       below. */
+    transition: transform var(--motion-quick) ease;
+    /* Center poster titles under each tile - reads more like a
+       caption than a left-aligned label, fits the playful kid
+       look. */
+    text-align: center;
 }
 
 .tile-cw,
@@ -404,8 +570,8 @@ a,
 .tile.focused,
 .tile:focus {
     outline: none;
-    transform: scale(1.08);
-    /* Lift the focused tile above neighbors so its zoom + glow paint
+    transform: scale(1.12);
+    /* Lift the focused tile above neighbors so its zoom + halo paint
        on top of adjacent tile borders. */
     z-index: 2;
     position: relative;
@@ -413,12 +579,39 @@ a,
 
 .tile.focused .tile-poster,
 .tile:focus .tile-poster {
-    box-shadow: 0 0 0 4px var(--accent);
+    /* Nested-card frame:
+         outer container = .tile-poster with 4px padding +
+           transparent bg (rainbow shows through) + 12px radius.
+         border = 2px white ring just outside the outer container,
+           rendered via box-shadow.
+         inner content = the <img>, with its own smaller 6px radius
+           (rule below). The 4px padding is the visible gap between
+           the inner poster and the white ring.
+       box-sizing: border-box keeps the outer box dimensions stable
+       (180x270) so adding padding doesn't shift adjacent tiles. */
+    padding: 5px;
+    background-color: transparent;
+    /* Outer radius generous, inner radius almost matches it (outer
+       - padding) for that soft "frame around content" look. The
+       inner is intentionally a touch tighter than (outer - padding)
+       so the radii visibly nest rather than feeling like one
+       continuous curve. */
+    border-radius: 20px;
+    box-shadow:
+        0 0 0 4px #ffffff,
+        0 10px 26px rgba(0, 0, 0, 0.32);
+}
+.tile.focused .tile-poster img,
+.tile:focus .tile-poster img {
+    border-radius: 14px;
 }
 
 .tile.focused .tile-title,
 .tile:focus .tile-title {
-    color: #fff;
+    /* Bump weight on focus instead of forcing white text - the
+       parent's color (row fg or page fg) already provides the right
+       contrast for whichever theme is active. */
+    font-weight: 700;
 }
 
 /* Continue-watching / browse-row "progress" bar overlay on the poster. */
@@ -436,9 +629,11 @@ a,
     position: relative;
     aspect-ratio: 2 / 3;
     background: #1a1a1a;
-    border-radius: 6px;
+    border-radius: 20px;
     overflow: hidden;
-    transition: box-shadow 120ms ease;
+    box-sizing: border-box;
+    transition: box-shadow 120ms ease, padding 120ms ease,
+        border-radius 120ms ease, background-color 120ms ease;
 }
 
 .tile-poster img {
@@ -446,6 +641,10 @@ a,
     height: 100%;
     object-fit: cover;
     display: block;
+    /* Inner radius defaults to match the outer; focus state below
+       gives the inner img a smaller radius so the nested-card look
+       reads ("frame around the content"). */
+    border-radius: inherit;
 }
 
 .tile-poster-placeholder {
@@ -463,30 +662,71 @@ a,
     position: absolute;
     top: 8px;
     right: 8px;
-    background: rgba(0, 0, 0, 0.75);
-    color: var(--accent);
-    font-size: 0.7rem;
-    font-weight: 700;
-    padding: 2px 6px;
-    border-radius: 3px;
-    letter-spacing: 0.05em;
+}
+/* TV-show indicator: tv-show.png from /public, sized down + faded
+   so it whispers "this is a series" without competing with the
+   poster art. The selector beats the more general `.tile-poster
+   img { width: 100%; height: 100% }` rule (which would otherwise
+   inflate the badge to fill the poster). */
+.tile-poster img.tile-badge-tv {
+    width: 22px;
+    height: 22px;
+    opacity: 0.55;
+    object-fit: contain;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
+    border-radius: 0;
 }
 
 .tile-title {
-    font-size: 0.95rem;
-    font-weight: 500;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    /* Outer wrapper: holds font + color, no overflow clip so the
+       inner span's text-shadow can extend past the line-box. The
+       line-clamp + ellipsis live on .tile-title-text below. */
+    font-family: "Cause", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, sans-serif;
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: inherit;
+    position: relative;
+    z-index: 1;
+}
+.tile-title-text {
+    /* Truncate to 2 lines with ellipsis. overflow:hidden is
+       required by -webkit-line-clamp; isolated inside this inner
+       span so the parent .tile-title's shadow render isn't
+       clipped against the line-box bottom. */
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* Library grid sits on the rainbow page bg; tiles have no row card
+   behind them, so titles use the page-level --fg token (dark on the
+   default warm-cream surface, light on bedtime). */
+.library .tile,
+.library-cw-scroll .tile {
+    color: var(--fg);
 }
 
 .play-screen {
     background: #000;
-    min-height: 100vh;
-    /* Anchor for the bottom-anchored .player-transport (absolute). */
+    /* Pin to exactly the viewport so absolute-positioned overlays
+       (header, transport) anchor against a fixed-size box. min-height
+       lets the line-box around the inline <video> push the parent past
+       100vh, and combined with no overflow:hidden, the WebView would
+       auto-scroll to follow focus when the transport slid offscreen,
+       leaving a gray strip at the bottom on movies. */
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
     position: relative;
+}
+
+/* Force the HlsVideo's <video> child to block layout. Default <video>
+   display is inline, which adds a baseline descender gap below and
+   makes the parent slightly taller than the video itself. */
+.play-screen video {
+    display: block;
 }
 
 .play-header {
@@ -567,6 +807,36 @@ a,
     color: #aaa;
     font-size: 0.8rem;
     letter-spacing: 0.05em;
+}
+
+/* Favorite heart in the player header. Sits right after the title
+   block (and before the quality pill) so the kid can favorite mid-
+   playback without leaving the player. Empty outline when not
+   favorited; filled blush-rose when favorited - same vocabulary as
+   the watch-menu heart. */
+.play-fav {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    color: #cfd0e8;
+    border: 0;
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 160ms ease, color 160ms ease,
+        transform 120ms ease;
+}
+.play-fav.active {
+    color: var(--error);
+}
+.play-fav:focus,
+.play-fav:hover {
+    outline: none;
+    background: rgba(255, 255, 255, 0.18);
+    transform: scale(1.04);
 }
 
 /* M-AT debug pill: shows the negotiated playback path + bitrate cap
@@ -796,8 +1066,35 @@ a,
     font-variant-numeric: tabular-nums;
     font-size: 1rem;
     color: rgba(255, 255, 255, 0.85);
-    min-width: 9ch;
+    min-width: 6ch;
+}
+.pt-time-into {
     text-align: right;
+}
+.pt-time-remaining {
+    text-align: left;
+    color: rgba(255, 255, 255, 0.7);
+}
+/* Legacy combined label kept in the DOM as an aria-hidden mirror so
+   any existing inspector bookmarks still find it. Visible scrubber
+   labels are pt-time-into and pt-time-remaining. */
+.pt-time-combined {
+    display: none;
+}
+
+/* Wall-clock end time, bottom-right of the player transport.
+   Anchored absolute against the .player-transport container so it
+   tracks the show/hide slide of the rest of the chrome but stays
+   off the buttons row. */
+.pt-ends-at {
+    position: absolute;
+    right: 2rem;
+    bottom: 0.85rem;
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    color: rgba(255, 255, 255, 0.7);
+    letter-spacing: 0.02em;
+    pointer-events: none;
 }
 
 .pt-buttons {
@@ -858,42 +1155,84 @@ a,
 }
 .kids-tabpill-tabs {
     display: flex;
-    gap: 0.75rem;
+    gap: 0.5rem;
     justify-content: center;
+    /* The active-tab background animates by transitioning bg-color
+       on each .kids-tabpill-btn rather than a separate sliding
+       indicator element - simpler and works with variable-width
+       buttons (Browse / Library label widths differ). */
 }
 .kids-tabpill-side {
     display: flex;
     justify-content: flex-end;
 }
 .kids-tabpill-btn {
-    background: #222;
-    color: #ddd;
-    border: 2px solid transparent;
+    background: rgba(255, 255, 255, 0.55);
+    color: var(--fg);
+    border: 3px solid transparent;
     border-radius: 999px;
-    padding: 0.55rem 1.6rem;
-    font-size: 1.1rem;
-    font-weight: 600;
+    padding: 0.55rem 1.4rem 0.55rem 0.65rem;
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
     cursor: pointer;
-    transition: background 100ms ease, color 100ms ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    box-shadow: 0 4px 14px rgba(32, 22, 46, 0.12);
+    transition: background-color 220ms ease,
+                color 220ms ease,
+                transform 220ms ease,
+                box-shadow 220ms ease,
+                border-color 120ms ease;
 }
 .kids-tabpill-btn.active {
     background: var(--accent);
     color: var(--accent-fg);
+    transform: scale(1.04);
+    box-shadow: 0 8px 22px rgba(196, 56, 215, 0.35);
 }
 .kids-tabpill-btn:focus,
 .kids-tabpill-btn.focused {
     outline: none;
-    border-color: #fff;
+    border-color: #ffffff;
+    box-shadow: 0 0 0 4px rgba(196, 56, 215, 0.45),
+                0 8px 22px rgba(32, 22, 46, 0.18);
+}
+.kids-tabpill-icon {
+    width: 1.6em;
+    height: 1.6em;
+    flex-shrink: 0;
+    border-radius: 50%;
+    padding: 0.18em;
+    background: rgba(255, 255, 255, 0.85);
+    /* Per-tab tint so each icon reads as its own colored badge -
+       Browse=warm orange/red sun-house, Library=teal-on-cream books. */
+}
+.kids-tabpill-icon-browse {
+    color: #FA8943;
+    background: linear-gradient(135deg, #FFE0CB 0%, #FFD7A0 100%);
+}
+.kids-tabpill-icon-library {
+    color: #4F8AF7;
+    background: linear-gradient(135deg, #DDEBFF 0%, #B7D4FF 100%);
+}
+.kids-tabpill-btn.active .kids-tabpill-icon {
+    background: rgba(255, 255, 255, 0.95);
 }
 
 /* Right-side Menu button. Renders as the bean icon by default; when
    focused it expands into a pill with "Menu" text + accent fill. */
 .kids-tabpill-menu {
-    background: #222;
+    /* Default state: bare logo, no background pill. The bean PNG has
+       its own opaque art so it reads on any backdrop without
+       chrome. The pill returns only when focused / expanded so the
+       focus ring + label have a surface to live on. */
+    background: transparent;
     color: #ddd;
     border: 2px solid transparent;
     border-radius: 999px;
-    padding: 0.35rem 0.65rem;
+    padding: 0.15rem 0.25rem;
     display: inline-flex;
     align-items: center;
     gap: 0;
@@ -905,8 +1244,8 @@ a,
         padding 120ms ease;
 }
 .kids-tabpill-menu-icon {
-    width: 28px;
-    height: 28px;
+    width: 44px;
+    height: 44px;
     border-radius: 50%;
     object-fit: cover;
     /* No background - the bean PNG already has its own opaque art. */
@@ -1008,30 +1347,151 @@ a,
     text-align: right;
 }
 
-/* M8: Browse page - vertical stack of horizontal rows. */
+/* M8: Browse page - vertical stack of horizontal rows over a
+   saturated rainbow surface. The bg is the playful canvas the user
+   asked for: deep palette colors blended via overlapping radial
+   blobs on top of a diagonal rainbow band, all scrolling WITH the
+   content (not background-attachment: fixed) and tiling seamlessly.
+   The rainbow band uses repeating-linear-gradient with start =
+   end stop so each cycle butts cleanly against the next. */
 .browse {
-    padding: 1.25rem;
+    /* Zero horizontal padding so rows clip flush at the screen
+       edges - tiles that get cut off scroll under the literal
+       viewport boundary instead of leaving a colored gap between
+       the poster and the screen. Vertical padding stays for top /
+       bottom breathing room. */
+    padding: 1.25rem 0;
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    position: relative;
+    min-height: 100vh;
+    color: #ffffff;
+    background:
+        /* Five circular blobs in palette colors. Radii in vw so the
+           blobs stay round regardless of bg-size or aspect; each
+           layer's bg-size + repeat-y cycles it vertically at a
+           different rate. Centered at 50% Y inside the tile so the
+           transparent edge wraps cleanly across tile boundaries. */
+        radial-gradient(
+            circle 32vw at 25% 50%,
+            rgba(255, 255, 255, 0.55) 0%,
+            transparent 60%
+        ),
+        radial-gradient(
+            circle 30vw at 78% 50%,
+            rgba(255, 110, 170, 0.65) 0%,
+            transparent 60%
+        ),
+        radial-gradient(
+            circle 28vw at 18% 50%,
+            rgba(250, 250, 73, 0.55) 0%,
+            transparent 60%
+        ),
+        radial-gradient(
+            circle 30vw at 88% 50%,
+            rgba(255, 255, 255, 0.50) 0%,
+            transparent 60%
+        ),
+        radial-gradient(
+            circle 26vw at 50% 50%,
+            rgba(255, 200, 220, 0.55) 0%,
+            transparent 60%
+        ),
+        /* Diagonal rainbow base. repeating-linear-gradient with
+           pixel stops repeats NATURALLY along its 155° axis - no
+           bg-size, no repeat-y, just one infinite vector. There's
+           no tile boundary to mismatch, so the diagonal wraps
+           seamlessly forever. The cycle length (1500px along the
+           gradient axis) maps to roughly 600-700px of vertical
+           scroll per full color cycle. */
+        repeating-linear-gradient(
+            155deg,
+            #E81819 0,
+            #FF6EAA 188px,
+            #C438D7 376px,
+            #4F8AF7 564px,
+            #18BFC7 752px,
+            #56CA5E 940px,
+            #FAFA49 1128px,
+            #FA8943 1316px,
+            #E81819 1500px
+        );
+    background-size:
+        auto 90vh,
+        auto 130vh,
+        auto 170vh,
+        auto 210vh,
+        auto 260vh,
+        auto auto;
+    background-repeat:
+        repeat-y,
+        repeat-y,
+        repeat-y,
+        repeat-y,
+        repeat-y,
+        repeat;
+    /* Screen blend lightens the blobs over the rainbow base instead
+       of multiplying. Avoids muddy brown / gray where complementary
+       colors overlap (red+green, orange+blue). The base layer
+       itself stays normal so the rainbow paints at full saturation. */
+    background-blend-mode: screen, screen, screen, screen, screen, normal;
+}
+/* Browse content reads in white on the saturated bg. Heavier text
+   shadows than a typical UI - the bg is busy enough that subtle
+   shadows wash out and the white text starts to feel flat against
+   busy color zones. The two-stop shadow (a near + a far) keeps
+   edges crisp while spreading legibility into a soft halo. */
+.browse .browse-row-title {
+    color: #ffffff;
+    text-shadow:
+        0 2px 4px rgba(0, 0, 0, 0.55),
+        0 4px 14px rgba(0, 0, 0, 0.45);
+}
+.browse .tile-title {
+    color: #ffffff;
+    text-shadow:
+        0 1px 3px rgba(0, 0, 0, 0.65),
+        0 3px 8px rgba(0, 0, 0, 0.45);
+}
+.browse .browse-row-icon {
+    color: #ffffff;
+    /* Match the row title's shadow as a drop-shadow filter so the
+       icon shape (not just the text) gets the same lift. */
+    filter:
+        drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55))
+        drop-shadow(0 4px 14px rgba(0, 0, 0, 0.45));
 }
 .browse-row-icon {
     width: 1.1em;
     height: 1.1em;
     margin-right: 0.45em;
-    color: #ff6680;
+    /* Color inherits from .browse-row so it matches the row's
+       theme-aware fg (white on most rows, dark on yellow). */
     vertical-align: -0.15em;
 }
 
+/* Rows are transparent - the colorful surface lives on .browse
+   (rainbow + blob bg). Earlier draft put per-row colored bands
+   here; that fought with the page-level decoration and made
+   adjacent rows feel like discrete posters rather than a single
+   playful canvas. */
 .browse-row {
-    margin-bottom: 0.5rem;
+    margin: 0 0 0.5rem;
+    padding: 0;
 }
 .browse-row-title {
-    font-size: 1.3rem;
-    margin: 0.25rem 0 0.6rem;
-    /* Align the title with the cursor x so it sits visually above
-       the focused tile (selected element is always at this offset). */
+    font-size: 2rem;
+    font-weight: 700;
+    margin: 0.9rem 0 0.6rem;
+    color: var(--fg);
     padding-left: var(--browse-cursor-x);
+    /* Subtle text shadow so titles read on the watercolor blobs
+       without a heavy chrome bar behind them. */
+    text-shadow: 0 1px 4px rgba(255, 255, 255, 0.6);
+}
+.browse-row-icon {
+    color: var(--accent);
 }
 /* Browse rows: fixed-cursor layout. The selected tile always sits
    at `var(--browse-cursor-x)` from the left edge of the page; the
@@ -1043,25 +1503,38 @@ a,
    Right peek comes for free - tiles past the focused one render
    to the right and overflow into the row container's right edge. */
 .browse-row-items {
-    overflow: hidden;
+    /* overflow-x clips the horizontal track (so off-screen tiles
+       don't paint past the row edge), but overflow-y stays visible
+       so the focused tile's scale + white selection ring can bleed
+       above and below the row without getting clipped. `clip` is
+       the modern equivalent of `hidden` that allows mixed-axis
+       behavior - hidden on both axes used to force a single
+       formatting context that vertical content couldn't escape. */
+    overflow-x: clip;
+    overflow-y: visible;
     /* Padding-left provides the space for the cursor offset. The
        track inside starts at this offset; translating it by
-       -col * tile-advance puts col N at the cursor. */
-    padding: 1rem 0 1.5rem var(--browse-cursor-x);
-    /* contain: layout - layout isolation only, NO paint clipping. */
-    contain: layout;
+       -col * tile-advance puts col N at the cursor. Top + bottom
+       padding gives the focused tile (scale 1.12 + 9px white ring)
+       enough headroom to bleed without clipping or pushing
+       neighboring rows. */
+    padding: 1.75rem 0 2.25rem var(--browse-cursor-x);
 }
 .browse-row-track {
     display: flex;
     gap: var(--browse-tile-gap);
-    /* CSS variables: --browse-tile-advance is set on :root to be
-       (tile-width + tile-gap). --track-col is set per row inline
-       (a unitless integer); calc multiplies through to a px offset.
-       Negative because increasing col shifts the row LEFT. */
+    /* The translateX is owned by useBrowseRowAnimator, which writes
+       it as an inline style every animation frame. The calc() below
+       is the early-mount fallback: until the hook reads the computed
+       --browse-tile-advance and takes over, --track-col positions the
+       track via this CSS rule. The hook's inline transform overrides
+       it the moment it kicks in. No CSS transition - the animator
+       eases in JS so it can interrupt + retarget cleanly on rapid
+       D-pad presses without the WebView's transition retargeting
+       glitches. */
     transform: translateX(
         calc(-1 * var(--track-col, 0) * var(--browse-tile-advance))
     );
-    transition: transform 220ms ease-out;
     /* will-change keeps the track on its own compositor layer so
        transforms don't repaint neighbor content. */
     will-change: transform;
@@ -1079,36 +1552,42 @@ a,
     cursor: progress;
 }
 .tile-terminal-face {
-    /* Inherit aspect-ratio from .tile-poster. Override the dark
-       photo background with a softer card surface so the icon
-       reads against it. */
-    background: var(--card);
-    border: 2px dashed rgba(255, 255, 255, 0.2);
+    /* Inherit aspect-ratio from .tile-poster. Translucent white
+       surface so it reads on the saturated browse bg without
+       fighting it; dashed white border calls out the "you can do
+       something here" affordance. */
+    background: rgba(255, 255, 255, 0.18);
+    border: 2px dashed rgba(255, 255, 255, 0.85);
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    color: var(--accent);
+    gap: 0.5rem;
+    color: #ffffff;
+    padding: 0.5rem;
 }
 .tile-terminal.tile-terminal-load .tile-terminal-face {
-    /* Plus / "more" variant gets the accent fill - inviting to act on. */
-    background: rgba(128, 132, 255, 0.18);
-    border-color: var(--accent);
+    /* Plus / "more" variant gets a slightly brighter fill so it
+       reads as the active CTA among the two terminal variants. */
+    background: rgba(255, 255, 255, 0.26);
 }
 .tile-terminal-icon {
-    width: 38%;
-    height: 38%;
+    width: 32%;
+    height: 32%;
     flex-shrink: 0;
 }
 .tile-terminal-label {
+    /* Inside the card now (no separate title row). */
     text-align: center;
-    color: var(--accent);
-    font-weight: 600;
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 1rem;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
 .tile-terminal.focused .tile-terminal-face,
 .tile-terminal:focus .tile-terminal-face {
-    /* Focused face brightens further so the focused-state ring
-       matches what regular tiles get. */
-    background: rgba(128, 132, 255, 0.28);
+    background: rgba(255, 255, 255, 0.34);
+    border-color: #ffffff;
 }
 .browse-tile {
     flex: 0 0 auto;
@@ -1354,23 +1833,71 @@ a,
 .watch-backdrop-fallback {
     background: linear-gradient(135deg, #2a2a2a, #111);
 }
-.watch-back {
-    position: relative;
-    z-index: 2;
-    margin-bottom: 1.5rem;
-}
-.watch-back-link {
+/* Back arrow at the top-left of the watch screen. Same circle
+   visual as the player's .play-back; absolute-positioned over the
+   blurred backdrop so the hero composition isn't pushed down by
+   header chrome. D-pad: ArrowRight reaches the favorite heart;
+   ArrowDown drops to the first hero action. */
+.watch-back-btn {
+    position: absolute;
+    top: 1.25rem;
+    left: 1.25rem;
+    z-index: 4;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
     color: var(--fg);
-    text-decoration: none;
-    font-size: 1rem;
-    background: rgba(0, 0, 0, 0.45);
-    padding: 0.5rem 0.85rem;
-    border-radius: 999px;
     border: 1px solid var(--border);
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 160ms ease, color 160ms ease,
+        transform 120ms ease;
 }
-.watch-back-link:focus {
+.watch-back-btn:focus,
+.watch-back-btn:hover {
+    outline: none;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: transparent;
+    transform: scale(1.05);
+}
+
+/* Favorite heart, rendered above the title in the watch hero. Empty
+   outline when not favorited, filled blush-rose when favorited.
+   D-pad: ArrowLeft -> back arrow; ArrowDown -> hero[0]; reachable
+   from hero via ArrowUp. */
+.watch-fav {
+    background: rgba(0, 0, 0, 0.45);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    width: 56px;
+    height: 56px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 0 0.6rem;
+    padding: 0;
+    cursor: pointer;
+    transition: transform 120ms ease, background-color 160ms ease,
+        color 160ms ease;
+}
+.watch-fav svg {
+    width: 28px;
+    height: 28px;
+}
+.watch-fav.active {
+    color: var(--error);
+}
+.watch-fav:focus,
+.watch-fav.focused {
     outline: 3px solid var(--accent);
     outline-offset: 2px;
+    transform: scale(1.05);
 }
 .watch-hero {
     position: relative;
@@ -1381,6 +1908,39 @@ a,
     align-items: end;
     padding-bottom: 2rem;
     min-height: 40vh;
+}
+/* Movies have no accordion below the hero, so the screen looked
+   top-heavy with the hero crammed into the top-left and a tall
+   empty band beneath. Center the composition vertically + give it
+   a max-width so the action buttons don't stretch into a ribbon
+   across an ultrawide TV. */
+.watch-screen.is-movie {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.watch-hero.is-movie {
+    margin: 0 auto;
+    max-width: 960px;
+    width: 100%;
+    align-items: center;
+    min-height: 0;
+}
+/* Series get a landscape Backdrop in the hero so the image takes
+   less vertical room than the 2:3 poster - leaves more space for
+   the episode accordion below. The thumb sits in the same grid
+   slot as .watch-poster but with a 16:9 aspect. */
+.watch-hero.is-series {
+    grid-template-columns: 360px 1fr;
+}
+.watch-thumb {
+    width: 360px;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: 12px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+    background: var(--card);
 }
 .watch-poster {
     width: 220px;
@@ -1616,9 +2176,17 @@ a,
    which is when the IME is supposed to come up. */
 .library-controls {
     margin: 0 0 0.75rem;
+    /* Search bar (flex: 1) + filter pills aligned to the right of it
+       on the same row. The pills used to live in their own row below
+       the search; collapsing them keeps the All / Movies / TV toggle
+       within the same eyeline as the search input, freeing a row of
+       vertical real estate above the grid. */
+    display: flex;
+    align-items: stretch;
+    gap: 0.75rem;
 }
 .library-search-wrap {
-    width: 100%;
+    flex: 1;
     background: var(--card);
     border: 2px solid var(--border);
     border-radius: 999px;
@@ -1650,71 +2218,102 @@ a,
     color: var(--muted);
 }
 
-/* A-Z jumpscroll bar - pinned to the right edge of the page. The
-   wrap is a fixed-height viewport; the inner .library-alpha-bar
-   track slides via translateY so the focused letter is always at
-   the visual center. The viewport has overflow hidden so letters
-   above + below scroll out of view. */
-.library-alpha-bar-wrap {
-    position: fixed;
-    top: 0;
-    right: 0.75rem;
-    height: 100vh;
-    width: 3.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    z-index: 50;
-    pointer-events: auto;
-}
-.library-alpha-bar {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    background: rgba(0, 0, 0, 0.55);
-    border-radius: 18px;
-    padding: 0.4rem 0.3rem;
-    backdrop-filter: blur(4px);
-    transition: transform 180ms ease-out;
-    /* The track has its full natural height (~1100px for 26 letters
-       at 1.4rem each + gaps); the wrap above clips it. */
-}
-.library-alpha-letter {
-    background: transparent;
-    border: 2px solid transparent;
-    color: #aaa;
-    font-size: 1.15rem;
-    font-weight: 700;
-    width: 2.2rem;
-    height: 2rem;
-    line-height: 1;
+/* A-Z button on the library controls row, left of the search bar.
+   Opens the AlphaPickerModal on activation. */
+.library-alpha-btn {
+    flex: 0 0 auto;
+    background: var(--card);
+    color: var(--fg);
+    border: 2px solid var(--border);
     border-radius: 999px;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    padding: 0 1.25rem;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
     cursor: pointer;
-    transition:
-        background 120ms ease,
-        color 120ms ease,
-        transform 120ms ease;
-    flex-shrink: 0;
+    transition: background 120ms ease, border-color 120ms ease,
+        color 120ms ease;
 }
-.library-alpha-letter:hover:not(.disabled) {
+.library-alpha-btn:hover {
     color: #fff;
 }
-.library-alpha-letter.focused,
-.library-alpha-letter:focus {
+.library-alpha-btn.focused,
+.library-alpha-btn:focus {
+    outline: none;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+}
+
+/* AlphaPickerModal: 7-wide letter grid in a centered overlay card.
+   Letters with no library matches dim and don't activate. The
+   currently-cursored cell is the only one with tabIndex=0; the
+   modal handles arrow navigation manually. */
+.alpha-picker-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(6px);
+}
+.alpha-picker-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 1.5rem 1.75rem;
+    min-width: 480px;
+    max-width: 90vw;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+.alpha-picker-title {
+    margin: 0 0 1rem;
+    font-size: 1.1rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    text-align: center;
+}
+.alpha-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 7), 1fr);
+    gap: 0.5rem;
+}
+.alpha-picker-cell {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--fg);
+    border: 2px solid transparent;
+    border-radius: 12px;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    font-size: 1.6rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease,
+        transform 120ms ease, border-color 120ms ease;
+}
+.alpha-picker-cell:hover:not(.disabled) {
+    background: rgba(255, 255, 255, 0.14);
+}
+.alpha-picker-cell.focused,
+.alpha-picker-cell:focus {
     outline: none;
     background: var(--accent);
     color: var(--accent-fg);
     border-color: #fff;
-    transform: scale(1.15);
+    transform: scale(1.05);
 }
-.library-alpha-letter.disabled {
+.alpha-picker-cell.disabled {
     color: #444;
     cursor: default;
+}
+.alpha-picker-hint {
+    margin: 1rem 0 0;
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-align: center;
 }
 
 

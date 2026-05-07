@@ -422,22 +422,30 @@ func (s *Store) RemoveItemTag(ctx context.Context, itemID string, tagID int64) e
 }
 
 // ListItemIDsByTag returns the item ids carrying tagID, ordered by
-// most-recently-tagged first. Used by the tag detail page.
+// most-recently-tagged first. Pass limit <= 0 to fetch every match
+// (browse-row resolvers need the full pool so a "random" or
+// alphabetical sort isn't quietly truncated to the top-N most-recent
+// taggings). Used by the tag detail page (paged) and the browse
+// resolver (unlimited).
 func (s *Store) ListItemIDsByTag(ctx context.Context, tagID int64, limit, offset int) ([]string, error) {
 	if tagID <= 0 {
 		return nil, errors.New("tagID required")
 	}
-	if limit <= 0 {
-		limit = 50
-	}
 	if offset < 0 {
 		offset = 0
+	}
+	// limit <= 0 -> no upper bound. SQLite treats LIMIT -1 as
+	// "unlimited"; we pass that explicitly so the query plan stays
+	// the same shape regardless of caller intent.
+	effLimit := limit
+	if effLimit <= 0 {
+		effLimit = -1
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT jellyfin_item_id FROM item_tags
 		WHERE tag_id = ?
 		ORDER BY set_at DESC
-		LIMIT ? OFFSET ?`, tagID, limit, offset)
+		LIMIT ? OFFSET ?`, tagID, effLimit, offset)
 	if err != nil {
 		return nil, err
 	}

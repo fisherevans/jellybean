@@ -2315,6 +2315,26 @@ button.destructive:hover:not(:disabled) {
     filter: brightness(1.08);
 }
 
+/* Top-bar "Watch as <profile>" link. Same shape as .kid-preview but
+   sized for the topbar's tighter row, and styled as a secondary
+   action so it doesn't compete with the primary nav. */
+.topbar-preview {
+    background: var(--card);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.35rem 0.85rem;
+    font-size: 0.9rem;
+    text-decoration: none;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+.topbar-preview:hover {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: transparent;
+}
+
 /* page heading row with a primary action button on the right
    (used on Profiles + Kids where "+ Add" lives next to the title). */
 .page-head {

@@ -48,7 +48,16 @@ function setCurrent(el: Element | Window, axis: Axis, value: number): void {
 // feel that completes a typical tile-width move in ~6-8 frames
 // (~100-130ms at 60fps). Lower values feel laggy; higher values
 // feel jumpy and amplify the cancellation problem we're avoiding.
-const EASE = 0.22;
+// EASE constants. perfMode "slow" devices use a higher value so the
+// animation finishes in fewer frames (less time for hitches to land
+// during the motion). Read perfMode dynamically per animation start
+// so a runtime FPS reclassification picks up immediately.
+const EASE_FAST = 0.22;
+const EASE_SLOW = 0.36;
+function ease(): number {
+    if (typeof document === "undefined") return EASE_FAST;
+    return document.body?.dataset.perf === "slow" ? EASE_SLOW : EASE_FAST;
+}
 const SETTLE_PX = 0.5;
 
 export function smoothScrollTo(
@@ -76,7 +85,7 @@ export function smoothScrollTo(
             perEl?.delete(axis);
             return;
         }
-        setCurrent(el, axis, current + dist * EASE);
+        setCurrent(el, axis, current + dist * ease());
         state.rafId = requestAnimationFrame(step);
     };
     step();

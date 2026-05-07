@@ -1,0 +1,131 @@
+import { useEffect, useRef, type RefObject } from "react";
+import { getPerfMode } from "./perfMode";
+
+// useBrowseRowAnimator drives a Browse row's horizontal scroll via a
+// long-lived rAF easing loop, decoupled from React render. The
+// selection state (focus.col) only writes a target column; the
+// animator reads its own currentX each frame and eases toward
+// targetX. New targets mid-flight just update targetXRef - the
+// animator picks them up on the next frame, preserving velocity
+// from the current visual position.
+//
+// Why not CSS transitions: when transitions are retargeted faster
+// than they can complete (rapid D-pad presses, ~165ms apart vs
+// 220ms transition), the WebView's interpolation handling produces
+// visible velocity discontinuities. A JS animator that observes the
+// current visual position and eases from there avoids the issue
+// entirely - same target updates produce continuous motion, no
+// restart-from-zero per press.
+//
+// Lifecycle:
+//   - First paint: snap to target with no animation (skip the
+//     "fly in from 0" effect on row mount).
+//   - Subsequent target changes while animator is sleeping: wake the
+//     rAF loop. It runs until currentX === targetX, then sleeps.
+//     Zero CPU when idle.
+//   - Already-running animator + new target: just update the ref;
+//     the loop reads it next frame.
+//   - Unmount: cancelAnimationFrame.
+//
+// Computes the per-tile advance distance from the first child's
+// offsetWidth + the track's computed `gap`. We can't read it from the
+// `--browse-tile-advance` CSS custom property because per spec
+// getComputedStyle().getPropertyValue('--foo') returns the *specified*
+// value (the literal `calc(...)` string), not the resolved px. The
+// element-measurement path also handles future changes to the tile
+// width without us touching this file.
+
+// Default ease constant (% of remaining distance closed per frame).
+// Slow devices use a higher value so the animation completes in
+// fewer frames; fewer frames means less time for hitches to land
+// during the motion. The trade-off is a slightly less buttery
+// feel, but on a stuttering device snappy beats smooth-but-choppy.
+const EASE_FAST = 0.22;
+const EASE_SLOW = 0.36;
+const SETTLE_PX = 0.5;
+
+export function useBrowseRowAnimator(
+    trackRef: RefObject<HTMLDivElement | null>,
+    targetCol: number,
+): void {
+    const currentXRef = useRef<number | null>(null);
+    const targetXRef = useRef(0);
+    const rafRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        const el = trackRef.current;
+        if (!el) return;
+        // Measure the actual rendered advance: first child tile's
+        // offsetWidth + the row's computed flex `gap`. The `gap`
+        // resolves to a px string via getComputedStyle (it's a real
+        // CSS property, not a custom one), so parseFloat works.
+        const firstChild = el.firstElementChild as HTMLElement | null;
+        const tileWidth = firstChild?.offsetWidth ?? 0;
+        const gapPx = parseFloat(getComputedStyle(el).gap) || 0;
+        const tileAdvance = tileWidth + gapPx;
+        if (tileAdvance <= 0) {
+            // No tile laid out yet (empty row, or pre-paint). Fall
+            // back to setting --track-col so the static CSS rule
+            // positions the track. Next render hits the animator path.
+            el.style.setProperty("--track-col", String(targetCol));
+            return;
+        }
+        const newTarget = -targetCol * tileAdvance;
+        targetXRef.current = newTarget;
+
+        // First paint: snap to target. We don't want a fly-in from
+        // translateX(0) when the kid lands on a row that remembers
+        // col 5.
+        if (currentXRef.current === null) {
+            currentXRef.current = newTarget;
+            el.style.transform = `translateX(${newTarget}px)`;
+            return;
+        }
+
+        // Animator already running - it'll pick up the new target on
+        // the next frame from targetXRef. No restart needed; the ease
+        // is observed-velocity-preserving.
+        if (rafRef.current !== null) return;
+
+        // At rest at the new target already - nothing to do.
+        if (Math.abs(currentXRef.current - newTarget) < SETTLE_PX) {
+            currentXRef.current = newTarget;
+            el.style.transform = `translateX(${newTarget}px)`;
+            return;
+        }
+
+        // Wake the loop.
+        const step = () => {
+            const node = trackRef.current;
+            if (!node) {
+                rafRef.current = null;
+                return;
+            }
+            const t = targetXRef.current;
+            const c = currentXRef.current ?? t;
+            const dist = t - c;
+            if (Math.abs(dist) < SETTLE_PX) {
+                currentXRef.current = t;
+                node.style.transform = `translateX(${t}px)`;
+                rafRef.current = null;
+                return;
+            }
+            const ease = getPerfMode() === "slow" ? EASE_SLOW : EASE_FAST;
+            const next = c + dist * ease;
+            currentXRef.current = next;
+            node.style.transform = `translateX(${next}px)`;
+            rafRef.current = requestAnimationFrame(step);
+        };
+        rafRef.current = requestAnimationFrame(step);
+    }, [targetCol, trackRef]);
+
+    // Cancel the loop on unmount so we don't leak rAF callbacks.
+    useEffect(() => {
+        return () => {
+            if (rafRef.current !== null) {
+                cancelAnimationFrame(rafRef.current);
+                rafRef.current = null;
+            }
+        };
+    }, []);
+}

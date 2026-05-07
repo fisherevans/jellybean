@@ -267,7 +267,12 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 
 	limit := 50
 	if v := q.Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+		// Cap at 5000 to match the kid client's PAGE_SIZE - the
+		// alpha picker needs the full library loaded so it can jump
+		// to any letter, not just letters within the first paginated
+		// page. Slim payload keeps the wire weight bounded even at
+		// the cap (~300KB for 5000 items before gzip).
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 5000 {
 			limit = n
 		}
 	}
@@ -335,7 +340,7 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to load visibility", http.StatusInternalServerError)
 			return
 		}
-		out := make([]jellyfin.Item, 0, len(res.Items))
+		out := make([]browseItem, 0, len(res.Items))
 		for _, it := range res.Items {
 			if _, allowed := allowedTypes[it.Type]; !allowed {
 				continue
@@ -343,7 +348,7 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 			if visible[it.ID] != curation.StateVisible {
 				continue
 			}
-			out = append(out, it)
+			out = append(out, toBrowseItem(it))
 			if len(out) >= limit {
 				break
 			}
@@ -374,25 +379,62 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		sortOrder = "Descending"
 	}
 
-	res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
-		IDs:        ids,
-		Limit:      limit + startIndex + 50,
-		SortBy:     sortBy,
-		SortOrder:  sortOrder,
-		SearchTerm: search,
-	}, kc.JellyfinToken)
-	if err != nil {
-		s.logger.Error().Err(err).Msg("kids library fetch")
-		writeUpstreamError(w, err, "failed to load library")
-		return
+	// Batch the IDs filter so we don't blow Jellyfin's URI length
+	// limit. A profile with hundreds of visible items (Nottingham has
+	// ~436) would otherwise produce a single >8KB query string and
+	// trip Jellyfin's 414 URI Too Long. Each chunk is a real Jellyfin
+	// query (so per-user UserData + search-term filter still apply);
+	// we re-sort after the merge because Jellyfin's order is only
+	// valid within a batch.
+	merged := make([]jellyfin.Item, 0, len(ids))
+	for i := 0; i < len(ids); i += jellyfinIDBatchSize {
+		end := i + jellyfinIDBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[i:end]
+		res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
+			IDs:        batch,
+			SortBy:     sortBy,
+			SortOrder:  sortOrder,
+			SearchTerm: search,
+		}, kc.JellyfinToken)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("kids library fetch")
+			writeUpstreamError(w, err, "failed to load library")
+			return
+		}
+		merged = append(merged, res.Items...)
 	}
 
-	filtered := make([]jellyfin.Item, 0, len(res.Items))
-	for _, it := range res.Items {
+	// Re-sort across batches. Jellyfin's per-batch order is valid
+	// only within each chunk; "A" from chunk 2 and "B" from chunk 1
+	// would otherwise come back as B,A.
+	descending := sortOrder == "Descending"
+	sort.Slice(merged, func(i, j int) bool {
+		var ai, aj string
+		if sortBy == "DateCreated" {
+			ai, aj = merged[i].DateCreated, merged[j].DateCreated
+		} else {
+			ai, aj = strings.ToLower(merged[i].Name), strings.ToLower(merged[j].Name)
+		}
+		if descending {
+			return ai > aj
+		}
+		return ai < aj
+	})
+
+	filtered := make([]jellyfin.Item, 0, len(merged))
+	for _, it := range merged {
 		if _, ok := allowedTypes[it.Type]; ok {
 			filtered = append(filtered, it)
 		}
 	}
+
+	// LettersByName covers the FULL filtered list (before pagination
+	// slice). The kid client's alpha picker uses it to jump to any
+	// letter in the library even when only the first page is loaded.
+	letters := computeLettersByName(filtered)
 
 	end := startIndex + limit
 	hasMore := end < len(filtered)
@@ -405,23 +447,72 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		filtered = filtered[startIndex:end]
 	}
 
+	slim := make([]browseItem, len(filtered))
+	for i, it := range filtered {
+		slim[i] = toBrowseItem(it)
+	}
+
 	writeJSON(w, http.StatusOK, kidsLibraryResponse{
-		Items:          filtered,
+		Items:          slim,
 		TotalAvailable: len(ids),
 		StartIndex:     startIndex,
-		NextStartIndex: startIndex + len(filtered),
+		NextStartIndex: startIndex + len(slim),
 		HasMore:        hasMore,
 		ProfileID:      profileID,
+		LettersByName:  letters,
 	})
 }
 
 type kidsLibraryResponse struct {
-	Items          []jellyfin.Item `json:"Items"`
-	TotalAvailable int             `json:"TotalAvailable,omitempty"`
-	StartIndex     int             `json:"StartIndex"`
-	NextStartIndex int             `json:"NextStartIndex,omitempty"`
-	HasMore        bool            `json:"HasMore,omitempty"`
-	ProfileID      int64           `json:"ProfileId"`
+	Items          []browseItem `json:"Items"`
+	TotalAvailable int          `json:"TotalAvailable,omitempty"`
+	StartIndex     int          `json:"StartIndex"`
+	NextStartIndex int          `json:"NextStartIndex,omitempty"`
+	HasMore        bool         `json:"HasMore,omitempty"`
+	ProfileID      int64        `json:"ProfileId"`
+	// LettersByName maps each starting letter (A-Z plus "#") to the
+	// index in the full sorted library where the first item with that
+	// letter lives. Computed BEFORE pagination so the kid client's
+	// alpha picker can jump anywhere in the library, not just into
+	// the first loaded page. "#" is the bucket for items whose first
+	// character isn't A-Z (numerics, punctuation, etc.). Returned
+	// only on the "all" section since cw / recent are short rows.
+	LettersByName map[string]int `json:"LettersByName,omitempty"`
+}
+
+// computeLettersByName scans the full sorted library and returns the
+// "first item that starts with X" index for each starting letter.
+// Mirrors the kid client's old client-side firstIndexByLetter so the
+// two stay aligned: case-insensitive, strips a leading "the "/"a "/
+// "an " article. Items whose first character isn't A-Z bucket into
+// "#".
+func computeLettersByName(items []jellyfin.Item) map[string]int {
+	out := map[string]int{}
+	for i, it := range items {
+		raw := strings.TrimSpace(it.Name)
+		// Article-strip mirror of AlphaBar.tsx's firstIndexByLetter.
+		lower := strings.ToLower(raw)
+		switch {
+		case strings.HasPrefix(lower, "the "):
+			raw = raw[4:]
+		case strings.HasPrefix(lower, "an "):
+			raw = raw[3:]
+		case strings.HasPrefix(lower, "a "):
+			raw = raw[2:]
+		}
+		if raw == "" {
+			continue
+		}
+		ch := strings.ToUpper(raw[:1])
+		key := "#"
+		if ch >= "A" && ch <= "Z" {
+			key = ch
+		}
+		if _, exists := out[key]; !exists {
+			out[key] = i
+		}
+	}
+	return out
 }
 
 // kidsLibraryETagInputs is the set of values that feed the GET
@@ -843,11 +934,25 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		ParentIndexNumber:   item.ParentIndexNumber,
 		IndexNumber:    item.IndexNumber,
 		ProductionYear: item.ProductionYear,
+		RunTimeTicks:   item.RunTimeTicks,
 		MediaSourceID:  resolution.MediaSourceID,
 		PlaybackPath:   string(resolution.Path),
 	}
 	if item.UserData != nil {
 		resp.UserData = item.UserData
+	}
+	// Favorite target: series for episodes, item itself otherwise.
+	// Browse rows surface series, not episodes, so favoriting an
+	// episode would create an entry that never appears in any row.
+	favTarget := id
+	if item.Type == "Episode" && item.SeriesID != "" {
+		favTarget = item.SeriesID
+	}
+	resp.FavoriteItemID = favTarget
+	if kc.KidID > 0 {
+		if fav, ferr := s.curation.IsKidFavorite(r.Context(), kc.KidID, favTarget); ferr == nil {
+			resp.IsFavorite = fav
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -866,6 +971,11 @@ type kidsItemResponse struct {
 	ProductionYear int                    `json:"productionYear,omitempty"`
 	RunTimeTicks   int64                  `json:"runtimeTicks,omitempty"`
 	UserData       *jellyfin.ItemUserData `json:"userData,omitempty"`
+	// IsFavorite is the kid's per-(kid, item) favorite flag from
+	// SQLite. The watch menu reads it to render the heart icon's
+	// initial state. Always present on the kid-auth path; false on
+	// admin preview (no kid context).
+	IsFavorite bool `json:"isFavorite"`
 }
 
 // handleKidsItem returns just the metadata for a single item -
@@ -915,7 +1025,61 @@ func (s *Server) handleKidsItem(w http.ResponseWriter, r *http.Request) {
 		RunTimeTicks:   item.RunTimeTicks,
 		UserData:       item.UserData,
 	}
+	if kc.KidID > 0 {
+		if fav, ferr := s.curation.IsKidFavorite(r.Context(), kc.KidID, id); ferr == nil {
+			resp.IsFavorite = fav
+		}
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleKidsItemFavorite toggles the per-kid favorite flag for one
+// item. Kid-auth required (no PIN gate); the heart icon on the watch
+// menu lets the kid manage their own favorites directly. Admin
+// preview (no KidID) returns 403 - admins manage favorites via the
+// admin UI, not this endpoint.
+//
+// Body: {"state":"add"} | {"state":"remove"}. Idempotent on both.
+func (s *Server) handleKidsItemFavorite(w http.ResponseWriter, r *http.Request) {
+	kc := s.resolveKidsAuth(r)
+	if kc == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	if kc.KidID == 0 {
+		http.Error(w, "favorites are per-kid; admin preview can't toggle", http.StatusForbidden)
+		return
+	}
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		http.Error(w, "item id required", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		State string `json:"state"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	switch req.State {
+	case "add":
+		if err := s.curation.AddKidFavorite(r.Context(), kc.KidID, id); err != nil {
+			s.logger.Error().Err(err).Int64("kid", kc.KidID).Str("item", id).Msg("kid favorite add")
+			http.Error(w, "failed to add favorite", http.StatusInternalServerError)
+			return
+		}
+	case "remove":
+		if err := s.curation.RemoveKidFavorite(r.Context(), kc.KidID, id); err != nil {
+			s.logger.Error().Err(err).Int64("kid", kc.KidID).Str("item", id).Msg("kid favorite remove")
+			http.Error(w, "failed to remove favorite", http.StatusInternalServerError)
+			return
+		}
+	default:
+		http.Error(w, `state must be "add" or "remove"`, http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleKidsSeriesEpisodes returns the full season + episode list for
@@ -1110,13 +1274,27 @@ type kidsStreamResponse struct {
 	SeriesName        string                 `json:"seriesName,omitempty"`
 	ParentIndexNumber *int                   `json:"parentIndexNumber,omitempty"`
 	IndexNumber       *int                   `json:"indexNumber,omitempty"`
+	// FavoriteItemID is the id the heart-toggle on the player
+	// header should target. For movies that's the item itself; for
+	// episodes it's the parent series, since favorites surface as
+	// browse rows and only series-level entries appear there.
+	// IsFavorite reflects the kid's current favorite state for that
+	// id. Empty / false on admin preview (no kid context).
+	FavoriteItemID string `json:"favoriteItemId,omitempty"`
+	IsFavorite     bool   `json:"isFavorite"`
 	// ProductionYear is the release / air year for the resolved item.
 	// Movies: release year. Episodes: episode air year (Jellyfin
 	// populates ProductionYear on episode items as the episode's own
 	// year, not the parent series'). Zero when Jellyfin has no year on
 	// the item, in which case the client should hide the field.
-	ProductionYear int                    `json:"productionYear,omitempty"`
-	UserData       *jellyfin.ItemUserData `json:"userData,omitempty"`
+	ProductionYear int `json:"productionYear,omitempty"`
+	// RunTimeTicks is the total length of the resolved item in
+	// Jellyfin's 100-nanosecond ticks. Surfaced so the kid client
+	// can render the full runtime in the player header (independent
+	// of the <video> element's reported duration, which can lag
+	// behind the manifest during transcode startup).
+	RunTimeTicks int64                  `json:"runtimeTicks,omitempty"`
+	UserData     *jellyfin.ItemUserData `json:"userData,omitempty"`
 	// MediaSourceID + PlaybackPath echo PlaybackInfo's negotiation
 	// back to the client. PlaySessionId is intentionally NOT a separate
 	// field: it is embedded as a query parameter in StreamURL itself
