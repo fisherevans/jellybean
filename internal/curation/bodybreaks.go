@@ -76,30 +76,28 @@ type BodyBreakStatus struct {
 // GetProfileBodyBreaks returns the row for a profile, falling back to
 // defaults when there's no row.
 func (s *Store) GetProfileBodyBreaks(ctx context.Context, profileID int64) (*ProfileBodyBreaks, error) {
-	row := s.db.QueryRowContext(ctx, `
+	return loadOrDefault(ctx, s.db, `
 		SELECT profile_id, enabled, play_minutes, break_minutes,
 		       voice_message_template, reasons_json, updated_at
-		FROM profile_body_breaks WHERE profile_id = ?`, profileID)
-	var (
-		out         ProfileBodyBreaks
-		enabled     int
-		reasonsJSON string
-		updatedAt   int64
-	)
-	err := row.Scan(&out.ProfileID, &enabled, &out.PlayMinutes, &out.BreakMinutes,
-		&out.VoiceMessageTemplate, &reasonsJSON, &updatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return DefaultProfileBodyBreaks(profileID), nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	out.Enabled = enabled != 0
-	if reasonsJSON != "" {
-		_ = json.Unmarshal([]byte(reasonsJSON), &out.Reasons)
-	}
-	out.UpdatedAt = time.Unix(updatedAt, 0).UTC()
-	return &out, nil
+		FROM profile_body_breaks WHERE profile_id = ?`, profileID,
+		func(row *sql.Row) (*ProfileBodyBreaks, error) {
+			var (
+				out         ProfileBodyBreaks
+				enabled     int
+				reasonsJSON string
+				updatedAt   int64
+			)
+			if err := row.Scan(&out.ProfileID, &enabled, &out.PlayMinutes, &out.BreakMinutes,
+				&out.VoiceMessageTemplate, &reasonsJSON, &updatedAt); err != nil {
+				return nil, err
+			}
+			out.Enabled = enabled != 0
+			if reasonsJSON != "" {
+				_ = json.Unmarshal([]byte(reasonsJSON), &out.Reasons)
+			}
+			out.UpdatedAt = time.Unix(updatedAt, 0).UTC()
+			return &out, nil
+		}, DefaultProfileBodyBreaks(profileID))
 }
 
 // UpsertProfileBodyBreaks writes or updates the profile config.
