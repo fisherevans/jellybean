@@ -215,16 +215,7 @@ func (s *Server) handleKidsLogin(w http.ResponseWriter, r *http.Request) {
 // items only, optionally filtered by type, with sub-views for "all",
 // "continue-watching", and "recent".
 func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	profileID, msg := s.resolveKidsProfileID(r, kc)
-	if msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
-		return
-	}
+	kc, profileID := KidsContextFromRequest(r)
 
 	q := r.URL.Query()
 	section := q.Get("section")
@@ -304,7 +295,7 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, _ := kidsRequestContext(r)
+	ctx := r.Context()
 
 	// Build the ETag from DB-only state (no Jellyfin round-trip yet) so a
 	// matching If-None-Match can short-circuit to 304 without leaving the
@@ -686,17 +677,13 @@ func decodePlaybackPayload(r *http.Request) (*playbackPayload, error) {
 }
 
 func (s *Server) handleKidsPlaybackStart(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	p, err := decodePlaybackPayload(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	ctx, _ := kidsRequestContext(r)
+	ctx := r.Context()
 	err = s.jellyfin.ReportPlaybackStart(ctx, kc.JellyfinToken, jellyfin.PlaybackStartInfo{
 		ItemID:           p.ItemID,
 		MediaSourceID:    p.MediaSourceID,
@@ -713,17 +700,13 @@ func (s *Server) handleKidsPlaybackStart(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleKidsPlaybackProgress(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	p, err := decodePlaybackPayload(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	ctx, _ := kidsRequestContext(r)
+	ctx := r.Context()
 	err = s.jellyfin.ReportPlaybackProgress(ctx, kc.JellyfinToken, jellyfin.PlaybackProgressInfo{
 		ItemID:           p.ItemID,
 		MediaSourceID:    p.MediaSourceID,
@@ -750,17 +733,13 @@ func (s *Server) handleKidsPlaybackProgress(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleKidsPlaybackStopped(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	p, err := decodePlaybackPayload(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	ctx, _ := kidsRequestContext(r)
+	ctx := r.Context()
 	err = s.jellyfin.ReportPlaybackStopped(ctx, kc.JellyfinToken, jellyfin.PlaybackStopInfo{
 		ItemID:        p.ItemID,
 		MediaSourceID: p.MediaSourceID,
@@ -783,11 +762,7 @@ func (s *Server) handleKidsPlaybackStopped(w http.ResponseWriter, r *http.Reques
 // no-op (returns 204) so the client can call it unconditionally on
 // stream-swap without checking whether a previous session existed.
 func (s *Server) handleKidsStopEncoding(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	var req struct {
 		PlaySessionID string `json:"playSessionId"`
 	}
@@ -795,7 +770,7 @@ func (s *Server) handleKidsStopEncoding(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	ctx, _ := kidsRequestContext(r)
+	ctx := r.Context()
 	if err := s.jellyfin.StopActiveEncodings(ctx, kc.JellyfinToken, req.PlaySessionID); err != nil {
 		// Best-effort: a stale session ID typically returns 404 from
 		// Jellyfin which we've already mapped to ErrNotFound. Log but
@@ -823,16 +798,7 @@ func (s *Server) handleKidsStopEncoding(w http.ResponseWriter, r *http.Request) 
 // membership, item visibility, etc. - that the kid wants to see
 // reflected before the 60-min TTL expires.
 func (s *Server) handleKidsRefreshLayout(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	profileID, msg := s.resolveKidsProfileID(r, kc)
-	if msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
-		return
-	}
+	_, profileID := KidsContextFromRequest(r)
 	if err := s.curation.InvalidateProfileLayoutCache(r.Context(), profileID); err != nil {
 		s.logger.Error().Err(err).Int64("profile_id", profileID).Msg("kids refresh layout cache")
 		http.Error(w, "failed to refresh", http.StatusInternalServerError)
@@ -910,11 +876,7 @@ const conservativeProfileMaxBitrate int64 = 5_000_000
 // itself (Jellyfin embeds it as a query param) and threads it back on
 // playback reports - mirrors jellyfin-web's getParam() pattern.
 func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 
 	id := mux.Vars(r)["id"]
 	if id == "" {
@@ -922,7 +884,8 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, deviceID := kidsRequestContext(r)
+	ctx := r.Context()
+	deviceID := r.Header.Get(kidsDeviceIDHeader)
 	var (
 		item *jellyfin.Item
 		err  error
@@ -1064,17 +1027,13 @@ type kidsItemResponse struct {
 // hero buttons (Play / Resume / Restart / Watch Again) without
 // triggering a transcode session.
 func (s *Server) handleKidsItem(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	id := mux.Vars(r)["id"]
 	if id == "" {
 		http.Error(w, "item id required", http.StatusBadRequest)
 		return
 	}
-	ctx, _ := kidsRequestContext(r)
+	ctx := r.Context()
 	var (
 		item *jellyfin.Item
 		err  error
@@ -1122,11 +1081,7 @@ func (s *Server) handleKidsItem(w http.ResponseWriter, r *http.Request) {
 //
 // Body: {"state":"add"} | {"state":"remove"}. Idempotent on both.
 func (s *Server) handleKidsItemFavorite(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	if kc.KidID == 0 {
 		http.Error(w, "favorites are per-kid; admin preview can't toggle", http.StatusForbidden)
 		return
@@ -1171,17 +1126,13 @@ func (s *Server) handleKidsItemFavorite(w http.ResponseWriter, r *http.Request) 
 // Episodes are grouped by season number ascending; specials (season
 // 0) sort to the top per Jellyfin convention.
 func (s *Server) handleKidsSeriesEpisodes(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	id := mux.Vars(r)["id"]
 	if id == "" {
 		http.Error(w, "series id required", http.StatusBadRequest)
 		return
 	}
-	ctx, _ := kidsRequestContext(r)
+	ctx := r.Context()
 
 	// Per-user fetch (kid path) brings UserData through; admin preview
 	// has no kid token, so the accordion renders structure-only with
@@ -1393,11 +1344,7 @@ type kidsStreamResponse struct {
 // active kid. Requires kid bearer auth (per-user resume + watched-set are
 // inherently user-scoped); admin path returns 400.
 func (s *Server) handleKidsNextUp(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	id := mux.Vars(r)["id"]
 	if id == "" {
 		http.Error(w, "item id required", http.StatusBadRequest)
@@ -1408,7 +1355,7 @@ func (s *Server) handleKidsNextUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, _ := kidsRequestContext(r)
+	ctx := r.Context()
 	// ?after=<episodeId> drives the kid player's "Next" button: the
 	// resume-aware /Shows/NextUp returns the currently-playing episode
 	// while the kid hasn't finished it, so we can't use it to advance.

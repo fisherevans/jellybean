@@ -29,11 +29,11 @@ func (s *Server) handleAdminImage(w http.ResponseWriter, r *http.Request) {
 // handleKidsImage exposes the same proxy as the admin variant but gated by
 // the kids auth resolver. Both serve the same upstream request signed with
 // the service-account token; images aren't user-scoped in Jellyfin.
+//
+// Auth + profile resolution are handled by kidsMiddleware on the
+// subrouter; this handler is reached only after a 401/400 has been
+// ruled out, so the body just proxies.
 func (s *Server) handleKidsImage(w http.ResponseWriter, r *http.Request) {
-	if s.resolveKidsAuth(r) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
 	s.proxyJellyfinImage(w, r)
 }
 

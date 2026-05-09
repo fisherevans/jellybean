@@ -13,11 +13,7 @@ import (
 // per profile; the M9 override modal sets per-kid overrides.
 
 func (s *Server) handleKidsViewingState(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	if kc.KidID == 0 {
 		writeJSON(w, http.StatusOK, &curation.ViewingState{})
 		return

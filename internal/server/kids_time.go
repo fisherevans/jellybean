@@ -19,11 +19,7 @@ import (
 // handleKidsTimeStatus returns the rendered TimeStatus for the active
 // kid. Cheap: single-digit queries, no Jellyfin call.
 func (s *Server) handleKidsTimeStatus(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	if kc.KidID == 0 {
 		// Admin preview: no kid identity. Returning a disabled stub
 		// keeps the kid client's render path uniform.
@@ -46,11 +42,7 @@ func (s *Server) handleKidsTimeStatus(w http.ResponseWriter, r *http.Request) {
 // handleKidsCanPlay is the gate for starting playback. Hit once per
 // tile-click (Browse / Library / Watch menu).
 func (s *Server) handleKidsCanPlay(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	if kc.KidID == 0 {
 		writeJSON(w, http.StatusOK, curation.CanPlayResult{Allowed: true})
 		return

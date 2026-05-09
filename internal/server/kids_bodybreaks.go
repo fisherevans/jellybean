@@ -16,11 +16,7 @@ import (
 // frequently (every progress poll) so cheap is critical; the engine
 // does at most two short-keyed queries.
 func (s *Server) handleKidsBodyBreakStatus(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	if kc.KidID == 0 {
 		writeJSON(w, http.StatusOK, &curation.BodyBreakStatus{Enabled: false})
 		return

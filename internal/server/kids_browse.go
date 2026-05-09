@@ -128,16 +128,7 @@ func (s *Server) browseContext() *browse.Context {
 // handleKidsBrowse resolves the kid's layout into renderable rows.
 // Auth: kid bearer (preferred) or admin cookie + ?profileId=.
 func (s *Server) handleKidsBrowse(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	profileID, msg := s.resolveKidsProfileID(r, kc)
-	if msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
-		return
-	}
+	kc, profileID := KidsContextFromRequest(r)
 	s.respondBrowse(w, r, profileID, 0, kc.kidIDForBrowse(), kc.JellyfinUserID, kc.JellyfinToken)
 }
 
@@ -148,16 +139,7 @@ func (s *Server) handleKidsBrowse(w http.ResponseWriter, r *http.Request) {
 //
 // GET /api/kids/browse/row/:rowId?limit=N
 func (s *Server) handleKidsBrowseRow(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	profileID, msg := s.resolveKidsProfileID(r, kc)
-	if msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
-		return
-	}
+	kc, profileID := KidsContextFromRequest(r)
 	rowID, err := strconv.ParseInt(mux.Vars(r)["rowId"], 10, 64)
 	if err != nil || rowID <= 0 {
 		http.Error(w, "bad rowId", http.StatusBadRequest)

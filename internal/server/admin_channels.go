@@ -80,16 +80,7 @@ func (s *Server) handleAdminDeleteChannel(w http.ResponseWriter, r *http.Request
 // handleKidsChannels returns the channels available to the active
 // kid; used by the SPA to render the channel layout row.
 func (s *Server) handleKidsChannels(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	profileID, msg := s.resolveKidsProfileID(r, kc)
-	if msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
-		return
-	}
+	_, profileID := KidsContextFromRequest(r)
 	chans, err := s.curation.ListChannels(r.Context(), profileID)
 	if err != nil {
 		http.Error(w, "failed", http.StatusInternalServerError)

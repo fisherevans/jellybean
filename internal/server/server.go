@@ -126,6 +126,7 @@ func (s *Server) routes() {
 	api.HandleFunc("/kids/auth/quickconnect/poll", s.handleKidsQuickConnectPoll).Methods(http.MethodGet)
 	kids := api.PathPrefix("/kids").Subrouter()
 	kids.Use(s.auth.OptionalMiddleware)
+	kids.Use(s.kidsMiddleware)
 	s.kidsLibraryRoutes(kids)
 	s.kidsPlaybackRoutes(kids)
 	s.kidsOverrideRoutes(kids)
