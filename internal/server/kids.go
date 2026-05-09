@@ -441,8 +441,8 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 	// we re-sort after the merge because Jellyfin's order is only
 	// valid within a batch.
 	merged := make([]jellyfin.Item, 0, len(ids))
-	for i := 0; i < len(ids); i += jellyfinIDBatchSize {
-		end := i + jellyfinIDBatchSize
+	for i := 0; i < len(ids); i += jellyfin.IDBatchSize {
+		end := i + jellyfin.IDBatchSize
 		if end > len(ids) {
 			end = len(ids)
 		}
