@@ -2169,6 +2169,15 @@ function PinStage({
     // so Backspace falls through here to delete a digit (matches
     // the original desktop behavior; the TV remote routes hardware
     // Back through useProgressiveBack independent of Backspace).
+    //
+    // Note: no armed-gate guard on arrows here. The shell swallows
+    // e.repeat at capture phase before this listener runs, so a
+    // held-arrow auto-repeat from the gesture that opened this
+    // modal can't reach the digit-append path. The original code
+    // gated arrows on !armedRef.current; that defense is now
+    // redundant given the shell's repeat swallow + the modal-open
+    // path itself never arriving on an arrow keydown (it opens via
+    // the long-press Enter hook).
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             const k = e.key;

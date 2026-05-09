@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import KidModalShell from "./KidModalShell";
+import { useDpadCursor } from "./useDpadCursor";
 
 // AlphaPickerModal is the kid-facing replacement for the old vertical
 // A-Z strip. Pressing the A-Z icon button on the library controls row
@@ -25,8 +26,9 @@ import KidModalShell from "./KidModalShell";
 // Portal + Escape + repeat-Enter swallow + pre-arm-Enter swallow +
 // focus trap live in KidModalShell. The grid math (Up/Down with row
 // stride, Left/Right with column edge clamps) doesn't fit
-// useDpadCursor's vertical-list model, so the keyboard listener
-// stays inline.
+// useDpadCursor's vertical-list model, so we wire the hook with
+// `enabled: false` and only borrow its cursor / refs / focus-on-armed
+// plumbing. The grid-shaped keyboard listener stays inline below.
 
 const ALPHA_GRID_COLS = 7;
 const ALPHA_KEYS = [
@@ -55,14 +57,19 @@ export default function AlphaPickerModal({
         }
         return 0;
     }, [indexMap]);
-    const [cursor, setCursor] = useState(initialFocus);
-    const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-    // Push DOM focus to match the cursor so screen readers + cheap
-    // WebViews track the highlight ring.
-    useEffect(() => {
-        buttonRefs.current[cursor]?.focus({ preventScroll: true });
-    }, [cursor]);
+    // Borrow useDpadCursor for cursor state + ref array + the
+    // focus-on-armed effect. `enabled: false` skips its vertical-list
+    // keyboard listener; we install our own grid-shaped one below.
+    // onActivate is unreachable while disabled but the prop is
+    // required.
+    const dpad = useDpadCursor({
+        count: ALPHA_KEYS.length,
+        initial: initialFocus,
+        enabled: false,
+        onActivate: () => {},
+    });
+    const { cursor, setCursor } = dpad;
 
     const onPickRef = useRef(onPick);
     onPickRef.current = onPick;
@@ -156,7 +163,9 @@ export default function AlphaPickerModal({
                     return (
                         <button
                             key={key}
-                            ref={(el) => (buttonRefs.current[i] = el)}
+                            ref={dpad.register(i) as (
+                                el: HTMLButtonElement | null,
+                            ) => void}
                             type="button"
                             className={`alpha-picker-cell ${
                                 enabled ? "" : "disabled"
