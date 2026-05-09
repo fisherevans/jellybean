@@ -49,7 +49,7 @@ func (s *Store) GetProfileViewingControls(ctx context.Context, profileID int64) 
 	if err != nil {
 		return nil, err
 	}
-	out.UpdatedAt = time.Unix(updated, 0).UTC()
+	out.UpdatedAt = unixToTime(updated)
 	return &out, nil
 }
 
@@ -186,7 +186,7 @@ func (s *Store) GetViewingState(ctx context.Context, kidID, profileID int64, now
 			return
 		}
 		if until.Valid {
-			t := time.Unix(until.Int64, 0).UTC()
+			t := unixToTime(until.Int64)
 			if now.After(t) {
 				return
 			}
@@ -208,7 +208,7 @@ func (s *Store) GetViewingState(ctx context.Context, kidID, profileID int64, now
 
 	// Maybe fire from sleep timer.
 	if sleepTimer.Valid {
-		t := time.Unix(sleepTimer.Int64, 0).UTC()
+		t := unixToTime(sleepTimer.Int64)
 		out.SleepTimerAt = t
 		if now.After(t) && !out.AutoOffActive {
 			_, _ = s.db.ExecContext(ctx, `

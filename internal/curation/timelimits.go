@@ -157,7 +157,7 @@ func (s *Store) GetProfileTimeLimits(ctx context.Context, profileID int64) (*Pro
 		v := int(movieCap.Int64)
 		out.DefaultMovieStarts = &v
 	}
-	out.UpdatedAt = time.Unix(updated, 0).UTC()
+	out.UpdatedAt = unixToTime(updated)
 	return &out, nil
 }
 
@@ -240,7 +240,7 @@ func (s *Store) ListContentOverrides(ctx context.Context, profileID int64) ([]Co
 			v := int(startsN.Int64)
 			o.OverrideStarts = &v
 		}
-		o.UpdatedAt = time.Unix(updated, 0).UTC()
+		o.UpdatedAt = unixToTime(updated)
 		out = append(out, o)
 	}
 	return out, rows.Err()
@@ -457,22 +457,20 @@ func (s *Store) activeGrants(ctx context.Context, kidID int64, now time.Time, da
 		if err := rows.Scan(&g.ID, &g.KidID, &grantedAt, &g.GrantedBy, &minutes, &expires, &g.Scope, &scopeID); err != nil {
 			return nil, err
 		}
-		g.GrantedAt = time.Unix(grantedAt, 0).UTC()
+		g.GrantedAt = unixToTime(grantedAt)
 		if minutes.Valid {
 			v := int(minutes.Int64)
 			g.MinutesGranted = &v
 		}
 		if expires.Valid {
-			t := time.Unix(expires.Int64, 0).UTC()
+			t := unixToTime(expires.Int64)
 			g.ExpiresAt = &t
 		} else {
 			// Implicit: until next day reset.
 			t := dayResetAt
 			g.ExpiresAt = &t
 		}
-		if scopeID.Valid {
-			g.ScopeID = scopeID.String
-		}
+		g.ScopeID = scanNullableString(scopeID)
 		// Filter expired.
 		if g.ExpiresAt != nil && now.After(*g.ExpiresAt) {
 			continue

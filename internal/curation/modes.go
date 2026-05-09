@@ -104,8 +104,8 @@ func scanMode(scan func(...any) error) (*Mode, error) {
 		&reqTagsJSON, &ca, &ua); err != nil {
 		return nil, err
 	}
-	m.CreatedAt = time.Unix(ca, 0).UTC()
-	m.UpdatedAt = time.Unix(ua, 0).UTC()
+	m.CreatedAt = unixToTime(ca)
+	m.UpdatedAt = unixToTime(ua)
 	if layoutID.Valid {
 		v := layoutID.Int64
 		m.LayoutID = &v
@@ -248,7 +248,7 @@ func (s *Store) ResolveActiveMode(ctx context.Context, kidID int64, profileID in
 		return &ActiveMode{
 			Mode:              mode,
 			Source:            "override",
-			OverrideExpiresAt: time.Unix(ovUntil.Int64, 0).UTC(),
+			OverrideExpiresAt: unixToTime(ovUntil.Int64),
 		}, nil
 	}
 

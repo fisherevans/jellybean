@@ -98,7 +98,7 @@ func (s *Store) GetProfileBodyBreaks(ctx context.Context, profileID int64) (*Pro
 	if reasonsJSON != "" {
 		_ = json.Unmarshal([]byte(reasonsJSON), &out.Reasons)
 	}
-	out.UpdatedAt = time.Unix(updatedAt, 0).UTC()
+	out.UpdatedAt = unixToTime(updatedAt)
 	return &out, nil
 }
 
@@ -269,7 +269,7 @@ func (s *Store) GetBodyBreakStatus(ctx context.Context, kidID, profileID int64, 
 	out.AccumulatorMin = accSec / 60.0
 
 	if onBreakUntil.Valid {
-		t := time.Unix(onBreakUntil.Int64, 0).UTC()
+		t := unixToTime(onBreakUntil.Int64)
 		if now.Before(t) {
 			out.OnBreak = true
 			out.OnBreakUntil = t

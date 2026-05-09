@@ -57,8 +57,8 @@ func (s *Store) ListChannels(ctx context.Context, profileID int64) ([]Channel, e
 			rows.Close()
 			return nil, err
 		}
-		c.CreatedAt = time.Unix(ca, 0).UTC()
-		c.UpdatedAt = time.Unix(ua, 0).UTC()
+		c.CreatedAt = unixToTime(ca)
+		c.UpdatedAt = unixToTime(ua)
 		out = append(out, c)
 	}
 	if err := rows.Err(); err != nil {
@@ -91,8 +91,8 @@ func (s *Store) GetChannel(ctx context.Context, id int64) (*Channel, error) {
 		}
 		return nil, err
 	}
-	c.CreatedAt = time.Unix(ca, 0).UTC()
-	c.UpdatedAt = time.Unix(ua, 0).UTC()
+	c.CreatedAt = unixToTime(ca)
+	c.UpdatedAt = unixToTime(ua)
 	c.TagIDs, _ = s.channelTags(ctx, id)
 	c.ItemIDs, _ = s.channelItems(ctx, id)
 	return &c, nil
