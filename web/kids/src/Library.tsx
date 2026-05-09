@@ -42,6 +42,7 @@ import { useKidsHome } from "./KidsHome";
 import { setHomeTab } from "./kidNav";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { useStackScroll } from "./useStackScroll";
+import { useHomeTabFocus } from "./useHomeTabFocus";
 
 // Library is the kid's main browsing screen. Top-to-bottom:
 //
@@ -255,10 +256,18 @@ export default function Library() {
     const [retryNonce, setRetryNonce] = useState(0);
     const online = useOnlineStatus();
 
-    const [focus, setFocus] = useState<Focus>({ kind: "search" });
     const tileRefs = useRef<Record<string, HTMLButtonElement | null>>({});
     const homeCtx = useKidsHome();
-    const { tabFocused, setTabFocused } = homeCtx;
+    const { focus, setFocus, tabFocused, setTabFocused, handleBack } =
+        useHomeTabFocus<Focus>({
+            initialFocus: { kind: "search" },
+            getFirstContentSlot: () => ({ kind: "search" }),
+            scrollToTop: () => stack.setStackY(0, true),
+            tabNav: {
+                tabFocused: homeCtx.tabFocused,
+                setTabFocused: homeCtx.setTabFocused,
+            },
+        });
     const searchWrapRef = useRef<HTMLDivElement | null>(null);
     const searchInputRef = useRef<HTMLInputElement | null>(null);
     const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -558,16 +567,7 @@ export default function Library() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    useEffect(() => {
-        if (!tabFocused) return;
-        stack.setStackY(0, true);
-        if (
-            document.activeElement instanceof HTMLElement &&
-            document.activeElement !== document.body
-        ) {
-            document.activeElement.blur();
-        }
-    }, [tabFocused, stack]);
+    // tabFocused → true scroll-to-top + blur lives in useHomeTabFocus.
 
     const lastMoveRef = useRef(0);
     const REPEAT_MIN_MS = 90;
@@ -694,30 +694,17 @@ export default function Library() {
                 setFocus({ kind: "alphaBtn" });
                 return true;
             }
-            if (!tabFocused) {
-                setTabFocused(true);
-                // Reset content focus to the page's first slot
-                // (search wrap) so the next Down lands on a fresh
-                // entry point - not on the previously-focused tile.
-                // wasTabFocused below already covers the
-                // false→true→false cycle, but resetting here makes
-                // the contract explicit (matches Browse) and avoids
-                // a one-render flash where focus DOM-management
-                // would re-focus the old tile and scrollWindowToCenter
-                // it before the wasTabFocused effect's setFocus
-                // commits. See web/kids/CLAUDE.md ("Back-then-Down
-                // focus contract").
-                setFocus({ kind: "search" });
-                return true;
-            }
-            return false;
+            // Hand off to useHomeTabFocus for the load-bearing reset
+            // (setTabFocused + setFocus(search) in a single render).
+            // See web/kids/CLAUDE.md ("Back-then-Down focus contract").
+            return handleBack();
         }, [
-            tabFocused,
-            setTabFocused,
             override,
             alphaModalOpen,
             filterOpen,
             sortOpen,
+            setFocus,
+            handleBack,
         ]),
     );
 

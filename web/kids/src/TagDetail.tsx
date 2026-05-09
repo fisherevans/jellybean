@@ -18,6 +18,7 @@ import OverrideModal, { useLongPressEnter } from "./OverrideModal";
 import { useItemHiddenEvent } from "./itemHidden";
 import { useStackScroll } from "./useStackScroll";
 import { useProgressiveBack } from "./useProgressiveBack";
+import { useHomeTabFocus } from "./useHomeTabFocus";
 import {
     TAG_ICONS,
     isTagIconName,
@@ -245,10 +246,15 @@ export default function TagDetail() {
     const [filterOpen, setFilterOpen] = useState(false);
     const [sortOpen, setSortOpen] = useState(false);
     const [jumpOpen, setJumpOpen] = useState(false);
-    const [focus, setFocus] = useState<Focus>({
-        kind: "tile",
-        section: 0,
-        item: 0,
+    // TagDetail lives outside KidsHome (no tab nav), so useHomeTabFocus
+    // is invoked without `tabNav`: the hook just manages the focus
+    // state machine. The back-then-down contract doesn't apply here -
+    // Back navigates straight to /tags - so handleBack is unused; we
+    // call the hook for symmetry with the home tabs and to keep
+    // "first content slot" defined in one place.
+    const { focus, setFocus } = useHomeTabFocus<Focus>({
+        initialFocus: { kind: "tile", section: 0, item: 0 },
+        getFirstContentSlot: () => ({ kind: "tile", section: 0, item: 0 }),
     });
     const [override, setOverride] = useState<
         {
