@@ -60,11 +60,57 @@ function ease(): number {
 }
 const SETTLE_PX = 0.5;
 
+// cancelSmoothScroll stops any in-flight animator on (el, axis).
+// Useful when a page unmounts mid-animation - otherwise the rAF
+// loop keeps writing scrollY to its stale target after the next
+// page mounts. axis omitted = cancel all axes for el.
+export function cancelSmoothScroll(
+    el: Element | Window,
+    axis?: Axis,
+): void {
+    const perEl = active.get(el);
+    if (!perEl) return;
+    const stop = (state: Active) => {
+        if (state.rafId !== null) cancelAnimationFrame(state.rafId);
+    };
+    if (axis) {
+        const state = perEl.get(axis);
+        if (state) {
+            stop(state);
+            perEl.delete(axis);
+        }
+    } else {
+        for (const state of perEl.values()) stop(state);
+        perEl.clear();
+    }
+}
+
 export function smoothScrollTo(
     el: Element | Window,
     axis: Axis,
     target: number,
 ): void {
+    // Slow-mode escape hatch for window-level scrolls. On the kid TV's
+    // WebView, every per-frame window.scrollTo() write triggers a full-
+    // viewport repaint that takes 200-1000ms - the scroll animation
+    // ends up freezing for seconds at a time on a single Down press.
+    // Element-level scrolls (used by Library's continue-watching strip)
+    // are cheap because they only repaint the element's box, so we
+    // keep the smooth path for those. Snapping window scroll loses the
+    // polish but eliminates the multi-second hitch.
+    if (
+        el === window &&
+        typeof document !== "undefined" &&
+        document.body?.dataset.perf === "slow"
+    ) {
+        setCurrent(el, axis, target);
+        // Stop any in-flight animator on this axis so a leftover
+        // ease toward an OLD target doesn't keep firing after our
+        // snap. (E.g., a previous fast-mode session that flipped to
+        // slow, or an animator left behind by a now-unmounted page.)
+        cancelSmoothScroll(el, axis);
+        return;
+    }
     let perEl = active.get(el);
     if (!perEl) {
         perEl = new Map();

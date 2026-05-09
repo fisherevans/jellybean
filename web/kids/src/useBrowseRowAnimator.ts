@@ -51,18 +51,43 @@ export function useBrowseRowAnimator(
     const currentXRef = useRef<number | null>(null);
     const targetXRef = useRef(0);
     const rafRef = useRef<number | null>(null);
+    // Tile advance (poster width + row gap, in px) is layout-stable -
+    // it only changes on viewport resize. Measuring it forces a
+    // synchronous layout pass via offsetWidth + getComputedStyle, and
+    // on a page with ~140 mounted tiles that pass takes 200-300ms on
+    // a cheap Android TV WebView. Measuring once per row + caching
+    // means each arrow press is a transform write only, not a layout
+    // recompute. Re-measured below on window resize.
+    const tileAdvanceRef = useRef<number | null>(null);
+
+    function measureTileAdvance(el: HTMLDivElement): number {
+        const firstChild = el.firstElementChild as HTMLElement | null;
+        const tileWidth = firstChild?.offsetWidth ?? 0;
+        const gapPx = parseFloat(getComputedStyle(el).gap) || 0;
+        return tileWidth + gapPx;
+    }
+
+    // Resize listener: invalidate the cached advance so the next
+    // targetCol change re-measures. Cheap; only fires on rotation /
+    // window resize on real devices.
+    useEffect(() => {
+        const onResize = () => {
+            tileAdvanceRef.current = null;
+        };
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+    }, []);
 
     useEffect(() => {
         const el = trackRef.current;
         if (!el) return;
-        // Measure the actual rendered advance: first child tile's
-        // offsetWidth + the row's computed flex `gap`. The `gap`
-        // resolves to a px string via getComputedStyle (it's a real
-        // CSS property, not a custom one), so parseFloat works.
-        const firstChild = el.firstElementChild as HTMLElement | null;
-        const tileWidth = firstChild?.offsetWidth ?? 0;
-        const gapPx = parseFloat(getComputedStyle(el).gap) || 0;
-        const tileAdvance = tileWidth + gapPx;
+        let tileAdvance = tileAdvanceRef.current;
+        if (tileAdvance === null || tileAdvance <= 0) {
+            tileAdvance = measureTileAdvance(el);
+            if (tileAdvance > 0) {
+                tileAdvanceRef.current = tileAdvance;
+            }
+        }
         if (tileAdvance <= 0) {
             // No tile laid out yet (empty row, or pre-paint). Fall
             // back to setting --track-col so the static CSS rule

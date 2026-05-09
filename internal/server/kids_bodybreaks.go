@@ -39,23 +39,9 @@ func (s *Server) handleKidsBodyBreakStatus(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, st)
 }
 
-// handleKidsOverrideSkipBreak ends the current break early. Audit
-// logged via override_actions (action='skip_break').
-func (s *Server) handleKidsOverrideSkipBreak(w http.ResponseWriter, r *http.Request) {
-	kidID, _ := s.requireOverride(w, r)
-	if kidID == 0 {
-		return
-	}
-	if err := s.curation.EndBreak(r.Context(), kidID, time.Now().UTC(), true); err != nil {
-		s.logger.Error().Err(err).Msg("end break")
-		http.Error(w, "failed", http.StatusInternalServerError)
-		return
-	}
-	if err := s.curation.RecordOverrideAction(r.Context(), kidID, "skip_break", "", "{}"); err != nil {
-		s.logger.Warn().Err(err).Msg("override audit log")
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
+// Skip-break override moved client-side: parent disables breaks
+// for a window via web/kids/src/parentOverrides.ts and the kid
+// client's break engine treats the window as a no-break period.
 
 // handleAdminProfileBodyBreaks GET returns the per-profile config.
 func (s *Server) handleAdminProfileBodyBreaks(w http.ResponseWriter, r *http.Request) {

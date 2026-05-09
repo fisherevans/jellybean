@@ -31,6 +31,7 @@ type Server struct {
 	auth     *auth.Handlers
 	curation *curation.Store
 	router   *mux.Router
+	qc       *qcStore
 
 	jellyfinVersion string
 	adminAssets     fs.FS
@@ -68,6 +69,7 @@ func New(opts Options) *Server {
 		auth:            authH,
 		curation:        curStore,
 		router:          mux.NewRouter(),
+		qc:              newQCStore(),
 		jellyfinVersion: opts.JellyfinVersion,
 		adminAssets:     opts.AdminAssets,
 		kidsAssets:      opts.KidsAssets,
@@ -88,6 +90,13 @@ func (s *Server) routes() {
 	authR.HandleFunc("/login", s.auth.Login).Methods(http.MethodPost)
 	authR.HandleFunc("/logout", s.auth.Logout).Methods(http.MethodPost)
 	authR.Handle("/me", s.auth.Middleware(http.HandlerFunc(s.auth.Me))).Methods(http.MethodGet)
+	// Quick Connect: parent enters Code on a Jellyfin client they're
+	// already signed into; we mint a Jellybean session on success.
+	// /enabled gates the UI affordance - we don't render the QC tab
+	// when the upstream Jellyfin admin has it disabled.
+	authR.HandleFunc("/quickconnect/enabled", s.handleQuickConnectEnabled).Methods(http.MethodGet)
+	authR.HandleFunc("/quickconnect/start", s.handleAdminQuickConnectStart).Methods(http.MethodPost)
+	authR.HandleFunc("/quickconnect/poll", s.handleAdminQuickConnectPoll).Methods(http.MethodGet)
 
 	admin := api.PathPrefix("/admin").Subrouter()
 	admin.Use(s.auth.Middleware)
@@ -108,6 +117,13 @@ func (s *Server) routes() {
 	// the bearer token returned by /auth/login. OptionalMiddleware lets
 	// the admin path coexist with the bearer path.
 	api.HandleFunc("/kids/auth/login", s.handleKidsLogin).Methods(http.MethodPost)
+	// Quick Connect on the kid TV: same proxy shape as the admin
+	// path. The kid client polls until authorized, then receives
+	// the bearer + profile mapping (identical JSON shape to the
+	// password-login response so the client's auth.ts can reuse).
+	api.HandleFunc("/kids/auth/quickconnect/enabled", s.handleQuickConnectEnabled).Methods(http.MethodGet)
+	api.HandleFunc("/kids/auth/quickconnect/start", s.handleKidsQuickConnectStart).Methods(http.MethodPost)
+	api.HandleFunc("/kids/auth/quickconnect/poll", s.handleKidsQuickConnectPoll).Methods(http.MethodGet)
 	kids := api.PathPrefix("/kids").Subrouter()
 	kids.Use(s.auth.OptionalMiddleware)
 	s.kidsLibraryRoutes(kids)

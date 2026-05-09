@@ -405,11 +405,38 @@ export function formatState(state: ItemState): string {
     return "Hidden";
 }
 
+export type QuickConnectStartResponse = {
+    id: string;
+    code: string;
+    expiresAt: string;
+};
+
+export type QuickConnectPollResponse = {
+    status: "pending" | "authorized" | "expired";
+    user?: User;
+};
+
 export const api = {
     login: (username: string, password: string) =>
         request<User>("POST", "/api/auth/login", { username, password }),
     logout: () => request<void>("POST", "/api/auth/logout"),
     me: () => request<User>("GET", "/api/auth/me"),
+
+    quickConnectEnabled: () =>
+        request<{ enabled: boolean }>(
+            "GET",
+            "/api/auth/quickconnect/enabled",
+        ),
+    quickConnectStart: () =>
+        request<QuickConnectStartResponse>(
+            "POST",
+            "/api/auth/quickconnect/start",
+        ),
+    quickConnectPoll: (id: string) =>
+        request<QuickConnectPollResponse>(
+            "GET",
+            `/api/auth/quickconnect/poll?id=${encodeURIComponent(id)}`,
+        ),
 
     listItems: (q: ItemsQuery) => request<ItemsResult>("GET", itemsURL(q)),
     getAdminItem: (itemId: string, profileId: number) =>

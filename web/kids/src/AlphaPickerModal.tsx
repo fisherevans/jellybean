@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useProgressiveBack } from "./useProgressiveBack";
 
 // AlphaPickerModal is the kid-facing replacement for the old vertical
 // A-Z strip. Pressing the A-Z icon button on the library controls row
@@ -57,69 +59,102 @@ export default function AlphaPickerModal({
         buttonRefs.current[cursor]?.focus({ preventScroll: true });
     }, [cursor]);
 
-    function activate(i: number) {
-        const key = ALPHA_KEYS[i];
-        const target = indexMap[key];
-        if (target === undefined) return; // dimmed - no-op
-        // Just onPick - the parent owns "close the modal + set focus
-        // to the picked tile" so we don't race a follow-up onClose
-        // that would overwrite the grid focus back to alphaBtn.
-        onPick(target);
-    }
+    // Window-level capture-phase keyboard listener. See
+    // OptionPickerModal for the rationale - keys must reach the
+    // modal even when DOM focus is still on the underlying page,
+    // and underlying listeners (TabPill, page-level) must not see
+    // the keys at all while the modal is open.
+    const onPickRef = useRef(onPick);
+    const onCloseRef = useRef(onClose);
+    onPickRef.current = onPick;
+    onCloseRef.current = onClose;
 
-    function onKey(e: React.KeyboardEvent) {
-        // Stop propagation so the page-level keydown handler doesn't
-        // also process the same key (which would move focus on the
-        // library behind the modal).
-        const handled = (() => {
-            switch (e.key) {
+    // Hardware Back on the TV remote routes through the Kotlin
+    // shell -> __jellybeanBack stack, not Backspace keydown. Push
+    // our own handler so the modal closes without relying on the
+    // page's parent handler.
+    useProgressiveBack(() => {
+        onCloseRef.current();
+        return true;
+    });
+    const cursorRef = useRef(cursor);
+    cursorRef.current = cursor;
+    const indexMapRef = useRef(indexMap);
+    indexMapRef.current = indexMap;
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            const k = e.key;
+            const handles =
+                k === "ArrowUp" ||
+                k === "ArrowDown" ||
+                k === "ArrowLeft" ||
+                k === "ArrowRight" ||
+                k === "Enter" ||
+                k === " " ||
+                k === "Escape" ||
+                k === "Backspace";
+            if (!handles) return;
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            if (e.repeat) return;
+            switch (k) {
                 case "Escape":
                 case "Backspace":
-                    onClose();
-                    return true;
+                    onCloseRef.current();
+                    return;
                 case "ArrowLeft":
                     setCursor((c) => (c % ALPHA_GRID_COLS === 0 ? c : c - 1));
-                    return true;
+                    return;
                 case "ArrowRight":
                     setCursor((c) => {
                         if (c + 1 >= ALPHA_KEYS.length) return c;
                         if ((c + 1) % ALPHA_GRID_COLS === 0) return c;
                         return c + 1;
                     });
-                    return true;
+                    return;
                 case "ArrowUp":
                     setCursor((c) =>
                         c - ALPHA_GRID_COLS >= 0 ? c - ALPHA_GRID_COLS : c,
                     );
-                    return true;
+                    return;
                 case "ArrowDown":
                     setCursor((c) =>
                         c + ALPHA_GRID_COLS < ALPHA_KEYS.length
                             ? c + ALPHA_GRID_COLS
                             : c,
                     );
-                    return true;
+                    return;
                 case "Enter":
-                case " ":
-                    activate(cursor);
-                    return true;
-                default:
-                    return false;
+                case " ": {
+                    const i = cursorRef.current;
+                    const key = ALPHA_KEYS[i];
+                    const target = indexMapRef.current[key];
+                    if (target === undefined) return; // dimmed - no-op
+                    onPickRef.current(target);
+                    return;
+                }
             }
-        })();
-        if (handled) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
+        };
+        window.addEventListener("keydown", onKey, { capture: true });
+        return () =>
+            window.removeEventListener("keydown", onKey, { capture: true });
+    }, []);
+
+    function activate(i: number) {
+        const key = ALPHA_KEYS[i];
+        const target = indexMap[key];
+        if (target === undefined) return;
+        onPick(target);
     }
 
-    return (
+    return createPortal(
         <div
             className="alpha-picker-backdrop"
             role="dialog"
             aria-modal
             aria-label="Jump to letter"
-            onKeyDown={onKey}
             onClick={onClose}
         >
             <div
@@ -164,6 +199,7 @@ export default function AlphaPickerModal({
                     Back to close
                 </p>
             </div>
-        </div>
+        </div>,
+        document.body,
     );
 }

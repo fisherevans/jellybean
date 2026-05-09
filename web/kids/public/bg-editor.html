@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Browse bg editor</title>
+        <style>
+            html, body { margin: 0; padding: 0; height: 100%; }
+            body {
+                display: grid;
+                grid-template-columns: 420px 1fr;
+                font-family: system-ui, sans-serif;
+                color: #1c1c1c;
+                height: 100vh;
+                overflow: hidden;
+            }
+            .controls {
+                background: #f4f4f4;
+                border-right: 1px solid #ddd;
+                overflow-y: auto;
+                padding: 12px 16px 80px;
+            }
+            .preview {
+                position: relative;
+                overflow-y: auto;
+                background-repeat: repeat-y;
+                background-size: 100% auto;
+                background-attachment: local;
+            }
+            .preview-content {
+                min-height: 800vh;
+            }
+            h2 {
+                font-size: 0.9rem;
+                margin: 16px 0 8px;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                color: #666;
+            }
+            h2:first-child { margin-top: 0; }
+            label {
+                display: block;
+                font-size: 0.78rem;
+                color: #555;
+                margin: 6px 0 2px;
+            }
+            input[type="number"], input[type="color"] {
+                box-sizing: border-box;
+                font-family: inherit;
+                font-size: 0.9rem;
+                padding: 3px 6px;
+            }
+            input[type="number"] { width: 100%; }
+            input[type="color"] { height: 28px; padding: 0; border: 1px solid #ccc; width: 100%; }
+            input[type="range"] {
+                width: 100%;
+                vertical-align: middle;
+            }
+            .slider-row {
+                display: grid;
+                grid-template-columns: 1fr 50px;
+                gap: 6px;
+                align-items: center;
+            }
+            .slider-val {
+                font-family: ui-monospace, monospace;
+                font-size: 0.78rem;
+                color: #444;
+                text-align: right;
+            }
+            .row {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 6px 8px;
+                align-items: end;
+            }
+            .row.three { grid-template-columns: 1fr 1fr 1fr; }
+            .blob {
+                background: #fff;
+                border: 1px solid #ddd;
+                border-radius: 6px;
+                padding: 8px 10px;
+                margin: 8px 0;
+            }
+            .blob-head {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 4px;
+            }
+            .blob-head strong { font-size: 0.9rem; }
+            button {
+                font-family: inherit;
+                font-size: 0.85rem;
+                padding: 5px 10px;
+                background: #fff;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                cursor: pointer;
+            }
+            button:hover { background: #eee; }
+            .danger { color: #c33; border-color: #c33; }
+            .actions {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                width: 420px;
+                background: #f4f4f4;
+                padding: 10px 16px;
+                border-top: 1px solid #ddd;
+                display: flex;
+                gap: 6px;
+                box-sizing: border-box;
+            }
+            .actions button { flex: 1; }
+            .stop-row {
+                display: grid;
+                grid-template-columns: 50px 1fr 26px;
+                gap: 6px;
+                align-items: center;
+                margin: 3px 0;
+            }
+            .preview-overlay {
+                position: fixed;
+                top: 12px;
+                right: 12px;
+                background: rgba(0, 0, 0, 0.75);
+                color: #fff;
+                padding: 8px 12px;
+                border-radius: 6px;
+                font-size: 0.78rem;
+                pointer-events: none;
+                font-variant-numeric: tabular-nums;
+            }
+            .hint { font-size: 0.72rem; color: #888; margin-top: 2px; }
+            .toast {
+                position: fixed;
+                bottom: 80px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(0, 0, 0, 0.85);
+                color: #fff;
+                padding: 10px 18px;
+                border-radius: 6px;
+                font-size: 0.9rem;
+                opacity: 0;
+                transition: opacity 200ms;
+                pointer-events: none;
+                z-index: 1000;
+            }
+            .toast.show { opacity: 1; }
+            textarea {
+                width: 100%;
+                height: 90px;
+                font-family: ui-monospace, monospace;
+                font-size: 0.7rem;
+                box-sizing: border-box;
+                margin-top: 6px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="controls" id="controls"></div>
+        <div class="preview" id="preview"><div class="preview-content"></div></div>
+        <div class="preview-overlay" id="overlay"></div>
+        <div class="toast" id="toast"></div>
+
+        <script>
+            // -- State -----------------------------------------------
+            // Constraint: for seamless N=1 vertical wrap with diagonal
+            // direction (vx, vy), vx = sqrt(vy * (1 - vy)). The "tilt"
+            // input below derives vx from a chosen angle (0deg = pure
+            // vertical, 45deg = max diagonal).
+            const state = {
+                viewBoxW: 800,
+                viewBoxH: 2200,
+                tiltDeg: 12,
+                stops: [
+                    { offset: 0, color: "#E81819" },
+                    { offset: 13, color: "#FF6EAA" },
+                    { offset: 25, color: "#C438D7" },
+                    { offset: 38, color: "#4F8AF7" },
+                    { offset: 50, color: "#18BFC7" },
+                    { offset: 63, color: "#56CA5E" },
+                    { offset: 75, color: "#FAFA49" },
+                    { offset: 88, color: "#FA8943" },
+                    { offset: 100, color: "#E81819" },
+                ],
+                blobs: [
+                    { cx: 18, cy: 28, rx: 24, ry: 18, color: "#FFE8DD", alpha: 0.7 },
+                    { cx: 78, cy: 72, rx: 24, ry: 18, color: "#E0F4E8", alpha: 0.7 },
+                    { cx: 55, cy: 22, rx: 22, ry: 16, color: "#EAE0F8", alpha: 0.65 },
+                    { cx: 32, cy: 78, rx: 24, ry: 18, color: "#FFF4D8", alpha: 0.7 },
+                    { cx: 88, cy: 32, rx: 22, ry: 16, color: "#DDE8FF", alpha: 0.65 },
+                ],
+            };
+
+            // -- SVG generation --------------------------------------
+            function tiltToDirection(deg) {
+                const rad = (deg * Math.PI) / 180;
+                const vy = Math.cos(rad) ** 2;
+                const vx = Math.cos(rad) * Math.sin(rad);
+                return { vx, vy };
+            }
+
+            // expandBlobs synthesizes seam-mirror copies for any blob
+            // whose vertical extent reaches past the tile boundary.
+            // A blob with cy=8%, ry=20% would have its top half cut
+            // off at the tile's upper edge; on repeat-y the
+            // visually-correct continuation lives at cy=108% in the
+            // tile above, which is the SAME tile (the next iteration).
+            // Without this we'd get the user's "I see the blob at
+            // top but it's clipped instead of wrapping to the bottom"
+            // problem. Same logic on the bottom edge for blobs whose
+            // (cy+ry) crosses 100%.
+            function expandBlobs(blobs) {
+                const out = [];
+                for (const b of blobs) {
+                    out.push({ ...b });
+                    if (b.cy - b.ry < 0) {
+                        out.push({ ...b, cy: b.cy + 100 });
+                    }
+                    if (b.cy + b.ry > 100) {
+                        out.push({ ...b, cy: b.cy - 100 });
+                    }
+                }
+                return out;
+            }
+
+            function buildSvg(s) {
+                const { vx, vy } = tiltToDirection(s.tiltDeg);
+                const stops = s.stops
+                    .map((st) => `            <stop offset="${st.offset}%" stop-color="${st.color}" />`)
+                    .join("\n");
+                const expanded = expandBlobs(s.blobs);
+                const blobDefs = expanded.map((b, i) => {
+                    // Ellipse via gradientTransform: scale Y by ry/rx
+                    // around the blob's center so the gradient becomes
+                    // a stretched circle.
+                    const rx = b.rx / 100;
+                    const ry = b.ry / 100;
+                    const cxN = b.cx / 100;
+                    const cyN = b.cy / 100;
+                    const yScale = (ry / rx).toFixed(4);
+                    return (
+                        `        <radialGradient id="blob${i}" cx="${b.cx}%" cy="${b.cy}%" r="${b.rx}%" ` +
+                        `gradientTransform="translate(${cxN.toFixed(4)} ${cyN.toFixed(4)}) scale(1 ${yScale}) translate(${(-cxN).toFixed(4)} ${(-cyN).toFixed(4)})">\n` +
+                        `            <stop offset="0%" stop-color="${b.color}" stop-opacity="${b.alpha}" />\n` +
+                        `            <stop offset="100%" stop-color="${b.color}" stop-opacity="0" />\n` +
+                        `        </radialGradient>`
+                    );
+                }).join("\n");
+                const blobRects = expanded
+                    .map((_b, i) => `    <rect width="100%" height="100%" fill="url(#blob${i})" />`)
+                    .join("\n");
+                return `<?xml version="1.0" encoding="UTF-8"?>
+<svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="${s.viewBoxW}"
+    height="${s.viewBoxH}"
+    viewBox="0 0 ${s.viewBoxW} ${s.viewBoxH}"
+    preserveAspectRatio="none"
+>
+    <defs>
+        <linearGradient
+            id="rainbow"
+            x1="0%"
+            y1="0%"
+            x2="${(vx * 100).toFixed(2)}%"
+            y2="${(vy * 100).toFixed(2)}%"
+            spreadMethod="repeat"
+        >
+${stops}
+        </linearGradient>
+${blobDefs}
+    </defs>
+    <rect width="100%" height="100%" fill="url(#rainbow)" />
+${blobRects}
+</svg>
+`;
+            }
+
+            // -- Preview ---------------------------------------------
+            const previewEl = document.getElementById("preview");
+            const overlayEl = document.getElementById("overlay");
+            let outputEl = null;
+
+            function renderPreview() {
+                const svg = buildSvg(state);
+                const dataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+                previewEl.style.backgroundImage = `url("${dataUrl}")`;
+                if (outputEl) outputEl.value = svg;
+                overlayEl.textContent = `tilt ${state.tiltDeg.toFixed(1)}° · ${state.stops.length} stops · ${state.blobs.length} blobs`;
+            }
+
+            // -- Controls (built once, not re-rendered on input) ------
+            // Re-rendering the entire controls panel on every input
+            // value change kills the focused element. Instead we
+            // build the DOM once and update only:
+            //   - the preview (background-image + overlay text)
+            //   - per-control "value display" spans
+            // Add / remove ops do trigger a full rebuild.
+            const controlsEl = document.getElementById("controls");
+
+            function el(tag, attrs = {}, ...children) {
+                const e = document.createElement(tag);
+                for (const [k, v] of Object.entries(attrs)) {
+                    if (k === "class") e.className = v;
+                    else if (k === "style") e.style.cssText = v;
+                    else if (k.startsWith("on")) e[k] = v;
+                    else if (v != null) e.setAttribute(k, v);
+                }
+                for (const c of children.flat()) {
+                    if (c == null) continue;
+                    const t = typeof c;
+                    if (t === "string" || t === "number" || t === "boolean") {
+                        e.appendChild(document.createTextNode(String(c)));
+                    } else {
+                        e.appendChild(c);
+                    }
+                }
+                return e;
+            }
+
+            function slider({ min, max, step, value, fmt = (v) => v, onInput }) {
+                const valEl = el("span", { class: "slider-val" }, fmt(value));
+                const range = el("input", {
+                    type: "range",
+                    min: String(min),
+                    max: String(max),
+                    step: String(step),
+                    value: String(value),
+                });
+                range.addEventListener("input", (e) => {
+                    const v = +e.target.value;
+                    valEl.textContent = fmt(v);
+                    onInput(v);
+                    renderPreview();
+                });
+                return el("div", { class: "slider-row" }, range, valEl);
+            }
+
+            function colorInput({ value, onInput }) {
+                const inp = el("input", { type: "color", value });
+                inp.addEventListener("input", (e) => {
+                    onInput(e.target.value);
+                    renderPreview();
+                });
+                return inp;
+            }
+
+            function sectionTile() {
+                return el(
+                    "div",
+                    {},
+                    el("h2", {}, "Tile"),
+                    el("label", {}, "viewBox W"),
+                    slider({
+                        min: 200, max: 2000, step: 50, value: state.viewBoxW,
+                        onInput: (v) => (state.viewBoxW = v),
+                    }),
+                    el("label", {}, "viewBox H (taller = each color spans more pixels)"),
+                    slider({
+                        min: 400, max: 6000, step: 100, value: state.viewBoxH,
+                        onInput: (v) => (state.viewBoxH = v),
+                    }),
+                );
+            }
+
+            function sectionRainbow() {
+                const stopsContainer = el("div", { id: "stops" });
+                renderStops(stopsContainer);
+                const addStopBtn = el(
+                    "button",
+                    {
+                        style: "margin-top: 6px;",
+                        onclick: () => {
+                            state.stops.push({ offset: 50, color: "#FFFFFF" });
+                            state.stops.sort((a, b) => a.offset - b.offset);
+                            renderStops(stopsContainer);
+                            renderPreview();
+                        },
+                    },
+                    "+ Add stop",
+                );
+                return el(
+                    "div",
+                    {},
+                    el("h2", {}, "Rainbow"),
+                    el("label", {}, "Tilt from vertical"),
+                    slider({
+                        min: 0, max: 45, step: 0.5, value: state.tiltDeg,
+                        fmt: (v) => `${(+v).toFixed(1)}°`,
+                        onInput: (v) => (state.tiltDeg = v),
+                    }),
+                    el("p", { class: "hint" }, "0° vertical, 45° max diagonal. Wrap stays seamless at every tilt."),
+                    el("label", { style: "margin-top: 8px;" }, "Stops (offset 0–100, color)"),
+                    stopsContainer,
+                    addStopBtn,
+                );
+            }
+
+            function renderStops(container) {
+                container.innerHTML = "";
+                state.stops.forEach((st, i) => {
+                    const offsetInput = el("input", {
+                        type: "number",
+                        min: "0", max: "100", step: "1",
+                        value: String(st.offset),
+                    });
+                    offsetInput.addEventListener("input", (e) => {
+                        st.offset = +e.target.value;
+                        renderPreview();
+                    });
+                    const colorEl = colorInput({
+                        value: st.color,
+                        onInput: (v) => (st.color = v),
+                    });
+                    const delBtn = el(
+                        "button",
+                        {
+                            class: "danger",
+                            onclick: () => {
+                                state.stops.splice(i, 1);
+                                renderStops(container);
+                                renderPreview();
+                            },
+                        },
+                        "×",
+                    );
+                    container.appendChild(
+                        el("div", { class: "stop-row" }, offsetInput, colorEl, delBtn),
+                    );
+                });
+            }
+
+            function sectionBlobs() {
+                const blobsContainer = el("div", { id: "blobs" });
+                renderBlobs(blobsContainer);
+                const addBlobBtn = el(
+                    "button",
+                    {
+                        onclick: () => {
+                            state.blobs.push({
+                                cx: 50, cy: 50, rx: 24, ry: 18,
+                                color: "#FFFFFF", alpha: 0.7,
+                            });
+                            renderBlobs(blobsContainer);
+                            renderPreview();
+                        },
+                    },
+                    "+ Add blob",
+                );
+                return el(
+                    "div",
+                    {},
+                    el("h2", {}, "Blobs"),
+                    el("p", { class: "hint" }, "rx and ry are independent radii in % of bounding box. Pure single-color radial fading to transparent at the edge."),
+                    blobsContainer,
+                    addBlobBtn,
+                );
+            }
+
+            function renderBlobs(container) {
+                container.innerHTML = "";
+                state.blobs.forEach((b, i) => {
+                    const card = el("div", { class: "blob" });
+                    card.appendChild(
+                        el(
+                            "div",
+                            { class: "blob-head" },
+                            el("strong", {}, `Blob ${i + 1}`),
+                            el(
+                                "button",
+                                {
+                                    class: "danger",
+                                    onclick: () => {
+                                        state.blobs.splice(i, 1);
+                                        renderBlobs(container);
+                                        renderPreview();
+                                    },
+                                },
+                                "×",
+                            ),
+                        ),
+                    );
+                    card.appendChild(el("label", {}, "cx (horizontal position %)"));
+                    card.appendChild(slider({
+                        min: 0, max: 100, step: 1, value: b.cx,
+                        fmt: (v) => `${v}%`,
+                        onInput: (v) => (b.cx = v),
+                    }));
+                    card.appendChild(el("label", {}, "cy (vertical position %)"));
+                    card.appendChild(slider({
+                        min: 0, max: 100, step: 1, value: b.cy,
+                        fmt: (v) => `${v}%`,
+                        onInput: (v) => (b.cy = v),
+                    }));
+                    card.appendChild(el("label", {}, "rx (horizontal size %)"));
+                    card.appendChild(slider({
+                        min: 1, max: 80, step: 1, value: b.rx,
+                        fmt: (v) => `${v}%`,
+                        onInput: (v) => (b.rx = v),
+                    }));
+                    card.appendChild(el("label", {}, "ry (vertical size %)"));
+                    card.appendChild(slider({
+                        min: 1, max: 80, step: 1, value: b.ry,
+                        fmt: (v) => `${v}%`,
+                        onInput: (v) => (b.ry = v),
+                    }));
+                    card.appendChild(el(
+                        "div",
+                        { class: "row" },
+                        el("div", {}, el("label", {}, "Color"), colorInput({
+                            value: b.color,
+                            onInput: (v) => (b.color = v),
+                        })),
+                        el("div", {}, el("label", {}, "Opacity"), slider({
+                            min: 0, max: 1, step: 0.05, value: b.alpha,
+                            fmt: (v) => (+v).toFixed(2),
+                            onInput: (v) => (b.alpha = v),
+                        })),
+                    ));
+                    container.appendChild(card);
+                });
+            }
+
+            function sectionOutput() {
+                outputEl = el("textarea", { readonly: "" });
+                return el(
+                    "div",
+                    {},
+                    el("h2", {}, "SVG output"),
+                    outputEl,
+                );
+            }
+
+            function buildActions() {
+                const toast = (msg) => {
+                    const t = document.getElementById("toast");
+                    t.textContent = msg;
+                    t.classList.add("show");
+                    setTimeout(() => t.classList.remove("show"), 1600);
+                };
+                return el(
+                    "div",
+                    { class: "actions" },
+                    el("button", {
+                        onclick: async () => {
+                            await navigator.clipboard.writeText(buildSvg(state));
+                            toast("Copied to clipboard");
+                        },
+                    }, "Copy"),
+                    el("button", {
+                        onclick: () => {
+                            const blob = new Blob([buildSvg(state)], { type: "image/svg+xml" });
+                            const a = el("a", {
+                                href: URL.createObjectURL(blob),
+                                download: "browse-bg-tile.svg",
+                            });
+                            a.click();
+                            toast("Downloaded");
+                        },
+                    }, "Download"),
+                    el("button", {
+                        onclick: async () => {
+                            try {
+                                const res = await fetch("/api/admin/dev/bg-svg", {
+                                    method: "POST",
+                                    credentials: "same-origin",
+                                    headers: { "Content-Type": "image/svg+xml" },
+                                    body: buildSvg(state),
+                                });
+                                if (!res.ok) {
+                                    toast(`Save failed: ${res.status}`);
+                                    return;
+                                }
+                                toast("Saved to /public — restart jb to see in kid app");
+                            } catch (e) {
+                                toast(`Save failed: ${e}`);
+                            }
+                        },
+                    }, "Save to /public"),
+                );
+            }
+
+            // -- Load existing SVG -----------------------------------
+            // Parse the live /public/browse-bg-tile.svg back into
+            // editor state so reloading the editor picks up where the
+            // user last saved. Mirrors that were auto-synthesized in
+            // buildSvg (cy outside [0, 100]) are excluded - the user
+            // only sees + edits the canonical blobs.
+            function parseSvg(text) {
+                const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+                if (doc.querySelector("parsererror")) return null;
+                const svg = doc.querySelector("svg");
+                if (!svg) return null;
+                const next = {
+                    viewBoxW: 800, viewBoxH: 2200,
+                    tiltDeg: 12, stops: [], blobs: [],
+                };
+                const w = svg.getAttribute("width");
+                const h = svg.getAttribute("height");
+                if (w) next.viewBoxW = +w;
+                if (h) next.viewBoxH = +h;
+                // Rainbow direction -> tilt deg.
+                const rainbow = doc.querySelector("linearGradient");
+                if (rainbow) {
+                    const x2 = parsePct(rainbow.getAttribute("x2"));
+                    const y2 = parsePct(rainbow.getAttribute("y2"));
+                    if (Number.isFinite(x2) && Number.isFinite(y2)) {
+                        // (vx, vy) = (cos*sin, cos²) of tiltRad.
+                        // tan(tiltRad) = vx/vy.
+                        const rad = Math.atan2(x2, y2);
+                        next.tiltDeg = Math.round((rad * 180 / Math.PI) * 10) / 10;
+                    }
+                    rainbow.querySelectorAll("stop").forEach((s) => {
+                        const offset = parsePct(s.getAttribute("offset"));
+                        const color = s.getAttribute("stop-color") || "#000000";
+                        if (Number.isFinite(offset)) {
+                            next.stops.push({ offset, color: color.toUpperCase() });
+                        }
+                    });
+                }
+                // Blobs: every radialGradient; filter mirrors (cy
+                // outside [0, 100] are seam-wrap copies).
+                doc.querySelectorAll("radialGradient").forEach((g) => {
+                    const cx = parsePct(g.getAttribute("cx"));
+                    const cy = parsePct(g.getAttribute("cy"));
+                    const r = parsePct(g.getAttribute("r"));
+                    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return;
+                    if (cy < 0 || cy > 100) return; // skip mirrors
+                    const t = g.getAttribute("gradientTransform") || "";
+                    const m = t.match(/scale\(1\s+([0-9.eE-]+)\)/);
+                    const yScale = m ? +m[1] : 1;
+                    const ry = Math.round(r * yScale);
+                    const stop0 = g.querySelector("stop");
+                    const color = stop0?.getAttribute("stop-color") || "#FFFFFF";
+                    const alpha = +(stop0?.getAttribute("stop-opacity") || "1");
+                    next.blobs.push({
+                        cx: Math.round(cx),
+                        cy: Math.round(cy),
+                        rx: Math.round(r),
+                        ry: ry || Math.round(r),
+                        color: color.toUpperCase(),
+                        alpha,
+                    });
+                });
+                return next;
+            }
+            function parsePct(s) {
+                if (s == null) return NaN;
+                return parseFloat(String(s).replace("%", ""));
+            }
+
+            // -- Init ------------------------------------------------
+            (async function init() {
+                try {
+                    // Cache-bust so reloading the editor after a save
+                    // shows the just-saved file, not a stale browser
+                    // image cache copy.
+                    const res = await fetch(
+                        `/player/browse-bg-tile.svg?_=${Date.now()}`,
+                    );
+                    if (res.ok) {
+                        const text = await res.text();
+                        const parsed = parseSvg(text);
+                        if (parsed && parsed.stops.length > 0) {
+                            Object.assign(state, parsed);
+                        }
+                    }
+                } catch (_e) { /* fall through to defaults */ }
+                controlsEl.appendChild(sectionTile());
+                controlsEl.appendChild(sectionRainbow());
+                controlsEl.appendChild(sectionBlobs());
+                controlsEl.appendChild(sectionOutput());
+                document.body.appendChild(buildActions());
+                renderPreview();
+            })();
+        </script>
+    </body>
+</html>

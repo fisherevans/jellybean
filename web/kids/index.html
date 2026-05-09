@@ -45,6 +45,14 @@
             .splash.hidden {
                 opacity: 0;
                 visibility: hidden;
+                /* During the opacity fade (400ms), visibility is
+                   still computed as 'visible' due to the staggered
+                   transition; pointer-events: none ensures the
+                   splash doesn't intercept clicks on page content
+                   during that window. Came up as a Playwright
+                   timeout when the test clicked a button right
+                   after first paint. */
+                pointer-events: none;
             }
             .splash-bean {
                 width: 144px;

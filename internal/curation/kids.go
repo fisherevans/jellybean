@@ -82,6 +82,36 @@ func (s *Store) GetKid(ctx context.Context, id int64) (*KidWithProfile, error) {
 	return &k, nil
 }
 
+// FindFirstKidByProfile returns the oldest kid associated with the
+// given profile id, or ErrKidNotFound when the profile has no kids.
+// Used by the admin-preview override flow to "act as" a kid when
+// the admin user isn't mapped to one - lets the parent test the
+// override gesture from a browser without needing a real kid login.
+func (s *Store) FindFirstKidByProfile(ctx context.Context, profileID int64) (*KidWithProfile, error) {
+	if profileID <= 0 {
+		return nil, ErrKidNotFound
+	}
+	row := s.db.QueryRowContext(ctx, `
+		SELECT k.id, k.name, k.profile_id, k.jellyfin_user_id, k.created_at, p.name
+		FROM kids k
+		JOIN profiles p ON p.id = k.profile_id
+		WHERE k.profile_id = ?
+		ORDER BY k.created_at ASC
+		LIMIT 1`, profileID)
+	var (
+		k  KidWithProfile
+		ts int64
+	)
+	if err := row.Scan(&k.ID, &k.Name, &k.ProfileID, &k.JellyfinUserID, &ts, &k.ProfileName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrKidNotFound
+		}
+		return nil, err
+	}
+	k.CreatedAt = time.Unix(ts, 0)
+	return &k, nil
+}
+
 // FindKidByJellyfinUser is the auth-path lookup: the TV's bearer token
 // belongs to this Jellyfin user; which kid (and therefore which profile)
 // should we scope their library to?

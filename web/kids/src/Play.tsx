@@ -54,6 +54,8 @@ type NextUpResponse = {
     name: string;
     seriesId?: string;
     seriesName?: string;
+    indexNumber?: number;
+    parentIndexNumber?: number;
     userData?: StreamResponse["userData"];
 };
 
@@ -131,6 +133,29 @@ export default function Play() {
     // Reset to the server value whenever the stream itself changes
     // (initial fetch, next-episode swap).
     const [isFavorite, setIsFavorite] = useState(false);
+
+    // Up Next overlay state. When the kid is watching an episode and
+    // the playhead crosses 90%, we prefetch the next episode and show
+    // a 10s countdown overlay; on countdown=0 OR video.ended the kid
+    // auto-advances. Cancel button stops the countdown but keeps the
+    // current episode playing. Movies don't get this treatment.
+    const [upNext, setUpNext] = useState<NextUpResponse | null>(null);
+    const [upNextStatus, setUpNextStatus] = useState<
+        "idle" | "shown" | "dismissed"
+    >("idle");
+    const [upNextCountdown, setUpNextCountdown] = useState(10);
+    // One-shot guard so seeking back below the threshold + forward
+    // again doesn't re-fire the prefetch within the same episode.
+    // Reset on stream swap (see [itemId] effect below) so the next
+    // episode gets its own trigger.
+    const upNextTriggeredRef = useRef(false);
+    // Advance idempotency guard. Both the countdown reaching 0 and
+    // the video's natural `ended` event can call handleNextEpisode
+    // within the same tick. Without this ref the second call posts
+    // a duplicate stop-encoding for the (now-stale) play session
+    // and double-fetches next-up. Reset on stream swap so the new
+    // episode can advance again.
+    const advancingRef = useRef(false);
 
     const stream = (() => {
         switch (status.kind) {
@@ -221,6 +246,18 @@ export default function Play() {
         reportedStart.current = false;
         setIsBuffering(false);
         setIsFavorite(false);
+        // Reset Up Next state so the new episode (we may have just
+        // auto-advanced into it via handleNextEpisode -> nav with
+        // replace:true, which swaps :itemId without unmounting Play)
+        // gets its own overlay run. Without these resets, the
+        // upNextTriggeredRef stayed `true` from the previous
+        // episode and the overlay never re-fired - the auto-play
+        // chain only worked once.
+        upNextTriggeredRef.current = false;
+        advancingRef.current = false;
+        setUpNext(null);
+        setUpNextStatus("idle");
+        setUpNextCountdown(10);
 
         (async () => {
             try {
@@ -228,7 +265,10 @@ export default function Play() {
                 if (cancelled) return;
                 if (first.itemType !== "Series") {
                     dispatch({ type: "stream-fetched", stream: first });
-                    if (first.seriesName) setSeriesLabel(first.seriesName);
+                    // Movies (and Episodes the kid jumps straight to)
+                    // carry their own seriesName; non-episode movies
+                    // leave it blank, which clears the label.
+                    setSeriesLabel(first.seriesName ?? null);
                     return;
                 }
                 const next = await fetchNextUp(itemId);
@@ -363,9 +403,90 @@ export default function Play() {
         };
     }, [reportStopped]);
 
+    const seriesIdForNextRef = useRef<string | undefined>();
+    const currentEpisodeIdRef = useRef<string | undefined>();
+    seriesIdForNextRef.current = stream?.seriesId;
+    currentEpisodeIdRef.current = stream?.itemId;
+
+    // Up Next prefetch trigger: fired by the video's timeupdate
+    // event. We poll-rate this via the upNextTriggeredRef one-shot
+    // guard, so the actual cost is a single fetchNextUp on the
+    // first frame past the 90% threshold (matching the "watched"
+    // threshold used elsewhere in the kid app). Movies have no
+    // seriesId; the early-return drops them out.
+    const onTimeUpdate = useCallback(() => {
+        if (upNextTriggeredRef.current) return;
+        const seriesId = seriesIdForNextRef.current;
+        const epId = currentEpisodeIdRef.current;
+        if (!seriesId || !epId) return;
+        const v = videoRef.current;
+        if (!v || !v.duration || !Number.isFinite(v.duration)) return;
+        const pct = (v.currentTime / v.duration) * 100;
+        if (pct < 90) return;
+        upNextTriggeredRef.current = true;
+        void (async () => {
+            try {
+                const next = await fetchNextUp(seriesId, epId);
+                if (!next.episodeId || next.episodeId === epId) {
+                    // Last episode of the series, or the server
+                    // returned the same episode (already-loaded
+                    // resume case). Don't show the overlay - the
+                    // existing onEnded -> watchHref behavior is fine.
+                    return;
+                }
+                setUpNext(next);
+                setUpNextStatus("shown");
+                setUpNextCountdown(10);
+            } catch {
+                // No-op: best-effort prefetch.
+            }
+        })();
+    }, []);
+
+    // Countdown timer. Two effects, deliberately split:
+    //
+    // (1) Tick effect: while status === "shown" AND countdown > 0,
+    //     schedule a 1s timeout that decrements. Cleanup cancels
+    //     the timeout. The tick callback only does setState - if
+    //     the component unmounts mid-flight, React swallows the
+    //     setState and we never reach the fire effect.
+    //
+    // (2) Fire effect: when status === "shown" AND countdown
+    //     reaches 0, call handleNextEpisode. Lives in its own
+    //     effect so it runs from the post-render commit phase
+    //     (clean place to dispatch a navigation) rather than
+    //     synchronously from inside the tick effect's body.
+    //     handleNextEpisode is itself idempotent via advancingRef,
+    //     so even a duplicate fire (race with onEnded) is safe.
+    useEffect(() => {
+        if (upNextStatus !== "shown") return;
+        if (upNextCountdown <= 0) return;
+        const id = window.setTimeout(() => {
+            setUpNextCountdown((c) => c - 1);
+        }, 1000);
+        return () => window.clearTimeout(id);
+    }, [upNextStatus, upNextCountdown]);
+    useEffect(() => {
+        if (upNextStatus !== "shown") return;
+        if (upNextCountdown > 0) return;
+        handleNextEpisode();
+        // handleNextEpisode is intentionally not in deps - it
+        // changes identity when stream swaps, but the swap also
+        // resets countdown to 10, so this effect won't refire.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [upNextStatus, upNextCountdown]);
+
     function onEnded() {
         reportStopped();
         dispatch({ type: "ended" });
+        // Auto-advance when an Up Next overlay is loaded and the
+        // kid hasn't dismissed it. Otherwise fall through to the
+        // existing post-end UX (back to the watch interstitial,
+        // where the hero offers Watch Again / next episode picker).
+        if (upNext && upNextStatus !== "dismissed") {
+            handleNextEpisode();
+            return;
+        }
         nav(watchHref);
     }
 
@@ -381,6 +502,14 @@ export default function Play() {
     const currentEpisodeId = stream?.itemId;
     const handleNextEpisode = useCallback(() => {
         if (!seriesIdForNext || !currentEpisodeId) return;
+        // Idempotent: countdown-zero and video.ended can race
+        // (within ~50ms when the kid lets the credits roll). The
+        // second call would post a stale stop-encoding and double
+        // fetch next-up. Flip-and-check via ref so only the first
+        // caller does the work. Reset by the [itemId] effect on
+        // the next mount.
+        if (advancingRef.current) return;
+        advancingRef.current = true;
         reportStopped();
         drainQueue(queueRef.current);
         const v = videoRef.current;
@@ -514,6 +643,7 @@ export default function Play() {
                     reportProgress(true);
                 }}
                 onEnded={onEnded}
+                onTimeUpdate={onTimeUpdate}
                 onMediaError={handleMediaError}
                 style={{ width: "100%", height: "100vh" }}
             />
@@ -624,6 +754,82 @@ export default function Play() {
                 }
                 favoriteRef={favoriteRef}
             />
+            {upNextStatus === "shown" && upNext && (
+                <UpNextOverlay
+                    next={upNext}
+                    countdown={upNextCountdown}
+                    onSkipNow={handleNextEpisode}
+                    onDismiss={() => setUpNextStatus("dismissed")}
+                />
+            )}
+        </div>
+    );
+}
+
+// UpNextOverlay shows over the bottom-right of the video when the
+// kid is in the last 10% of an episode. The countdown ticks from 10
+// to 0; on 0 the parent calls handleNextEpisode (auto-advance).
+// Skip Now jumps immediately; Cancel suppresses the auto-advance
+// for this episode (the kid stays on the current video; they can
+// still let it end naturally - onEnded then falls through to the
+// watch interstitial because upNextStatus === "dismissed").
+function UpNextOverlay({
+    next,
+    countdown,
+    onSkipNow,
+    onDismiss,
+}: {
+    next: NextUpResponse;
+    countdown: number;
+    onSkipNow: () => void;
+    onDismiss: () => void;
+}) {
+    const skipRef = useRef<HTMLButtonElement | null>(null);
+    useEffect(() => {
+        skipRef.current?.focus();
+    }, []);
+    function onKey(e: React.KeyboardEvent<HTMLDivElement>) {
+        if (e.key === "Escape") {
+            e.preventDefault();
+            onDismiss();
+        }
+    }
+    const ep =
+        next.parentIndexNumber !== undefined && next.indexNumber !== undefined
+            ? `S${next.parentIndexNumber}E${String(next.indexNumber).padStart(2, "0")}`
+            : "";
+    return (
+        <div
+            className="up-next-overlay"
+            role="dialog"
+            aria-label="Up Next"
+            onKeyDown={onKey}
+        >
+            <div className="up-next-card">
+                <div className="up-next-label">Up Next in {countdown}</div>
+                {ep && <div className="up-next-badge">{ep}</div>}
+                <div className="up-next-title">{next.name}</div>
+                {next.seriesName && (
+                    <div className="up-next-series">{next.seriesName}</div>
+                )}
+                <div className="up-next-actions">
+                    <button
+                        ref={skipRef}
+                        type="button"
+                        className="up-next-btn primary"
+                        onClick={onSkipNow}
+                    >
+                        Skip Now
+                    </button>
+                    <button
+                        type="button"
+                        className="up-next-btn"
+                        onClick={onDismiss}
+                    >
+                        Cancel
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }

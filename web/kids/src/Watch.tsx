@@ -9,6 +9,7 @@ import {
 import {
     ArrowCounterClockwise,
     ArrowLeft,
+    Check,
     Heart,
     Play,
     Shuffle,
@@ -23,7 +24,7 @@ import {
     type Session,
 } from "./auth";
 import { getHomeTab } from "./kidNav";
-import OverrideModal, { useLongPressUp } from "./OverrideModal";
+import OverrideModal, { useLongPressEnter } from "./OverrideModal";
 import { scrollWindowToCenter, scrollWindowToTop } from "./smoothScroll";
 import { useProgressiveBack } from "./useProgressiveBack";
 
@@ -56,6 +57,8 @@ type Item = {
     ImageTags?: { Primary?: string; Backdrop?: string };
     UserData?: ItemUserData;
     IsFavorite?: boolean;
+    SeriesId?: string;
+    SeriesName?: string;
 };
 
 type SeriesEpisode = {
@@ -87,21 +90,51 @@ export default function Watch() {
     const [item, setItem] = useState<Item | null>(null);
     const [episodes, setEpisodes] = useState<EpisodesResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
-    // Adult override gesture (M9): long-press UP on /watch targets
-    // the watched item itself - the kid is reading its details so
-    // that's clearly what they'd want to edit.
+    // Adult override gesture (M9): long-press Enter (D-pad center)
+    // on /watch targets the watched item itself - the kid is
+    // reading its details so that's clearly what they'd want to
+    // edit. Hook intercepts Enter via capture-phase listeners and
+    // dispatches: short press = hand-off to the page's normal Enter
+    // handling (Watch's Play button click), long press = open
+    // override. We don't pass onShortPress so the hook's keyup
+    // ends without firing - but that ALSO means the page's own
+    // Enter wouldn't fire either while the hook is enabled. So
+    // for Watch we only want the long-press behavior; short press
+    // should still trigger the focused button. Re-fire that here.
     const [override, setOverride] = useState<{
         itemId: string;
         itemName: string;
+        itemType: string;
+        seriesId?: string;
+        seriesName?: string;
+        played?: boolean;
     } | null>(null);
-    useLongPressUp(
-        () => {
-            if (!item || !session) return;
-            setOverride({ itemId: item.Id, itemName: item.Name });
+    useLongPressEnter({
+        enabled: !!item && !!session && override === null,
+        onShortPress: () => {
+            // Synthesize a click on whatever button currently has
+            // DOM focus (the Play button, Continue, episode tile,
+            // etc) since the hook's preventDefault suppressed the
+            // browser's natural button-click-on-keyup.
+            const el = document.activeElement;
+            if (el instanceof HTMLElement) {
+                el.click();
+            }
         },
-        !!item && !!session && override === null,
-        600,
-    );
+        onLongPress: () => {
+            if (!item || !session) return;
+            const pct = item.UserData?.PlayedPercentage ?? 0;
+            const playedFlag = !!item.UserData?.Played;
+            setOverride({
+                itemId: item.Id,
+                itemName: item.Name,
+                itemType: item.Type ?? "",
+                seriesId: item.SeriesId,
+                seriesName: item.SeriesName,
+                played: playedFlag || pct >= 90,
+            });
+        },
+    });
 
     const adminProfileId = searchParams.get("profileId");
     // Where Back should land: the home tab the kid was last on
@@ -500,7 +533,7 @@ export default function Watch() {
                                 autoFocus
                                 data-zone="hero"
                             >
-                                <ArrowCounterClockwise weight="bold" aria-hidden />
+                                <ArrowCounterClockwise weight="fill" aria-hidden />
                                 Watch again
                             </button>
                         )}
@@ -521,7 +554,7 @@ export default function Watch() {
                                 onClick={() => goPlay(item.Id, true)}
                                 data-zone="hero"
                             >
-                                <ArrowCounterClockwise weight="bold" aria-hidden />
+                                <ArrowCounterClockwise weight="fill" aria-hidden />
                                 Restart
                             </button>
                         )}
@@ -547,6 +580,10 @@ export default function Watch() {
                 <OverrideModal
                     itemId={override.itemId}
                     itemName={override.itemName}
+                    itemType={override.itemType}
+                    seriesId={override.seriesId}
+                    seriesName={override.seriesName}
+                    played={override.played}
                     onClose={() => setOverride(null)}
                 />
             )}
@@ -585,7 +622,8 @@ function Poster({ id, isSeries }: { id: string; isSeries: boolean }) {
             className={isSeries ? "watch-thumb" : "watch-poster"}
             src={`/api/kids/items/${encodeURIComponent(id)}/image?type=${type}&width=${width}${imageAuthSuffix()}`}
             alt=""
-            loading="eager"
+            loading="lazy"
+            decoding="async"
             onError={(e) => {
                 const img = e.currentTarget;
                 if (isSeries && !img.dataset.fellBack) {
@@ -649,7 +687,7 @@ function SeriesHeroActions({ episodes, onPlay }: SeriesHeroActionsProps) {
                 onClick={() => onPlay(target.episode.id, { restart: true })}
                 data-zone="hero"
             >
-                <ArrowCounterClockwise weight="bold" aria-hidden />
+                <ArrowCounterClockwise weight="fill" aria-hidden />
                 Restart
             </button>
             {next && (
@@ -667,7 +705,7 @@ function SeriesHeroActions({ episodes, onPlay }: SeriesHeroActionsProps) {
                 onClick={playRandom}
                 data-zone="hero"
             >
-                <Shuffle weight="bold" aria-hidden />
+                <Shuffle weight="fill" aria-hidden />
                 Random
             </button>
         </>
@@ -822,7 +860,9 @@ function EpisodeAccordion({ response, onPlay }: EpisodeAccordionProps) {
                                                 data-zone="accordion"
                                                 onClick={() => onPlay(e.id)}
                                             >
-                                                <div className="watch-episode-thumb-wrap">
+                                                <div
+                                                    className={`watch-episode-thumb-wrap${watched ? " is-watched" : ""}`}
+                                                >
                                                     <EpisodeThumb episode={e} />
                                                     {inProgress && (
                                                         <div
@@ -831,16 +871,16 @@ function EpisodeAccordion({ response, onPlay }: EpisodeAccordionProps) {
                                                             aria-hidden
                                                         />
                                                     )}
-                                                    {watched && !inProgress && (
-                                                        <div
-                                                            className="watch-episode-thumb-bar"
-                                                            aria-hidden
+                                                    {watched && (
+                                                        <span
+                                                            className="watch-episode-thumb-watched"
+                                                            aria-label="Watched"
                                                         >
-                                                            <div
-                                                                className="watch-episode-thumb-bar-fill"
-                                                                style={{ width: "100%" }}
+                                                            <Check
+                                                                size={16}
+                                                                weight="bold"
                                                             />
-                                                        </div>
+                                                        </span>
                                                     )}
                                                 </div>
                                                 <div className="watch-episode-info">
@@ -851,11 +891,6 @@ function EpisodeAccordion({ response, onPlay }: EpisodeAccordionProps) {
                                                             {epLabel(e)}
                                                         </span>{" "}
                                                         {e.name}
-                                                        {watched ? (
-                                                            <span className="watch-episode-done">
-                                                                ✓
-                                                            </span>
-                                                        ) : null}
                                                     </div>
                                                     <div className="watch-episode-meta">
                                                         {e.runtimeTicks

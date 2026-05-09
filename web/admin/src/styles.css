@@ -109,6 +109,71 @@ button.primary:hover {
     border-color: var(--accent);
 }
 
+/* Quick Connect digit grid for the admin login. Mirrors the kid TV
+   design but at admin's tighter sizing - the parent's reading from
+   their laptop screen, not a TV across the room. */
+.qc-code {
+    display: inline-flex;
+    gap: 0.35rem;
+    margin: 0.5rem 0;
+    font-variant-numeric: tabular-nums;
+}
+.qc-digit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    padding: 0.4rem 0.5rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 1.5rem;
+    font-weight: 700;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    color: var(--fg);
+}
+.qc-status {
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+.qc-spinner {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-top-color: var(--accent);
+    animation: qc-spin 900ms linear infinite;
+}
+@keyframes qc-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+/* Link-style secondary action used by the login card to flip
+   between QC and password modes. Looks like inline text but
+   gets keyboard-friendly focus chrome. */
+button.link-btn {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid transparent;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.9rem;
+    align-self: center;
+}
+button.link-btn:hover {
+    background: rgba(128, 132, 255, 0.08);
+    border-color: transparent;
+}
+button.link-btn:focus,
+button.link-btn:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+}
+
 button.danger {
     color: #f87171;
     border-color: rgba(248, 113, 113, 0.4);
@@ -3826,6 +3891,77 @@ textarea:focus {
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 2px rgba(128, 132, 255, 0.25);
+}
+
+/* ArrowPinInput: 4-step direction-arrow pattern (replaces numeric
+   pin). Cells display the arrow glyph (or a filled dot in the
+   read-only "configured" view); the pad below provides clickable
+   directional buttons for mouse-driven entry. */
+.arrow-pin-input {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    outline: none;
+}
+.arrow-pin-input:focus-within {
+    /* Subtle ring so the keyboard-driven entry path has a visible
+       focus surface. */
+    box-shadow: 0 0 0 2px rgba(128, 132, 255, 0.15);
+    border-radius: 8px;
+}
+.arrow-pin-cells {
+    display: inline-flex;
+    gap: 0.6rem;
+}
+.arrow-pin-cell {
+    width: 3rem;
+    height: 3.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.6rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--muted);
+    box-sizing: border-box;
+}
+.arrow-pin-cell.filled {
+    color: var(--fg);
+    border-color: var(--accent);
+    background: rgba(128, 132, 255, 0.10);
+}
+.arrow-pin-pad {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+}
+.arrow-pin-row {
+    display: flex;
+    gap: 0.35rem;
+}
+.arrow-pin-btn {
+    width: 3rem;
+    height: 3rem;
+    font-size: 1.5rem;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    border-radius: 8px;
+    cursor: pointer;
+}
+.arrow-pin-btn:hover:not(:disabled) {
+    background: rgba(128, 132, 255, 0.10);
+    border-color: var(--accent);
+}
+.arrow-pin-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+.arrow-pin-actions {
+    display: flex;
+    gap: 0.5rem;
 }
 
 /* Corner close button used by LayoutPreviewModal so the X sits in

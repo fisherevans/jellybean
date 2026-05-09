@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
-    useActiveMode,
+    useEffectiveActiveMode,
+    useEffectiveBodyBreakStatus,
+    useEffectiveTimeStatus,
+    useEffectiveViewingState,
+    // Bare hooks kept as TYPES only (ReturnType<...> references
+    // below). Eslint flags the names as unused otherwise.
     useBodyBreakStatus,
     useTimeStatus,
     useViewingState,
@@ -31,10 +36,15 @@ type Props = {
 };
 
 export default function KidOverlays({ activelyPlaying = false }: Props) {
-    const viewing = useViewingState();
-    const time = useTimeStatus();
-    const bodyBreak = useBodyBreakStatus(activelyPlaying);
-    const activeMode = useActiveMode();
+    // Effective hooks merge the server status with the per-device
+    // parent-override layer (web/kids/src/parentOverrides.ts) so
+    // overlays reflect what the parent's last override request
+    // chose. The bare hooks remain exported for the override
+    // modal's "what does the server think" diagnostic surfaces.
+    const viewing = useEffectiveViewingState();
+    const time = useEffectiveTimeStatus();
+    const bodyBreak = useEffectiveBodyBreakStatus(activelyPlaying);
+    const activeMode = useEffectiveActiveMode();
     const location = useLocation();
 
     // Apply dim/warm filter on <html>. Use the same expression the

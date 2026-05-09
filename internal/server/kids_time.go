@@ -73,78 +73,10 @@ func (s *Server) handleKidsCanPlay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// handleKidsOverrideGrantTime is the override-gated grant-time action.
-// Wired through the same auth chain as the other override actions
-// (resolveOverrideAuth: kid bearer + active override session).
-func (s *Server) handleKidsOverrideGrantTime(w http.ResponseWriter, r *http.Request) {
-	kidID, kc := s.requireOverride(w, r)
-	if kidID == 0 || kc == nil {
-		return
-	}
-	var req struct {
-		Minutes         int    `json:"minutes,omitempty"`
-		Scope           string `json:"scope"`
-		ScopeID         string `json:"scopeId,omitempty"`
-		UntilEpisodeEnd bool   `json:"untilEpisodeEnd,omitempty"`
-		UntilReset      bool   `json:"untilReset,omitempty"`
-		EpisodeRemainingSeconds int `json:"episodeRemainingSeconds,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
-		return
-	}
-	if !curation.IsValidGrantScope(req.Scope) {
-		http.Error(w, "scope must be global, item, or series", http.StatusBadRequest)
-		return
-	}
-	now := time.Now().UTC()
-	g := curation.TimeGrant{
-		KidID:     kidID,
-		GrantedAt: now,
-		GrantedBy: "override",
-		Scope:     req.Scope,
-		ScopeID:   req.ScopeID,
-	}
-	switch {
-	case req.UntilReset:
-		// MinutesGranted nil + ExpiresAt nil = "until next reset"
-		// (the engine substitutes the next day-start crossing).
-	case req.UntilEpisodeEnd:
-		// Treat as a duration grant whose minutes equal the episode's
-		// remaining runtime. The kid client computes
-		// EpisodeRemainingSeconds from the player.
-		if req.EpisodeRemainingSeconds <= 0 {
-			http.Error(w, "untilEpisodeEnd requires episodeRemainingSeconds", http.StatusBadRequest)
-			return
-		}
-		mins := (req.EpisodeRemainingSeconds + 59) / 60
-		g.MinutesGranted = &mins
-		expires := now.Add(time.Duration(req.EpisodeRemainingSeconds) * time.Second)
-		g.ExpiresAt = &expires
-	default:
-		if req.Minutes <= 0 || req.Minutes > 24*60 {
-			http.Error(w, "minutes must be between 1 and 1440", http.StatusBadRequest)
-			return
-		}
-		g.MinutesGranted = &req.Minutes
-		// No explicit expiry: clears at next day reset (engine default).
-	}
-	id, err := s.curation.CreateGrant(r.Context(), g)
-	if err != nil {
-		s.logger.Error().Err(err).Msg("create grant")
-		http.Error(w, "failed to record grant", http.StatusInternalServerError)
-		return
-	}
-	// Audit log via the existing override action sink.
-	payload, _ := json.Marshal(req)
-	if err := s.curation.RecordOverrideAction(r.Context(), kidID, "grant_time", req.ScopeID, string(payload)); err != nil {
-		s.logger.Warn().Err(err).Msg("override audit log")
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"grantId":   id,
-		"expiresAt": grantExpiry(g),
-	})
-}
+// Per-device parent overrides for time grants live in the kid
+// client's localStorage now (web/kids/src/parentOverrides.ts).
+// The status endpoint above still consumes any kid_time_grants
+// rows admin may write later, so the engine + table stay.
 
 // handleAdminKidTimeStatus mirrors the kid-side time-status endpoint
 // for the admin dashboard. Used by the per-kid management page to

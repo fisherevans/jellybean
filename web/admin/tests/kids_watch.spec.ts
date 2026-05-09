@@ -63,7 +63,7 @@ test.describe("kids watch menu", () => {
         await expect(page.locator(".watch-hero h1")).toBeVisible({
             timeout: 15_000,
         });
-        await page.locator(".watch-back-link").click();
+        await page.locator(".watch-back-btn").click();
         await expect(page).toHaveURL(/\/player\/browse/);
     });
 });

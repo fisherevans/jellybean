@@ -22,12 +22,13 @@ import {
     type LibraryResponse,
 } from "./libraryCache";
 
-// Match Library.tsx defaults. Filter defaults to "Both" -> Movie,Series.
+// Match Library.tsx defaults. Filter defaults to "All" -> Movie,Series.
 const DEFAULT_TYPE = "Movie,Series";
 const DEFAULT_SECTION = "all";
 const DEFAULT_LIMIT = 24;
 const DEFAULT_START = 0;
 const DEFAULT_SEARCH = "";
+const DEFAULT_SORT = "name";
 
 // Single in-flight gate. If a prefetch is already running (e.g. Login
 // fired one and the post-login navigate triggers Index which would fire
@@ -55,6 +56,7 @@ async function run(userId: string): Promise<void> {
         DEFAULT_LIMIT,
         DEFAULT_START,
         DEFAULT_SEARCH,
+        DEFAULT_SORT,
     );
 
     // Read any existing etag so the server can short-circuit with 304.
@@ -70,6 +72,7 @@ async function run(userId: string): Promise<void> {
     url.searchParams.set("section", DEFAULT_SECTION);
     url.searchParams.set("type", DEFAULT_TYPE);
     url.searchParams.set("limit", String(DEFAULT_LIMIT));
+    url.searchParams.set("sort", DEFAULT_SORT);
 
     const headers: Record<string, string> = { ...authHeaders() };
     if (ifNoneMatch) headers["If-None-Match"] = ifNoneMatch;

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/mux"
 
 	"github.com/fisherevans/jellybean/internal/curation"
+	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
 // Adult override mode (M9). Auth flow:
@@ -33,7 +35,7 @@ func (s *Server) requireOverride(w http.ResponseWriter, r *http.Request) (int64,
 		http.Error(w, "unauthenticated", http.StatusUnauthorized)
 		return 0, nil
 	}
-	kidID, _ := s.lookupKidID(r.Context(), kc)
+	kidID, _ := s.lookupKidID(r.Context(), r, kc)
 	if kidID == 0 {
 		http.Error(w, "override requires kid bearer auth", http.StatusForbidden)
 		return 0, nil
@@ -50,16 +52,44 @@ func (s *Server) requireOverride(w http.ResponseWriter, r *http.Request) (int64,
 	return kidID, kc
 }
 
-// lookupKidID resolves the kid id from a kidsContext. The bearer-
-// auth path doesn't carry the kid record's id directly; we look it
-// up from the Jellyfin user id once and stash it on the kc field
-// in a future refactor.
-func (s *Server) lookupKidID(ctx context.Context, kc *kidsContext) (int64, error) {
-	if kc.ProfileID == 0 || kc.JellyfinUserID == "" {
+// lookupKidID resolves the kid id for the override flow. Priority
+// order:
+//   1. Kid bearer auth -> kc.KidID is already set; return it.
+//   2. Admin cookie + ?kidId= in URL -> use that explicit kid (the
+//      admin chose which kid to act as during preview).
+//   3. Admin cookie + admin user happens to be mapped to a kid ->
+//      the Jellyfin-user lookup finds it.
+//   4. Admin cookie + ?profileId= in URL -> first kid of that
+//      profile (fallback when no kidId was specified).
+func (s *Server) lookupKidID(ctx context.Context, r *http.Request, kc *kidsContext) (int64, error) {
+	if kc.KidID > 0 {
+		return kc.KidID, nil
+	}
+	if v := r.URL.Query().Get("kidId"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			if _, err := s.curation.GetKid(ctx, n); err == nil {
+				return n, nil
+			}
+		}
+	}
+	if kc.JellyfinUserID != "" {
+		kid, err := s.curation.FindKidByJellyfinUser(ctx, kc.JellyfinUserID)
+		if err == nil {
+			return kid.ID, nil
+		}
+		if !errors.Is(err, curation.ErrKidNotFound) {
+			return 0, err
+		}
+	}
+	profileID, _ := s.resolveKidsProfileID(r, kc)
+	if profileID <= 0 {
 		return 0, nil
 	}
-	kid, err := s.curation.FindKidByJellyfinUser(ctx, kc.JellyfinUserID)
+	kid, err := s.curation.FindFirstKidByProfile(ctx, profileID)
 	if err != nil {
+		if errors.Is(err, curation.ErrKidNotFound) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	return kid.ID, nil
@@ -78,7 +108,7 @@ func (s *Server) handleKidsOverrideVerifyPIN(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "unauthenticated", http.StatusUnauthorized)
 		return
 	}
-	kidID, _ := s.lookupKidID(r.Context(), kc)
+	kidID, _ := s.lookupKidID(r.Context(), r, kc)
 	if kidID == 0 {
 		http.Error(w, "override requires kid bearer auth", http.StatusForbidden)
 		return
@@ -148,7 +178,7 @@ func (s *Server) handleKidsOverrideEnd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthenticated", http.StatusUnauthorized)
 		return
 	}
-	kidID, _ := s.lookupKidID(r.Context(), kc)
+	kidID, _ := s.lookupKidID(r.Context(), r, kc)
 	if kidID > 0 {
 		_ = s.curation.EndSession(r.Context(), kidID)
 	}
@@ -303,6 +333,53 @@ func (s *Server) handleKidsOverrideMarkPlayed(w http.ResponseWriter, r *http.Req
 		action = "mark_unplayed"
 	}
 	_ = s.curation.RecordOverrideAction(r.Context(), kidID, action, itemID, "")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleKidsOverrideMarkSeason marks every episode of the season
+// at {id} as watched / unwatched in Jellyfin, attributed to the
+// kid's bearer token. The override modal exposes this when the
+// kid long-presses a Season tile - mass-marking individual
+// episodes from the kid client would be a chatty round-trip per
+// episode. Errors mid-season abort with the partial state
+// already committed (Jellyfin doesn't transact across items).
+func (s *Server) handleKidsOverrideMarkSeason(w http.ResponseWriter, r *http.Request) {
+	kidID, kc := s.requireOverride(w, r)
+	if kidID == 0 {
+		return
+	}
+	seasonID := mux.Vars(r)["id"]
+	if seasonID == "" {
+		http.Error(w, "season id required", http.StatusBadRequest)
+		return
+	}
+	played := mux.Vars(r)["state"] != "unplayed"
+	ctx, _ := kidsRequestContext(r)
+	res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
+		IncludeItemTypes: []string{"Episode"},
+		Recursive:        true,
+		ParentID:         seasonID,
+		Limit:            10_000,
+		SortBy:           "ParentIndexNumber,IndexNumber",
+		SortOrder:        "Ascending",
+	}, kc.JellyfinToken)
+	if err != nil {
+		s.logger.Error().Err(err).Str("season", seasonID).Msg("mark season: list episodes")
+		writeUpstreamError(w, err, "failed to list episodes")
+		return
+	}
+	for _, ep := range res.Items {
+		if err := s.jellyfin.SetPlayedState(r.Context(), kc.JellyfinToken, kc.JellyfinUserID, ep.ID, played); err != nil {
+			s.logger.Error().Err(err).Str("episode", ep.ID).Msg("mark season: set played")
+			http.Error(w, "jellyfin update failed", http.StatusBadGateway)
+			return
+		}
+	}
+	action := "mark_season_played"
+	if !played {
+		action = "mark_season_unplayed"
+	}
+	_ = s.curation.RecordOverrideAction(r.Context(), kidID, action, seasonID, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 

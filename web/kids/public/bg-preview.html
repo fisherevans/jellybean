@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Browse bg preview</title>
+        <style>
+            html, body { margin: 0; padding: 0; }
+            body {
+                /* Render at the same size + repeat the .browse rule
+                   uses, on a long page so the seam is visible if any. */
+                min-height: 800vh;
+                background: url("/player/browse-bg-tile.svg") repeat-y;
+                background-size: 100% auto;
+            }
+            /* Floating overlay with controls / info. */
+            .info {
+                position: fixed;
+                top: 12px;
+                left: 12px;
+                background: rgba(0, 0, 0, 0.7);
+                color: #fff;
+                padding: 0.6rem 1rem;
+                border-radius: 8px;
+                font-family: system-ui, sans-serif;
+                font-size: 0.9rem;
+                line-height: 1.4;
+                z-index: 10;
+                max-width: 360px;
+            }
+            .info code {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 1px 4px;
+                border-radius: 3px;
+                font-family: ui-monospace, monospace;
+                font-size: 0.85em;
+            }
+            .info a { color: #FFC078; }
+            .info kbd {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 1px 6px;
+                border-radius: 3px;
+                font-family: ui-monospace, monospace;
+                font-size: 0.85em;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+            }
+        </style>
+    </head>
+    <body>
+        <div class="info">
+            <strong>Browse bg preview</strong><br />
+            <code>browse-bg-tile.svg</code> tiled with
+            <code>repeat-y</code>.<br />
+            <br />
+            Scroll to inspect color cycling + check for seams. Try
+            <kbd>Cmd</kbd>+<kbd>End</kbd> to jump to the bottom -
+            tile boundaries are around every viewport's worth of
+            scroll on a typical 1920 wide window.<br />
+            <br />
+            Edit
+            <a
+                href="https://github.com/fisherevans/jellybean/blob/main/web/kids/public/browse-bg-tile.svg"
+                target="_blank"
+                rel="noopener"
+                >browse-bg-tile.svg</a
+            >
+            and refresh to see changes (Vite serves
+            <code>public/</code> directly, no build needed for
+            preview).
+        </div>
+    </body>
+</html>

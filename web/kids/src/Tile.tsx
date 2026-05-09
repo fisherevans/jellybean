@@ -1,3 +1,5 @@
+import { memo } from "react";
+import { Check } from "@phosphor-icons/react";
 import { imageAuthSuffix } from "./auth";
 
 // Tile is the shared poster card used by both the Browse rows and the
@@ -34,15 +36,30 @@ type Props = {
     onFocus: () => void;
     refCallback: (el: HTMLButtonElement | null) => void;
     showProgress?: boolean;
+    /* When false, render a placeholder div instead of <img>. The
+       LoAF data showed cheap-WebView image decode/raster as the
+       dominant cost of cross-row arrow presses (1.5-1.8s frames
+       with scripts=0). Browse passes priority=false for tiles in
+       rows far from the focused row so we only decode images the
+       kid is actually about to look at. */
+    priority?: boolean;
 };
 
 const IMAGE_WIDTH: Record<TileSize, number> = {
-    browse: 240,
+    // Browse tiles render at ~220px CSS width on the kid TV. The
+    // server delivers a 160px-wide image, the browser scales up by
+    // ~38%. On a low-DPI TV that scaling is invisible, but the
+    // smaller image cuts pixel count by ~55% versus a 240px-wide
+    // source - which directly cuts the WebView's per-image decode
+    // cost. LoAF data showed image decode/raster as the dominant
+    // freeze on cross-row arrow presses; smaller decodes thin out
+    // that backlog.
+    browse: 160,
     library: 200,
     cw: 220,
 };
 
-export default function Tile({
+function TileImpl({
     item,
     size,
     focused,
@@ -50,6 +67,7 @@ export default function Tile({
     onFocus,
     refCallback,
     showProgress = false,
+    priority = true,
 }: Props) {
     const tag = item.ImageTags?.Primary ?? "";
     // <img> can't attach Authorization headers, so the bearer-auth
@@ -60,6 +78,11 @@ export default function Tile({
     }${imageAuthSuffix()}`;
     const isSeries = item.Type === "Series";
     const progress = item.UserData?.PlayedPercentage ?? 0;
+    const isPlayed = !!item.UserData?.Played || progress >= 90;
+    // Show progress bar only for "actually started, not yet watched"
+    // items - matches the 5% threshold the watch menu uses to decide
+    // Resume vs Play, so the bar's presence == "Resume is the action."
+    const showProgressBar = showProgress && !isPlayed && progress >= 5;
     return (
         <button
             ref={refCallback}
@@ -69,8 +92,10 @@ export default function Tile({
             tabIndex={focused ? 0 : -1}
             type="button"
         >
-            <div className="tile-poster">
-                {tag ? (
+            <div
+                className={`tile-poster${isPlayed && priority ? " is-watched" : ""}`}
+            >
+                {tag && priority ? (
                     <img
                         src={src}
                         alt={item.Name}
@@ -78,7 +103,9 @@ export default function Tile({
                         decoding="async"
                     />
                 ) : (
-                    <div className="tile-poster-placeholder">{item.Name}</div>
+                    <div className="tile-poster-placeholder">
+                        {priority ? item.Name : ""}
+                    </div>
                 )}
                 {isSeries && (
                     <img
@@ -88,7 +115,24 @@ export default function Tile({
                         aria-label="TV show"
                     />
                 )}
-                {showProgress && progress > 1 && progress < 99 && (
+                {/* Watched overlay: the poster dims via .is-watched and
+                   we stamp a checkmark in the corner. Series Played
+                   means "every episode watched"; movie Played means
+                   "credits reached." Gated on `priority` so cold rows
+                   (placeholder div, no <img> to dim) don't render a
+                   badge floating on a blank tile - the badge appears
+                   along with the warm-up's actual poster. */}
+                {isPlayed && priority && (
+                    <span
+                        className="tile-watched-badge"
+                        aria-label={
+                            isSeries ? "Every episode watched" : "Watched"
+                        }
+                    >
+                        <Check size={14} weight="bold" />
+                    </span>
+                )}
+                {showProgressBar && (
                     <div
                         className="tile-progress"
                         style={{ width: `${progress}%` }}
@@ -102,3 +146,23 @@ export default function Tile({
         </button>
     );
 }
+
+// Custom equality: ignore callback identity. The parent passes fresh
+// onClick/onFocus/refCallback closures every render; if memo used
+// default shallow-equal, EVERY tile re-renders on every focus change.
+// The closures only call stable refs (useNavigate's nav, setState
+// updaters, sessionStorage writes), so reusing the previous closure
+// is safe semantically. The prop comparisons we DO care about:
+//   - item: identity changes when the row mutates (load-more)
+//   - size: never changes for a given mount
+//   - focused: the only prop that toggles during D-pad travel
+//   - showProgress: stable per usage site
+// On a typical D-pad arrow this re-renders only 2 tiles (the one
+// losing focus + the one gaining it) instead of all ~440 in the page.
+export default memo(TileImpl, (prev, next) =>
+    prev.item === next.item &&
+    prev.size === next.size &&
+    prev.focused === next.focused &&
+    prev.showProgress === next.showProgress &&
+    prev.priority === next.priority,
+);

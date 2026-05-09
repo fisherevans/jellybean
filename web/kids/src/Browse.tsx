@@ -5,7 +5,7 @@ import {
     useState,
     type ReactNode,
 } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowUUpLeft, Plus } from "@phosphor-icons/react";
 import {
     authHeaders,
@@ -15,14 +15,12 @@ import {
     type Session,
 } from "./auth";
 import { TAG_ICONS, isTagIconName } from "./tagIcons";
-import TabPill, { TAB_SLOT_COUNT, tabHref } from "./TabPill";
-import OverrideModal, { useLongPressUp } from "./OverrideModal";
-import MainMenuModal from "./MainMenuModal";
-import { scrollWindowToCenter, scrollWindowToTop } from "./smoothScroll";
+import OverrideModal, { useLongPressEnter } from "./OverrideModal";
+import { useItemHiddenEvent } from "./itemHidden";
 import Tile from "./Tile";
-import { consumeTabFocus, flagTabFocus, setHomeTab } from "./kidNav";
 import { useBrowseRowAnimator } from "./useBrowseRowAnimator";
 import { useProgressiveBack } from "./useProgressiveBack";
+import { useKidsHome } from "./KidsHome";
 
 // Browse is the kid home (M8 #48). Renders a vertical stack of
 // horizontally-scrolling rows from /api/kids/browse. Each row's
@@ -67,13 +65,18 @@ type BrowseResponse = {
     rows: BrowseRow[];
 };
 
-type Focus =
-    | { kind: "tab"; index: number }
-    | { kind: "tile"; row: number; col: number };
+type Focus = { kind: "tile"; row: number; col: number };
 
 // sessionStorage key for the last activated tile (used to restore
 // focus when the kid pops back from /watch or /play).
 const LAST_FOCUSED_KEY = "jellybean.kids.browse.lastFocused";
+// One-shot flag set right before nav to /watch and consumed on the
+// next Browse mount. Without this, LAST_FOCUSED_KEY would keep
+// auto-focusing a stale tile every time the kid arrived at /browse
+// from anywhere (e.g., navigating from /library after a previous
+// session). The flag scopes the auto-focus strictly to "kid just
+// played something and is back".
+const EXPECT_BACK_KEY = "jellybean.kids.browse.expectBack";
 
 // sessionStorage cache for the most recent /api/kids/browse response.
 // Keyed by profileId (admin preview varies; bearer-auth path uses "kid").
@@ -107,30 +110,6 @@ function writeBrowseCache(profileId: string | null, body: BrowseResponse) {
 }
 
 // findItemPosition returns the (row, col) of an item id in a browse
-// response, or null when the item isn't in any row. Used to seed
-// initial focus from cached data + LAST_FOCUSED_KEY.
-function findItemPosition(
-    data: BrowseResponse | null,
-    itemId: string | null,
-): { row: number; col: number } | null {
-    if (!data || !itemId) return null;
-    for (let r = 0; r < data.rows.length; r++) {
-        const c = data.rows[r].items.findIndex((it) => it.Id === itemId);
-        if (c >= 0) return { row: r, col: c };
-    }
-    return null;
-}
-function readLastFocusedId(): string | null {
-    try {
-        const raw = sessionStorage.getItem(LAST_FOCUSED_KEY);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw) as { itemId?: string };
-        return parsed.itemId ?? null;
-    } catch {
-        return null;
-    }
-}
-
 export default function Browse() {
     const nav = useNavigate();
     const [searchParams] = useSearchParams();
@@ -143,38 +122,124 @@ export default function Browse() {
         readBrowseCache(adminProfileId),
     );
     const [error, setError] = useState<string | null>(null);
-    const [focus, setFocus] = useState<Focus>(() => {
-        const cached = readBrowseCache(adminProfileId);
-        const pos = findItemPosition(cached, readLastFocusedId());
-        if (pos) return { kind: "tile", row: pos.row, col: pos.col };
-        return { kind: "tile", row: 0, col: 0 };
+    // Default focus is (0, 0). The back-from-watch effect below
+    // overrides this when EXPECT_BACK_KEY is set; otherwise the
+    // kid arrives with focus on the tab nav (tabFocused=true),
+    // and pressing Down lands them on row 0 col 0 - a clean
+    // entry point regardless of where they last played.
+    const [focus, setFocus] = useState<Focus>({
+        kind: "tile",
+        row: 0,
+        col: 0,
     });
     const tileRefs = useRef<Record<string, HTMLElement | null>>({});
+    // Layout context: tab focus + menu opening live in KidsHome.
+    const homeCtx = useKidsHome();
+    const { tabFocused, setTabFocused } = homeCtx;
+    // Vertical scroll for Browse is implemented as a transform on
+    // .browse-stack rather than a real window scroll. window.scrollTo
+    // on this WebView triggered a multi-second freeze per write;
+    // translate3d on a paint-contained child stays GPU-only.
+    const stackRef = useRef<HTMLDivElement | null>(null);
+    const stackYRef = useRef(0);
+    const stackTargetYRef = useRef(0);
+    const stackRafRef = useRef<number | null>(null);
+    // Image-priority latch: once a row has been within the priority
+    // window, it stays priority=true for the rest of the Browse
+    // session. Without this, every cross-row press evicts a row's
+    // images from rendering and re-decodes them on the next visit.
+    const warmRowsRef = useRef<Set<number>>(new Set());
+    // Active priority radius. Starts at 2 (focused row + 2 in each
+    // direction = ~5 rows loaded eagerly so the kid pre-loads
+    // neighbors before arrowing into them) and progressively
+    // expands while the page sits idle. After ~30s the whole
+    // library is warm.
+    const [warmRadius, setWarmRadius] = useState(2);
     const [override, setOverride] = useState<
-        { itemId: string; itemName: string } | null
+        {
+            itemId: string;
+            itemName: string;
+            itemType: string;
+            seriesId?: string;
+            seriesName?: string;
+            played?: boolean;
+        } | null
     >(null);
-    const [menuOpen, setMenuOpen] = useState(false);
     // Tracks rows that are currently loading more items so a rapid
     // double-Enter on the terminal button doesn't fire two parallel
     // fetches.
     const [loadingMore, setLoadingMore] = useState<Set<number>>(new Set());
 
-    // Long-press UP on a focused tile opens the override modal. The
-    // hook is gated on having a focused tile + an active session
-    // (admin preview can't override - server returns 403 anyway, no
-    // need to surface the modal).
-    const focusedItem =
-        focus.kind === "tile" && data
-            ? data.rows[focus.row]?.items[focus.col]
-            : undefined;
-    useLongPressUp(
-        () => {
-            if (!focusedItem || !session) return;
-            setOverride({ itemId: focusedItem.Id, itemName: focusedItem.Name });
-        },
-        focus.kind === "tile" && !!session && override === null,
-        600,
-    );
+    // Parent hid an item: drop it from every row in-place + rewrite
+    // the sessionStorage cache so a fresh mount doesn't resurrect it.
+    // Surgical splice is important here because rows include
+    // randomized layouts (random_unwatched, tag_fanout) that would
+    // re-shuffle on a full refetch - the kid would see the entire
+    // browse layout reorder for one hide. We keep row positions
+    // stable and just remove the dead tile.
+    useItemHiddenEvent((hiddenId) => {
+        setData((prev) => {
+            if (!prev) return prev;
+            const next: BrowseResponse = {
+                ...prev,
+                rows: prev.rows.map((row) => ({
+                    ...row,
+                    items: row.items.filter((it) => it.Id !== hiddenId),
+                })),
+            };
+            writeBrowseCache(adminProfileId, next);
+            return next;
+        });
+    });
+
+    // Long-press Enter (D-pad center) on a focused content tile
+    // opens the override modal. Short-press Enter plays the tile.
+    // The hook intercepts Enter via capture-phase listeners with
+    // preventDefault, so the page's onKey handler below sees no
+    // Enter events while the kid is on a content tile - the hook
+    // handles both cases (synthesizing the play action via
+    // onShortPress when keyup arrives before the timer).
+    //
+    // Gated on:
+    //   - focusedItem exists (kid is on a content tile, not the
+    //     terminal load-more button)
+    //   - session present (admin preview can't override - server
+    //     returns 403 anyway, no need to surface the modal)
+    //   - override modal not already open
+    //   - tab nav doesn't have focus (TabPill's own Enter-hold
+    //     gesture takes precedence there)
+    const focusedItem = !tabFocused && data
+        ? data.rows[focus.row]?.items[focus.col]
+        : undefined;
+    const handleShortPress = useCallback(() => {
+        if (!data) return;
+        const row = data.rows[focus.row];
+        if (!row) return;
+        const item = row.items[focus.col];
+        if (!item) return;
+        rememberLastFocused(item.Id);
+        nav(`/watch/${encodeURIComponent(item.Id)}${location.search}`);
+    }, [data, focus, nav]);
+    const handleLongPress = useCallback(() => {
+        if (!focusedItem) return;
+        const pct = focusedItem.UserData?.PlayedPercentage ?? 0;
+        setOverride({
+            itemId: focusedItem.Id,
+            itemName: focusedItem.Name,
+            itemType: focusedItem.Type,
+            played: pct >= 90,
+            // Browse rows surface Movies and Series tiles; episodes
+            // / seasons aren't currently long-press surfaces. When
+            // they become one, the slim browseItem on the server
+            // also needs SeriesId / SeriesName fields here.
+        });
+    }, [focusedItem]);
+    useLongPressEnter({
+        enabled:
+            !!focusedItem && !!session && override === null && !tabFocused,
+        onShortPress: handleShortPress,
+        onLongPress: handleLongPress,
+    });
 
     // Auth gate (mirrors Library's behavior). Without a session and
     // without an admin ?profileId, kick to /login.
@@ -184,24 +249,33 @@ export default function Browse() {
         }
     }, [session, adminProfileId, nav]);
 
-    // Stamp the kid's current home tab so /watch's Back knows where
-    // to send them. See kidNav.ts.
-    useEffect(() => {
-        setHomeTab("browse");
-    }, []);
+    // KidsHome owns setHomeTab() and the body.kids-scroll-active class, so
+    // Browse no longer touches either - just renders content.
 
-    // Tab-arrow navigation from /library lands here with the
-    // tabFocus flag set; consume on mount BEFORE the data-loaded
-    // effect runs so focus pins to the tab pill from the very first
-    // paint instead of flashing through a default tile focus.
-    const initialFocusSetRef = useRef(false);
+    // Progressive image warm-up. Every 1.5s the active priority
+    // radius grows by 1, so rows further from focus start loading
+    // their images. After ~30s the whole library is warm and the
+    // kid never sees a placeholder. Decode load is spread out:
+    // initial mount loads ~5 rows of images (~105 images), and
+    // then one row's worth (~21 images) per 1.5s tick. This keeps
+    // the WebView's raster pipeline from getting flooded the way
+    // loading="eager" did. Stops once we've reached the row count.
     useEffect(() => {
-        const slot = consumeTabFocus();
-        if (slot !== null) {
-            setFocus({ kind: "tab", index: slot });
-            initialFocusSetRef.current = true;
-        }
-    }, []);
+        if (!data) return;
+        const total = data.rows.length;
+        const id = setInterval(() => {
+            setWarmRadius((r) => {
+                const next = r + 1;
+                if (next >= total) {
+                    clearInterval(id);
+                    return total;
+                }
+                return next;
+            });
+        }, 1500);
+        return () => clearInterval(id);
+    }, [data]);
+
 
     // Fetch on mount. Gated on having either a kid session or an
     // admin ?profileId - the auth gate above redirects to /login in
@@ -252,44 +326,114 @@ export default function Browse() {
     }, [session, adminProfileId]);
 
     useEffect(() => {
-        refresh();
-    }, [refresh]);
+        // Skip refetch when we already have data (from
+        // sessionStorage cache). The browse layout includes
+        // random_unwatched / tag_fanout rows whose order is
+        // server-side-cached for ~60min, but the client cache
+        // and server cache aren't perfectly in sync - a refetch
+        // can shuffle items the kid was already looking at.
+        // Render from cache and don't refetch on remount; the
+        // menu's "Refresh from server" action clears the cache
+        // and reloads when fresh data is actually wanted.
+        if (data) return;
+        void refresh();
+    }, [refresh, data]);
 
-    // First-time focus seeding when data lands. Two strategies, in
-    // priority order:
-    //   1. sessionStorage holds the last activated tile id (saved on
-    //      Enter / click). When present and findable in the loaded
-    //      rows, restore focus there - the kid pressed back from
-    //      /watch or /play and expects to land where they came from.
-    //   2. Otherwise, focus the first tile of the first row in the
-    //      kid's layout. The default page-load entry is always (0,0)
-    //      regardless of which row type is at the top.
+    // Tell main.tsx's splash gate we've got real content rendered.
+    // Fires once when data first arrives (cache-primed or fresh
+    // fetch). Re-renders after that no-op since we don't dispatch
+    // again. main.tsx's listener self-removes on first event.
     useEffect(() => {
-        if (initialFocusSetRef.current) return;
-        if (!data || data.rows.length === 0) return;
-        initialFocusSetRef.current = true;
+        if (data && data.rows.length > 0) {
+            window.dispatchEvent(new Event("jellybean:ready"));
+        }
+    }, [data]);
 
-        const remembered = (() => {
-            try {
-                const raw = sessionStorage.getItem(LAST_FOCUSED_KEY);
-                return raw ? (JSON.parse(raw) as { itemId: string }) : null;
-            } catch {
-                return null;
-            }
-        })();
-        if (remembered?.itemId) {
+    // Back-from-watch focus restoration. Gated on EXPECT_BACK_KEY -
+    // we only auto-focus a tile when the kid just navigated TO
+    // /watch from /browse (which sets the flag). Plain arrivals
+    // from /library / /tags / app-load don't trip this; the kid
+    // sees the layout's default tab focus.
+    //
+    // Plus a data-replacement-resilient resolve: focusedItemIdRef
+    // tracks WHICH item the kid is on. When fresh data lands and
+    // the item has moved to a different (row, col), we re-resolve
+    // and update focus indices. Otherwise the visual focus would
+    // stay on the OLD index, which now points to a different item
+    // in the new layout (the "Peter Pan replacement" symptom).
+    const didFocusBackOnceRef = useRef(false);
+    const focusedItemIdRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (!data || data.rows.length === 0) return;
+        // Re-resolve the tracked item id in the new data on every
+        // data update (covers cache->fresh swap + load-more).
+        if (focusedItemIdRef.current) {
+            const id = focusedItemIdRef.current;
             for (let r = 0; r < data.rows.length; r++) {
-                const c = data.rows[r].items.findIndex(
-                    (it) => it.Id === remembered.itemId,
-                );
+                const c = data.rows[r].items.findIndex((it) => it.Id === id);
                 if (c >= 0) {
-                    setFocus({ kind: "tile", row: r, col: c });
+                    setFocus((prev) =>
+                        prev.row === r && prev.col === c
+                            ? prev
+                            : { kind: "tile", row: r, col: c },
+                    );
                     return;
                 }
             }
+            // Item not found in new data; drop tracking.
+            focusedItemIdRef.current = null;
+            return;
         }
-        setFocus({ kind: "tile", row: 0, col: 0 });
-    }, [data]);
+        if (didFocusBackOnceRef.current) return;
+        let expecting = false;
+        try {
+            expecting = sessionStorage.getItem(EXPECT_BACK_KEY) === "1";
+        } catch {
+            /* ignore */
+        }
+        if (!expecting) return;
+        let remembered: { itemId: string } | null = null;
+        try {
+            const raw = sessionStorage.getItem(LAST_FOCUSED_KEY);
+            if (raw) remembered = JSON.parse(raw) as { itemId: string };
+        } catch {
+            /* ignore */
+        }
+        // Consume the flag regardless of whether we found the item -
+        // if it's not in the loaded data, the next mount shouldn't
+        // accidentally retry. The kid lands on the tab nav.
+        try {
+            sessionStorage.removeItem(EXPECT_BACK_KEY);
+        } catch {
+            /* ignore */
+        }
+        if (!remembered?.itemId) return;
+        for (let r = 0; r < data.rows.length; r++) {
+            const c = data.rows[r].items.findIndex(
+                (it) => it.Id === remembered!.itemId,
+            );
+            if (c >= 0) {
+                didFocusBackOnceRef.current = true;
+                focusedItemIdRef.current = remembered!.itemId;
+                setFocus({ kind: "tile", row: r, col: c });
+                setTabFocused(false);
+                return;
+            }
+        }
+    }, [data, setTabFocused]);
+
+    // Track the currently-focused item id so the resolve effect
+    // above can re-locate it when data changes. Updates whenever
+    // focus moves to a new (row, col).
+    useEffect(() => {
+        if (!data) return;
+        const item = data.rows[focus.row]?.items[focus.col];
+        if (item) {
+            focusedItemIdRef.current = item.Id;
+        } else {
+            focusedItemIdRef.current = null;
+        }
+    }, [focus, data]);
 
     // loadMoreForRow asks the server for more items for one row,
     // appends new (non-duplicate) items to the row's local state,
@@ -366,6 +510,9 @@ export default function Browse() {
                 LAST_FOCUSED_KEY,
                 JSON.stringify({ itemId }),
             );
+            // Flag we're about to leave for /watch; consumed on
+            // the next Browse mount to gate auto-focus restoration.
+            sessionStorage.setItem(EXPECT_BACK_KEY, "1");
         } catch {
             /* ignore */
         }
@@ -374,23 +521,59 @@ export default function Browse() {
     // Progressive Back: anywhere on the page collapses focus up to
     // the Browse pill in the top nav. From there, a second Back
     // falls through to the WebView and exits the kid app.
+    // Stable ref to setStackY so the tabFocused effect below can
+    // call it without becoming stale across renders. setStackY
+    // closes over refs that mutate, so an old reference still
+    // works correctly.
+    const setStackYRef = useRef(setStackY);
+    setStackYRef.current = setStackY;
     useProgressiveBack(
         useCallback(() => {
-            if (menuOpen) {
-                setMenuOpen(false);
-                return true;
-            }
             if (override) {
                 setOverride(null);
                 return true;
             }
-            if (focus.kind !== "tab" || focus.index !== 0) {
-                setFocus({ kind: "tab", index: 0 });
+            if (!tabFocused) {
+                setTabFocused(true);
+                // Back resets the page to a "fresh" state: focus
+                // collapses to (row 0, col 0), the per-row column
+                // memory is wiped, and prevFocusRowRef is forgotten
+                // so the next Down→tile snaps the stack to the top
+                // without animating from the previous row's
+                // position. Without this, pressing Down after Back
+                // restored the kid to whatever tile they were on,
+                // which contradicted the contract that Back means
+                // "I'm done with this content area, take me to the
+                // top of the page." See web/kids/CLAUDE.md
+                // ("Back-then-Down focus contract") for the rule.
+                setFocus({ kind: "tile", row: 0, col: 0 });
+                rowColMemoryRef.current.clear();
+                prevFocusRowRef.current = null;
+                lastTileRef.current = { row: 0, col: 0 };
                 return true;
             }
             return false;
-        }, [focus, menuOpen, override]),
+        }, [tabFocused, setTabFocused, override]),
     );
+    // Whenever tab focus engages (back press, mount, layout
+    // re-route), scroll the stack back to the top and blur any
+    // lingering DOM focus on a tile so its :focus state clears.
+    // Without this, after Back the kid sees the tab pill marked
+    // selected (Right/Left navigates) but the previously-focused
+    // tile keeps its visual highlight, and the page stays at the
+    // scrolled position. Snap (no animation) on Back so the kid
+    // doesn't see the stack glide back when they explicitly
+    // requested an exit.
+    useEffect(() => {
+        if (!tabFocused) return;
+        setStackYRef.current(0, true);
+        if (
+            document.activeElement instanceof HTMLElement &&
+            document.activeElement !== document.body
+        ) {
+            document.activeElement.blur();
+        }
+    }, [tabFocused]);
 
     // D-pad / keyboard model (kept intentionally simple for v1):
     //   - tile + ArrowRight/Left: move within row
@@ -421,6 +604,9 @@ export default function Browse() {
         if (!data) return;
         const rows = data.rows;
         if (rows.length === 0) return;
+        // KidsHome's TabPill owns keyboard handling when tabFocused
+        // is true. We early-return so listeners don't double-handle.
+        if (tabFocused) return;
         // preventDefault for ANY arrow / Enter the page handles, even
         // if the move clamps at an edge. Otherwise the browser's
         // default arrow behavior scrolls the window.
@@ -448,214 +634,294 @@ export default function Browse() {
 
         const key = e.key;
 
-        // Enter / Space activate against the closure-captured focus.
-        // That matches what the kid sees on screen: if a render is
-        // queued behind a flurry of arrows, the visual focus is what
-        // they pressed against. Activations don't repeat, so this
-        // doesn't have the stale-state problem the arrows do.
+        // Enter / Space on content tiles is owned by useLongPressEnter
+        // (capture-phase listener with preventDefault, so this code
+        // never sees the keydown when on a content tile). Here we
+        // only handle Enter on the TERMINAL tile at the end of a row
+        // (load-more or loop-back to start) - the hook is disabled
+        // for that case (focusedItem is undefined), so the event
+        // bubbles through to us.
         if (key === "Enter" || key === " ") {
-            if (focus.kind === "tile") {
-                const row = rows[focus.row];
-                if (!row) return;
-                const lastCol = row.items.length;
-                if (focus.col === lastCol) {
-                    if (row.hasMore) {
-                        void loadMoreForRow(focus.row);
-                    } else {
-                        setFocus({ kind: "tile", row: focus.row, col: 0 });
-                    }
-                    return;
-                }
-                const item = row.items[focus.col];
-                if (item) {
-                    rememberLastFocused(item.Id);
-                    // Always land on /watch first - the interstitial
-                    // auto-pushes /play for items that have nothing
-                    // useful to show in the menu, but the /watch
-                    // history entry stays so Back from /play returns
-                    // here instead of skipping straight to /browse.
-                    nav(`/watch/${encodeURIComponent(item.Id)}${location.search}`);
-                }
-                return;
-            }
-            if (focus.kind === "tab") {
-                if (focus.index === 2) {
-                    setMenuOpen(true);
+            const row = rows[focus.row];
+            if (!row) return;
+            const lastCol = row.items.length;
+            if (focus.col === lastCol) {
+                if (row.hasMore) {
+                    void loadMoreForRow(focus.row);
                 } else {
-                    const target = focus.index === 0 ? "browse" : "library";
-                    nav(tabHref(target, location.search));
+                    setFocus({ kind: "tile", row: focus.row, col: 0 });
                 }
-                return;
             }
             return;
         }
 
         // Arrows: functional setter so each press resolves against the
-        // latest committed focus, not the closure-captured one. Without
-        // this, two presses arriving before the next render both read
-        // the same stale focus and only one move sticks - the
-        // double-tap-only-moves-once symptom.
+        // latest committed focus, not the closure-captured one.
+        if (key === "ArrowUp" && focus.row === 0) {
+            // Topmost row + Up: hand focus back to the tab nav.
+            // Internal focus stays at this tile so a subsequent
+            // Down from tab returns the kid to the same column.
+            rowColMemoryRef.current.set(focus.row, focus.col);
+            lastTileRef.current = { row: focus.row, col: focus.col };
+            setTabFocused(true);
+            return;
+        }
         setFocus((prev) => {
-            if (prev.kind === "tile") {
-                const row = rows[prev.row];
-                if (!row) return prev;
-                const lastCol = row.items.length;
-                switch (key) {
-                    case "ArrowRight":
-                        return prev.col < lastCol
-                            ? { kind: "tile", row: prev.row, col: prev.col + 1 }
-                            : prev;
-                    case "ArrowLeft":
-                        return prev.col > 0
-                            ? { kind: "tile", row: prev.row, col: prev.col - 1 }
-                            : prev;
-                    case "ArrowDown":
-                        if (prev.row < rows.length - 1) {
-                            rowColMemoryRef.current.set(prev.row, prev.col);
-                            const nextRow = prev.row + 1;
-                            const remembered =
-                                rowColMemoryRef.current.get(nextRow) ?? 0;
-                            const nextLen = rows[nextRow].items.length;
-                            const col = Math.min(
-                                remembered,
-                                Math.max(0, nextLen - 1),
-                            );
-                            return { kind: "tile", row: nextRow, col };
-                        }
-                        return prev;
-                    case "ArrowUp":
-                        if (prev.row > 0) {
-                            rowColMemoryRef.current.set(prev.row, prev.col);
-                            const prevRow = prev.row - 1;
-                            const remembered =
-                                rowColMemoryRef.current.get(prevRow) ?? 0;
-                            const prevLen = rows[prevRow].items.length;
-                            const col = Math.min(
-                                remembered,
-                                Math.max(0, prevLen - 1),
-                            );
-                            return { kind: "tile", row: prevRow, col };
-                        }
+            const row = rows[prev.row];
+            if (!row) return prev;
+            const lastCol = row.items.length;
+            switch (key) {
+                case "ArrowRight":
+                    return prev.col < lastCol
+                        ? { kind: "tile", row: prev.row, col: prev.col + 1 }
+                        : prev;
+                case "ArrowLeft":
+                    return prev.col > 0
+                        ? { kind: "tile", row: prev.row, col: prev.col - 1 }
+                        : prev;
+                case "ArrowDown":
+                    if (prev.row < rows.length - 1) {
                         rowColMemoryRef.current.set(prev.row, prev.col);
-                        lastTileRef.current = { row: prev.row, col: prev.col };
-                        return { kind: "tab", index: 0 };
+                        const nextRow = prev.row + 1;
+                        const remembered =
+                            rowColMemoryRef.current.get(nextRow) ?? 0;
+                        const nextLen = rows[nextRow].items.length;
+                        const col = Math.min(
+                            remembered,
+                            Math.max(0, nextLen - 1),
+                        );
+                        return { kind: "tile", row: nextRow, col };
+                    }
+                    return prev;
+                case "ArrowUp": {
+                    rowColMemoryRef.current.set(prev.row, prev.col);
+                    const prevRow = prev.row - 1;
+                    const remembered =
+                        rowColMemoryRef.current.get(prevRow) ?? 0;
+                    const prevLen = rows[prevRow].items.length;
+                    const col = Math.min(
+                        remembered,
+                        Math.max(0, prevLen - 1),
+                    );
+                    return { kind: "tile", row: prevRow, col };
                 }
-                return prev;
-            }
-            if (prev.kind === "tab") {
-                switch (key) {
-                    case "ArrowDown":
-                        return { kind: "tile", ...lastTileRef.current };
-                    case "ArrowLeft":
-                        return prev.index > 0
-                            ? { kind: "tab", index: prev.index - 1 }
-                            : prev;
-                    case "ArrowRight":
-                        // From the Browse tab (slot 0), Right both
-                        // navigates to /library AND lands focus on
-                        // the Library tab. flagTabFocus carries the
-                        // intent across the page swap so the kid can
-                        // keep arrowing without re-establishing focus.
-                        if (prev.index === 0) {
-                            flagTabFocus(1);
-                            nav(`/library${location.search}`);
-                            return prev;
-                        }
-                        return prev.index < TAB_SLOT_COUNT - 1
-                            ? { kind: "tab", index: prev.index + 1 }
-                            : prev;
-                }
-                return prev;
             }
             return prev;
         });
     }
 
-    // Focus DOM management. Vertical positioning uses the smoothScroll
-    // animator (window scroll). Horizontal positioning is owned by
-    // useBrowseRowAnimator inside <AnimatedRowTrack> below: focus.col
-    // updates the row's targetCol prop, the animator eases its track
-    // toward that target on its own rAF loop. Decoupled from React's
-    // render so rapid D-pad presses stay smooth.
+    // Focus DOM management. Vertical positioning is a transform write
+    // on .browse-stack (see setStackY below). Horizontal positioning
+    // is owned by useBrowseRowAnimator inside <AnimatedRowTrack>:
+    // focus.col updates the row's targetCol prop, the animator eases
+    // its track toward that target on its own rAF loop.
     //
-    // The very first focus scroll after mount is instant (no
-    // animation) so a back-navigation with a primed cache lands
-    // immediately on the previously-focused tile rather than
-    // animating into place. Subsequent focus changes (kid moving the
-    // D-pad) use the smooth animator.
-    const didInitialFocusScroll = useRef(false);
+    // Cheap-WebView optimization: skip the vertical math when the
+    // kid is moving WITHIN a row (focus.kind=tile, row unchanged).
+    // getBoundingClientRect forces a synchronous layout pass on a
+    // page with ~140 mounted tiles - same row → just imperative
+    // .focus(), no rect read, no transform write.
+    // applyStackY writes the visual state directly: stack transform
+    // always; bg position only on fast devices. Slow devices keep
+    // the bg static at the random per-session offset (the CSS
+    // variable provides that, no inline override needed). Per-
+    // frame bg writes - both background-position-y and
+    // filter:hue-rotate - measurably re-paint the bg layer on the
+    // kid TV's WebView and reintroduce sluggishness, so we leave
+    // the bg alone there.
+    function applyStackY(y: number) {
+        const el = stackRef.current;
+        if (el) {
+            el.style.transform = `translate3d(0, ${y}px, 0)`;
+        }
+        // Drive the layout's TabPill slot with the same y so the
+        // top nav scrolls in lockstep with the stack. Variable
+        // defaults to 0 elsewhere, so Library/Tags ignore it.
+        document.documentElement.style.setProperty(
+            "--kids-scroll-y",
+            `${y}px`,
+        );
+        if (document.body?.dataset.perf === "slow") return;
+        // Drive the layout's bg layer (.kids-home-bg) by writing
+        // --kids-bg-pos-y. KidsHome's per-tab offset is mirrored
+        // on documentElement.dataset.kidsBgOffsetY so we can sum
+        // it with the scroll y here. CSS uses --kids-bg-pos-y
+        // when set, falling back to --kids-bg-offset-y otherwise
+        // (Library/Tags don't write --kids-bg-pos-y so they get
+        // the static per-tab offset).
+        const baseOffset = Number(
+            document.documentElement.dataset.kidsBgOffsetY ?? 0,
+        );
+        document.documentElement.style.setProperty(
+            "--kids-bg-pos-y",
+            `${baseOffset + y}px`,
+        );
+    }
+    // Clear shared CSS variables on unmount so Library / Tags
+    // start with the TabPill at top and the bg at the per-session
+    // random offset (no Browse-applied scroll).
     useEffect(() => {
-        const k =
-            focus.kind === "tile"
-                ? `${focus.row}:${focus.col}`
-                : `tab:${focus.index}`;
-        const el = tileRefs.current[k];
+        return () => {
+            document.documentElement.style.removeProperty("--kids-scroll-y");
+            document.documentElement.style.removeProperty("--kids-bg-pos-y");
+        };
+    }, []);
+    // setStackY animates from the current Y toward `y` via a rAF
+    // loop (same observed-velocity-preserving pattern as
+    // useBrowseRowAnimator). Pass snap=true to skip the animation
+    // and write the target immediately (used on first paint so
+    // back-navigation lands instantly on the previously-focused
+    // tile rather than animating into place).
+    //
+    // Mid-flight retargeting is free: a second call while the loop
+    // is running just updates stackTargetYRef and the next frame
+    // eases toward the new target. Two rapid Down presses produce
+    // continuous motion, no restart-from-zero per press.
+    function setStackY(y: number, snap = false) {
+        stackTargetYRef.current = y;
+        if (snap) {
+            if (stackRafRef.current !== null) {
+                cancelAnimationFrame(stackRafRef.current);
+                stackRafRef.current = null;
+            }
+            stackYRef.current = y;
+            applyStackY(y);
+            return;
+        }
+        // Already at target (within settle threshold) - skip the
+        // wake-up to keep the loop idle.
+        if (Math.abs(stackYRef.current - y) < 0.5) {
+            stackYRef.current = y;
+            applyStackY(y);
+            return;
+        }
+        if (stackRafRef.current !== null) return;
+        const step = () => {
+            const target = stackTargetYRef.current;
+            const current = stackYRef.current;
+            const dist = target - current;
+            if (Math.abs(dist) < 0.5) {
+                stackYRef.current = target;
+                applyStackY(target);
+                stackRafRef.current = null;
+                return;
+            }
+            // Two-zone curve (mirrors useStackScroll - keep both in
+            // sync if you tune one). Close to target: smooth
+            // single-row motion (linear cap on slow, exp ease on
+            // fast). Far from target: linear step scaled by remaining
+            // distance so a held-Down catches up quickly without
+            // single-frame teleports.
+            const NEAR = 300;
+            const FLOOR_SLOW = 120;
+            const FAR_CAP = 600;
+            const FAR_SCALE = 0.5;
+            const absDist = Math.abs(dist);
+            const isSlow = document.body?.dataset.perf === "slow";
+            let next: number;
+            if (absDist > NEAR) {
+                const stepPx = Math.min(FAR_CAP, absDist * FAR_SCALE);
+                next = current + stepPx * Math.sign(dist);
+            } else if (isSlow) {
+                const move =
+                    Math.min(absDist, FLOOR_SLOW) * Math.sign(dist);
+                next = current + move;
+            } else {
+                next = current + dist * 0.22;
+            }
+            stackYRef.current = next;
+            applyStackY(next);
+            stackRafRef.current = requestAnimationFrame(step);
+        };
+        stackRafRef.current = requestAnimationFrame(step);
+    }
+    // Cancel the loop on unmount so we don't leak rAF callbacks.
+    useEffect(() => {
+        return () => {
+            if (stackRafRef.current !== null) {
+                cancelAnimationFrame(stackRafRef.current);
+                stackRafRef.current = null;
+            }
+        };
+    }, []);
+    const didInitialFocusScroll = useRef(false);
+    const prevFocusRowRef = useRef<number | null>(null);
+    useEffect(() => {
+        if (tabFocused) return;
+        const el = tileRefs.current[`${focus.row}:${focus.col}`];
         if (!el) return;
         el.focus({ preventScroll: true });
         const isFirst = !didInitialFocusScroll.current;
         didInitialFocusScroll.current = true;
-        // Vertical scroll target: tab + first content row pin to the
-        // top of the page; deeper rows center on the focused tile.
-        // Pinning row 0 to the top means the kid sees the tab pill +
-        // row 0 together, which matches the "you're at the start"
-        // mental model.
-        const pinToTop =
-            focus.kind === "tab" ||
-            (focus.kind === "tile" && focus.row === 0);
+        const sameRow =
+            !isFirst && prevFocusRowRef.current === focus.row;
+        prevFocusRowRef.current = focus.row;
+        if (sameRow) return;
+        // Vertical target: row 0 pins stack to top; deeper rows
+        // center the focused tile. First paint snaps (no animation)
+        // so back-navigation with a primed cache lands instantly
+        // on the previously-focused tile; subsequent moves animate.
+        const pinToTop = focus.row === 0;
         if (pinToTop) {
-            if (isFirst) window.scrollTo({ top: 0 });
-            else scrollWindowToTop();
-        } else if (focus.kind === "tile") {
-            if (isFirst) {
-                const rect = el.getBoundingClientRect();
-                const elCenter = rect.top + window.scrollY + rect.height / 2;
-                const target = Math.max(0, elCenter - window.innerHeight / 2);
-                window.scrollTo({ top: target });
-            } else {
-                scrollWindowToCenter(el);
-            }
+            setStackY(0, isFirst);
+        } else {
+            // Center on the ROW's rect, not the tile's. The focused
+            // tile has transform: scale(1.12), and reading
+            // getBoundingClientRect on a transformed element can
+            // return inconsistent values on this WebView. Rows
+            // aren't transformed, so the row rect is stable. The
+            // delta is relative to stackYRef.current (the
+            // animator's CURRENT position, which is what the rect
+            // reflects); applied on top gives the absolute target.
+            const rowEl = el.closest(".browse-row") as HTMLElement | null;
+            const target = rowEl ?? el;
+            const rect = target.getBoundingClientRect();
+            const rowCenter = rect.top + rect.height / 2;
+            const delta = window.innerHeight / 2 - rowCenter;
+            setStackY(stackYRef.current + delta, isFirst);
         }
-    }, [focus]);
+    }, [focus, tabFocused]);
 
-    // Window-level keyboard listener so D-pad navigation works even
-    // when DOM focus drifts to body (route transitions, occasional
-    // WebView quirks where imperative .focus() doesn't take effect
-    // on the first try). Skip while a modal is open - the modal owns
-    // the keys via its own bubbled handler.
+    // Window-level keyboard listener. Skip while an override modal
+    // is open (the modal owns the keys via its own bubbled handler).
+    // Listener also early-returns inside onKey when tabFocused so
+    // the layout's TabPill can own those events.
     useEffect(() => {
-        if (menuOpen || override) return;
+        if (override) return;
         const handler = (e: KeyboardEvent) => onKey(e);
         window.addEventListener("keydown", handler);
         return () => window.removeEventListener("keydown", handler);
-        // onKey closes over focus + data; recreate on each change.
+        // onKey closes over focus + data + tabFocused.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [focus, data, menuOpen, override]);
+    }, [focus, data, override, tabFocused]);
 
-    // Re-focus the Menu tab when the menu modal closes. The modal's
-    // close path doesn't change `focus` state (still tab[2]), so the
-    // focus effect above doesn't re-fire and DOM focus stays on body
-    // (the modal's last-focused element was unmounted with the modal).
-    const wasMenuOpen = useRef(false);
-    useEffect(() => {
-        if (wasMenuOpen.current && !menuOpen) {
-            tileRefs.current["tab:2"]?.focus({ preventScroll: true });
-        }
-        wasMenuOpen.current = menuOpen;
-    }, [menuOpen]);
+    // Row anchor for image-priority gating. We render every row's
+    // DOM (no virtualization placeholder) so layout stays
+    // consistent - virtualization with placeholders caused
+    // centering drift when rows transitioned between placeholder
+    // (~360px), intrinsic-size (~400px), and natural height
+    // (~510px). The cost we were trying to avoid by virtualizing
+    // (DOM size, paint, decode) is now handled by:
+    //   - content-visibility: auto on .browse-row skips paint for
+    //     off-viewport rows.
+    //   - Tile.priority gates whether <img> tags render so off-
+    //     window rows just have placeholder divs (no decode).
+    //   - Tile is memoized so most rows skip render reconciliation.
+    // anchorRowImmediate drives the priority window so visited
+    // rows warm up immediately without a deferred-render lag.
+    const anchorRowImmediate =
+        focus.kind === "tile" ? focus.row : lastTileRef.current.row;
 
     if (error) {
         return (
             <div className="kids-page kids-error">
-                <TabPill active="browse" search={location.search} />
                 <p className="error">{error}</p>
-                <Link to="/library">Back to library</Link>
             </div>
         );
     }
     if (!data) {
         return (
             <div className="kids-page kids-loading">
-                <TabPill active="browse" search={location.search} />
                 <p>Loading…</p>
             </div>
         );
@@ -663,24 +929,16 @@ export default function Browse() {
     if (data.rows.length === 0) {
         return (
             <div className="kids-page kids-empty">
-                <TabPill active="browse" search={location.search} />
                 <h1>Nothing to browse yet</h1>
                 <p>Ask a grown-up to set up your shows.</p>
             </div>
         );
     }
 
+
     return (
         <div className="browse">
-            <TabPill
-                active="browse"
-                search={location.search}
-                focusedIndex={focus.kind === "tab" ? focus.index : null}
-                tabRef={(i, el) => {
-                    tileRefs.current[`tab:${i}`] = el;
-                }}
-                onOpenMenu={() => setMenuOpen(true)}
-            />
+            <div className="browse-stack" ref={stackRef}>
             {data.rows.map((row, rIdx) => {
                 // Each row's targetCol drives useBrowseRowAnimator:
                 // active row tracks the kid's focus.col, inactive rows
@@ -689,9 +947,21 @@ export default function Browse() {
                 // row owns its own translateX; React just sets the
                 // target.
                 const trackCol =
-                    focus.kind === "tile" && focus.row === rIdx
+                    !tabFocused && focus.row === rIdx
                         ? focus.col
                         : (rowColMemoryRef.current.get(rIdx) ?? 0);
+                // Image-load priority: render <img> for rows within
+                // warmRadius of the focused row, plus any row
+                // previously latched warm. Initial radius is 2 (so
+                // tiles just past the visible viewport are pre-
+                // loading before the kid arrows into them). The
+                // radius grows by 1 every 1.5s while the page sits
+                // idle, so eventually the whole library is warm.
+                const inActiveWindow =
+                    Math.abs(rIdx - anchorRowImmediate) <= warmRadius;
+                if (inActiveWindow) warmRowsRef.current.add(rIdx);
+                const rowImagePriority =
+                    inActiveWindow || warmRowsRef.current.has(rIdx);
                 return (
                     <section key={row.rowId} className="browse-row">
                         <h2 className="browse-row-title">
@@ -707,7 +977,7 @@ export default function Browse() {
                                 {row.items.map((item, cIdx) => {
                                     const key = `${rIdx}:${cIdx}`;
                                     const focused =
-                                        focus.kind === "tile" &&
+                                        !tabFocused &&
                                         focus.row === rIdx &&
                                         focus.col === cIdx;
                                     return (
@@ -717,6 +987,7 @@ export default function Browse() {
                                             size="browse"
                                             focused={focused}
                                             showProgress
+                                            priority={rowImagePriority}
                                             onClick={() => {
                                                 rememberLastFocused(item.Id);
                                                 nav(`/watch/${encodeURIComponent(item.Id)}${location.search}`);
@@ -734,7 +1005,7 @@ export default function Browse() {
                                     rowIdx={rIdx}
                                     col={row.items.length}
                                     focused={
-                                        focus.kind === "tile" &&
+                                        !tabFocused &&
                                         focus.row === rIdx &&
                                         focus.col === row.items.length
                                     }
@@ -769,14 +1040,18 @@ export default function Browse() {
                     </section>
                 );
             })}
+            </div>
             {override && (
                 <OverrideModal
                     itemId={override.itemId}
                     itemName={override.itemName}
+                    itemType={override.itemType}
+                    seriesId={override.seriesId}
+                    seriesName={override.seriesName}
+                    played={override.played}
                     onClose={() => setOverride(null)}
                 />
             )}
-            {menuOpen && <MainMenuModal onClose={() => setMenuOpen(false)} />}
         </div>
     );
 }

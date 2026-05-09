@@ -55,8 +55,9 @@ export function cacheKey(
     limit: number,
     startIndex: number,
     search: string,
+    sort: string,
 ): string {
-    return `${userId}:${section}:${type}:${limit}:${startIndex}:${search}`;
+    return `${userId}:${section}:${type}:${limit}:${startIndex}:${search}:${sort}`;
 }
 
 function openDB(): Promise<IDBDatabase | null> {

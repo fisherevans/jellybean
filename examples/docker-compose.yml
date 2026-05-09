@@ -1,11 +1,12 @@
-# Example Compose snippet showing how Jellybean drops into an existing
-# Jellyfin + *arr stack. Adapt service names and networks to match your
-# real setup.
+# Production drop-in: Jellybean alongside an existing Jellyfin + *arr
+# stack. See docs/deploy.md for the full runbook (image tag pinning,
+# upgrades, rollback, Cloudflare tunnel notes, secrets management).
 #
-# Cloudflare tunnel routing: add a hostname like jellybean.yourdomain.tld
-# pointing at http://jellybean:8080 in your cloudflared config. Auth is
-# handled by Jellybean (Jellyfin user login), so no Cloudflare Access layer
-# is needed in front.
+# Required env (use a .env file next to this compose, or your secrets
+# manager - never commit them):
+#   JELLYFIN_API_KEY            generate at Jellyfin -> Dashboard -> API Keys
+#   JELLYBEAN_SESSION_SECRET    any high-entropy string; rotating it
+#                               invalidates every existing session.
 
 services:
   jellyfin:
@@ -17,6 +18,12 @@ services:
       - media
 
   jellybean:
+    # Pin to a SHA tag for production deployments so a registry push
+    # can't rotate your running version under you. Find the latest
+    # green build at https://github.com/fisherevans/jellybean/pkgs/container/jellybean
+    # and substitute it here. `:latest` is fine for personal use; the
+    # SHA tag is the upgrade-by-edit-and-restart pattern used in
+    # docs/deploy.md.
     image: ghcr.io/fisherevans/jellybean:latest
     container_name: jellybean
     restart: unless-stopped
@@ -24,17 +31,33 @@ services:
       jellyfin:
         condition: service_healthy
     environment:
+      # Internal DNS name on the shared `media` network. The kid TVs
+      # only ever reach Jellybean's external URL; Jellyfin stays
+      # internal-only here, even when Jellybean is exposed via
+      # Cloudflare tunnel. The Jellyfin URL never leaves the server.
       JELLYFIN_URL: http://jellyfin:8096
-      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY}            # generate one in Jellyfin admin -> API Keys
-      JELLYBEAN_SESSION_SECRET: ${JELLYBEAN_SESSION_SECRET}  # any high-entropy string; rotate to invalidate sessions
-      JELLYBEAN_PORT: 8080
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY}
+      JELLYBEAN_SESSION_SECRET: ${JELLYBEAN_SESSION_SECRET}
+      # JELLYBEAN_PORT defaults to 8080 (set in the image). Override
+      # only if 8080 is taken on this host.
       JELLYBEAN_DB_PATH: /var/lib/jellybean/jellybean.db
     volumes:
       - jellybean-data:/var/lib/jellybean
     ports:
+      # Expose for direct LAN access (chromecast, dev tools). Drop
+      # this stanza when fronting Jellybean entirely behind a tunnel.
       - "8080:8080"
     networks:
       - media
+    # Healthcheck: same `/jellybean healthcheck` subcommand the
+    # Dockerfile runs, declared here so `docker compose ps` reflects
+    # status and depends_on (other services) can gate on it.
+    healthcheck:
+      test: ["CMD", "/jellybean", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
 
 networks:
   media:

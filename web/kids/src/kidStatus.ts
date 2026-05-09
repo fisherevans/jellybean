@@ -18,6 +18,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { authHeaders, getSession } from "./auth";
+import * as overrides from "./parentOverrides";
+import { useParentOverride } from "./parentOverrides";
 
 // ---- shared fetch helper ----------------------------------------
 
@@ -159,6 +161,11 @@ export type ActiveMode = {
     };
     source: "schedule" | "override" | "none";
     overrideExpiresAt?: string;
+    /** Server-reported list of available modes. Surfaced so the
+     *  override modal can render a mode picker without an extra
+     *  fetch. Populated only when the server includes it in the
+     *  active-mode response. */
+    available?: { id: number; name: string; themeKey: string }[];
 };
 
 function fetchActiveMode(): Promise<ActiveMode | null> {
@@ -168,4 +175,144 @@ function fetchActiveMode(): Promise<ActiveMode | null> {
 export function useActiveMode(): ActiveMode | null {
     const enabled = !!getSession();
     return usePolledStatus(fetchActiveMode, 60_000, enabled);
+}
+
+// ---- merged readers (server + parent override) ------------------
+//
+// Each `useEffective*` hook subscribes to BOTH the server poll and
+// the local parent-override layer, returning a snapshot that
+// reflects whichever is "active" right now. Components that need
+// the actual displayed value (KidOverlays, the override modal's
+// summary lines, the time-limit gate) should call these instead
+// of the bare server hooks.
+//
+// Mode resolution:
+//   - local override `action: "set"` -> use override's mode (look
+//     up in `available` list).
+//   - local override `action: "disable"` -> render as "no mode"
+//     even if the server schedule says otherwise.
+//   - else: server result unchanged.
+
+export function useEffectiveActiveMode(): ActiveMode | null {
+    const server = useActiveMode();
+    const override = useParentOverride(() => overrides.getMode());
+    if (!server) return null;
+    if (!override) return server;
+    if (override.action === "disable") {
+        return {
+            ...server,
+            mode: undefined,
+            source: "override",
+            overrideExpiresAt: override.expiresAt,
+        };
+    }
+    const picked =
+        server.available?.find((m) => m.id === override.modeId) ??
+        (server.mode && server.mode.id === override.modeId
+            ? server.mode
+            : undefined);
+    if (!picked) return server; // override referenced an unknown mode; fall back
+    return {
+        ...server,
+        mode: {
+            id: picked.id,
+            name: picked.name,
+            themeKey: picked.themeKey,
+        },
+        source: "override",
+        overrideExpiresAt: override.expiresAt,
+    };
+}
+
+// Time resolution:
+//   - local `disabledUntil` in future -> minutesRemaining is
+//     effectively unlimited (we report a large sentinel) and
+//     `locked` is false.
+//   - local `addedMinutes` -> add to minutesRemaining.
+//   - else: server unchanged.
+export function useEffectiveTimeStatus(): TimeStatus | null {
+    const server = useTimeStatus();
+    const override = useParentOverride(() => overrides.getGlobalTime());
+    if (!server) return null;
+    if (!override) return server;
+    if (
+        override.disabledUntil &&
+        Date.parse(override.disabledUntil) > Date.now()
+    ) {
+        return {
+            ...server,
+            enabled: server.enabled,
+            minutesRemaining: 24 * 60,
+            locked: false,
+        };
+    }
+    if (override.addedMinutes && override.addedMinutes > 0) {
+        return {
+            ...server,
+            minutesRemaining: server.minutesRemaining + override.addedMinutes,
+            locked: false,
+        };
+    }
+    return server;
+}
+
+// Body breaks resolution:
+//   - local `disabledUntil` in future -> render as if breaks are
+//     not currently active. Server's "enabled" + accumulator stay
+//     visible (so the parent can see what would have happened).
+export function useEffectiveBodyBreakStatus(
+    activelyPlaying: boolean,
+): BodyBreakStatus | null {
+    const server = useBodyBreakStatus(activelyPlaying);
+    const override = useParentOverride(() => overrides.getBodyBreaks());
+    if (!server) return null;
+    if (!override) return server;
+    if (Date.parse(override.disabledUntil) > Date.now()) {
+        return {
+            ...server,
+            onBreak: false,
+            onBreakUntil: undefined,
+            onBreakReason: undefined,
+            voiceMessage: undefined,
+        };
+    }
+    return server;
+}
+
+// Viewing resolution: dim and warm percent get overridden if a
+// per-control local override is active. Auto-off (clock-driven on
+// the server) gets shifted / disabled by the local autoOff
+// override.
+export function useEffectiveViewingState(): ViewingState | null {
+    const server = useViewingState();
+    const dim = useParentOverride(() => overrides.getDim());
+    const warm = useParentOverride(() => overrides.getWarm());
+    const autoOff = useParentOverride(() => overrides.getAutoOff());
+    if (!server) return null;
+    let dimPercent = server.dimPercent;
+    let warmPercent = server.warmTintPercent;
+    let autoOffActive = server.autoOffActive;
+    let sleepTimerAt = server.sleepTimerAt;
+    if (dim) dimPercent = dim.percent;
+    if (warm) warmPercent = warm.percent;
+    if (autoOff?.disabledUntilMidnight) {
+        // Skip auto-off entirely until tomorrow.
+        autoOffActive = false;
+        sleepTimerAt = undefined;
+    } else if (autoOff?.shiftMinutes && sleepTimerAt) {
+        // Shift the sleep-timer fire time. Negative = earlier.
+        const shifted = new Date(
+            Date.parse(sleepTimerAt) + autoOff.shiftMinutes * 60_000,
+        ).toISOString();
+        sleepTimerAt = shifted;
+        // Recompute autoOffActive against the shifted time.
+        autoOffActive = Date.parse(shifted) <= Date.now();
+    }
+    return {
+        ...server,
+        dimPercent,
+        warmTintPercent: warmPercent,
+        autoOffActive,
+        sleepTimerAt,
+    };
 }

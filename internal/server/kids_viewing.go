@@ -36,65 +36,12 @@ func (s *Server) handleKidsViewingState(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, st)
 }
 
-// handleKidsOverrideSetViewing handles dim + red_shift overrides
-// + sleep timer + cancel-auto-off via the override flow.
-func (s *Server) handleKidsOverrideSetViewing(w http.ResponseWriter, r *http.Request) {
-	kidID, _ := s.requireOverride(w, r)
-	if kidID == 0 {
-		return
-	}
-	action := mux.Vars(r)["action"]
-	now := time.Now().UTC()
-	var body struct {
-		Value         int    `json:"value"`
-		ExpiresInSecs int    `json:"expiresInSecs,omitempty"`
-		FireInSecs    int    `json:"fireInSecs,omitempty"`
-	}
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
-			return
-		}
-	}
-	switch action {
-	case "set-dim", "set-red-shift":
-		control := "dim"
-		if action == "set-red-shift" {
-			control = "red_shift"
-		}
-		var expiresAt time.Time
-		if body.ExpiresInSecs > 0 {
-			expiresAt = now.Add(time.Duration(body.ExpiresInSecs) * time.Second)
-		}
-		if err := s.curation.SetViewingOverride(r.Context(), kidID, control, body.Value, expiresAt); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	case "set-sleep-timer":
-		if body.FireInSecs <= 0 {
-			http.Error(w, "fireInSecs required", http.StatusBadRequest)
-			return
-		}
-		fireAt := now.Add(time.Duration(body.FireInSecs) * time.Second)
-		if err := s.curation.SetSleepTimer(r.Context(), kidID, fireAt); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	case "cancel-auto-off":
-		if err := s.curation.CancelAutoOff(r.Context(), kidID); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	default:
-		http.Error(w, "unknown action", http.StatusNotFound)
-		return
-	}
-	payload, _ := json.Marshal(body)
-	if err := s.curation.RecordOverrideAction(r.Context(), kidID, action, "", string(payload)); err != nil {
-		s.logger.Warn().Err(err).Msg("override audit log")
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
+// Dim / red-shift / sleep-timer / cancel-auto-off overrides moved
+// client-side: web/kids/src/parentOverrides.ts persists the
+// device-local layer and the kid client merges it on top of the
+// server-reported viewing-state. Server-side helpers
+// (SetViewingOverride / SetSleepTimer / CancelAutoOff) stay for
+// admin tools that may want to write them later.
 
 func (s *Server) handleAdminProfileViewingControls(w http.ResponseWriter, r *http.Request) {
 	if auth.SessionFromContext(r.Context()) == nil {

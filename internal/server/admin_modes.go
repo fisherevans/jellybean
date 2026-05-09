@@ -124,28 +124,6 @@ func (s *Server) handleKidsActiveMode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, am)
 }
 
-func (s *Server) handleKidsOverrideSetMode(w http.ResponseWriter, r *http.Request) {
-	kidID, _ := s.requireOverride(w, r)
-	if kidID == 0 {
-		return
-	}
-	var body struct {
-		ModeID        int64 `json:"modeId"`
-		ExpiresInSecs int   `json:"expiresInSecs"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
-		return
-	}
-	if body.ExpiresInSecs <= 0 {
-		body.ExpiresInSecs = 60 * 60
-	}
-	until := time.Now().UTC().Add(time.Duration(body.ExpiresInSecs) * time.Second)
-	if err := s.curation.SetModeOverride(r.Context(), kidID, body.ModeID, until); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	payload, _ := json.Marshal(body)
-	_ = s.curation.RecordOverrideAction(r.Context(), kidID, "set_mode", "", string(payload))
-	w.WriteHeader(http.StatusNoContent)
-}
+// Mode pinning moved client-side: web/kids/src/parentOverrides.ts
+// persists the device-local mode override and the kid client
+// merges it on top of the server-resolved active mode.

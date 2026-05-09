@@ -287,6 +287,22 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		search = search[:200]
 	}
 
+	// sort selects the ordering used by the "all" section. "name"
+	// keeps the existing alpha + paginated flow; the recency sorts
+	// fetch the entire visible set in one pass and order it
+	// server-side so the kid client can render time-bucketed
+	// sections without juggling pagination across buckets.
+	sortParam := strings.ToLower(strings.TrimSpace(q.Get("sort")))
+	switch sortParam {
+	case "", "name":
+		sortParam = "name"
+	case "recently_added", "recently_watched":
+		// ok
+	default:
+		http.Error(w, "sort must be name, recently_added, or recently_watched", http.StatusBadRequest)
+		return
+	}
+
 	ctx, _ := kidsRequestContext(r)
 
 	// Build the ETag from DB-only state (no Jellyfin round-trip yet) so a
@@ -308,6 +324,7 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		Limit:          limit,
 		StartIndex:     startIndex,
 		Search:         search,
+		Sort:           sortParam,
 		MaxSetAt:       maxSetAt,
 		JellyfinUserID: kc.JellyfinUserID,
 	})
@@ -329,29 +346,68 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 			writeUpstreamError(w, err, "failed to load continue watching")
 			return
 		}
-		// EffectiveItemVisibilityBulk applies the M6 resolution
-		// rules: profile_tag_filters override per-profile
-		// categorization (always_hidden > always_visible >
-		// categorization). Using GetStatesForItems here would
-		// silently bypass tag filters - explicit fail-closed.
-		visible, err := s.curation.EffectiveItemVisibilityBulk(ctx, profileID, itemIDs(res.Items))
+		// Episode→series rewrite (see resumeIDsForCuration in
+		// browse_resolver.go for rationale): episodes have no
+		// per-episode curation state; we surface their parent series
+		// instead so categorization filters work and the kid sees
+		// one tile per show.
+		ids := resumeIDsForCuration(res.Items)
+		visible, err := s.curation.EffectiveItemVisibilityBulk(ctx, profileID, ids)
 		if err != nil {
 			s.logger.Error().Err(err).Msg("resume visibility lookup")
 			http.Error(w, "failed to load visibility", http.StatusInternalServerError)
 			return
 		}
-		out := make([]browseItem, 0, len(res.Items))
-		for _, it := range res.Items {
+		// Re-fetch the rewritten ids as actual items so the slim
+		// browseItem we render carries series posters and series-level
+		// UserData (Jellyfin aggregates child progress to the series).
+		// We do this in one batch via GetItemsByIDs to avoid N+1.
+		visibleIDs := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if visible[id] == curation.StateVisible {
+				visibleIDs = append(visibleIDs, id)
+			}
+			if len(visibleIDs) >= limit {
+				break
+			}
+		}
+		// Re-resolve the (possibly rewritten) ids as full Items via
+		// the kid's user token so each tile carries series-level
+		// poster + UserData (Jellyfin aggregates child progress to
+		// the series).
+		byID := make(map[string]jellyfin.Item, len(visibleIDs))
+		if len(visibleIDs) > 0 {
+			const batch = 100
+			for i := 0; i < len(visibleIDs); i += batch {
+				end := i + batch
+				if end > len(visibleIDs) {
+					end = len(visibleIDs)
+				}
+				resItems, err := s.jellyfin.GetItemsAsUser(
+					ctx,
+					jellyfin.ItemsFilter{IDs: visibleIDs[i:end]},
+					kc.JellyfinToken,
+				)
+				if err != nil {
+					s.logger.Error().Err(err).Msg("resume series fetch")
+					writeUpstreamError(w, err, "failed to load continue watching")
+					return
+				}
+				for _, it := range resItems.Items {
+					byID[it.ID] = it
+				}
+			}
+		}
+		out := make([]browseItem, 0, len(visibleIDs))
+		for _, id := range visibleIDs {
+			it, ok := byID[id]
+			if !ok {
+				continue
+			}
 			if _, allowed := allowedTypes[it.Type]; !allowed {
 				continue
 			}
-			if visible[it.ID] != curation.StateVisible {
-				continue
-			}
 			out = append(out, toBrowseItem(it))
-			if len(out) >= limit {
-				break
-			}
 		}
 		writeJSON(w, http.StatusOK, kidsLibraryResponse{Items: out, ProfileID: profileID})
 		return
@@ -372,12 +428,31 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Effective sort + Jellyfin SortBy choice. The "recent" section
+	// keeps its DateCreated default; the new ?sort= param on the
+	// "all" section drives an alternate order. Recency sorts use
+	// the entire visible set in one pass (no pagination) so the
+	// client can render time-bucketed sections without juggling
+	// page boundaries.
+	effectiveSort := sortParam
+	if section == "recent" {
+		effectiveSort = "recently_added"
+	}
 	sortBy := "SortName"
 	sortOrder := "Ascending"
-	if section == "recent" {
+	switch effectiveSort {
+	case "recently_added":
 		sortBy = "DateCreated"
 		sortOrder = "Descending"
+	case "recently_watched":
+		// LastPlayedDate isn't a Jellyfin SortBy field; we sort
+		// client-side after the merge. Pull in alpha order so the
+		// "never watched" tail stays alphabetical without a
+		// secondary sort.
+		sortBy = "SortName"
+		sortOrder = "Ascending"
 	}
+	bypassPaging := effectiveSort == "recently_added" || effectiveSort == "recently_watched"
 
 	// Batch the IDs filter so we don't blow Jellyfin's URI length
 	// limit. A profile with hundreds of visible items (Nottingham has
@@ -410,19 +485,32 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 	// Re-sort across batches. Jellyfin's per-batch order is valid
 	// only within each chunk; "A" from chunk 2 and "B" from chunk 1
 	// would otherwise come back as B,A.
-	descending := sortOrder == "Descending"
-	sort.Slice(merged, func(i, j int) bool {
-		var ai, aj string
-		if sortBy == "DateCreated" {
-			ai, aj = merged[i].DateCreated, merged[j].DateCreated
-		} else {
-			ai, aj = strings.ToLower(merged[i].Name), strings.ToLower(merged[j].Name)
-		}
-		if descending {
-			return ai > aj
-		}
-		return ai < aj
-	})
+	switch effectiveSort {
+	case "recently_added":
+		sort.SliceStable(merged, func(i, j int) bool {
+			return merged[i].DateCreated > merged[j].DateCreated
+		})
+	case "recently_watched":
+		// Watched items first (LastPlayedDate desc); unwatched
+		// trailing alphabetically. Empty LastPlayedDate counts as
+		// "never watched" and gets bucketed by the kid client into
+		// the "Never watched" section.
+		sort.SliceStable(merged, func(i, j int) bool {
+			pi := lastPlayed(merged[i])
+			pj := lastPlayed(merged[j])
+			if (pi == "") != (pj == "") {
+				return pi != ""
+			}
+			if pi != pj {
+				return pi > pj
+			}
+			return strings.ToLower(merged[i].Name) < strings.ToLower(merged[j].Name)
+		})
+	default:
+		sort.SliceStable(merged, func(i, j int) bool {
+			return strings.ToLower(merged[i].Name) < strings.ToLower(merged[j].Name)
+		})
+	}
 
 	filtered := make([]jellyfin.Item, 0, len(merged))
 	for _, it := range merged {
@@ -431,36 +519,49 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// LettersByName covers the FULL filtered list (before pagination
-	// slice). The kid client's alpha picker uses it to jump to any
-	// letter in the library even when only the first page is loaded.
-	letters := computeLettersByName(filtered)
-
-	end := startIndex + limit
-	hasMore := end < len(filtered)
-	if startIndex > len(filtered) {
-		filtered = nil
-	} else {
-		if end > len(filtered) {
-			end = len(filtered)
-		}
-		filtered = filtered[startIndex:end]
+	// LettersByName is only useful for the alpha sort. Skip the
+	// computation on recency sorts - the kid client hides the A-Z
+	// jump button there anyway.
+	var letters map[string]int
+	if effectiveSort == "name" {
+		letters = computeLettersByName(filtered)
 	}
 
-	slim := make([]browseItem, len(filtered))
-	for i, it := range filtered {
+	totalAvailable := len(ids)
+	var (
+		hasMore bool
+		page    []jellyfin.Item
+	)
+	if bypassPaging {
+		page = filtered
+	} else {
+		end := startIndex + limit
+		hasMore = end < len(filtered)
+		if startIndex > len(filtered) {
+			page = nil
+		} else {
+			if end > len(filtered) {
+				end = len(filtered)
+			}
+			page = filtered[startIndex:end]
+		}
+	}
+
+	slim := make([]browseItem, len(page))
+	for i, it := range page {
 		slim[i] = toBrowseItem(it)
 	}
 
-	writeJSON(w, http.StatusOK, kidsLibraryResponse{
+	resp := kidsLibraryResponse{
 		Items:          slim,
-		TotalAvailable: len(ids),
+		TotalAvailable: totalAvailable,
 		StartIndex:     startIndex,
 		NextStartIndex: startIndex + len(slim),
 		HasMore:        hasMore,
 		ProfileID:      profileID,
 		LettersByName:  letters,
-	})
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type kidsLibraryResponse struct {
@@ -527,6 +628,7 @@ type kidsLibraryETagInputs struct {
 	Limit          int
 	StartIndex     int
 	Search         string
+	Sort           string
 	MaxSetAt       int64
 	JellyfinUserID string
 }
@@ -556,13 +658,14 @@ func computeKidsLibraryETag(in kidsLibraryETagInputs) string {
 	sort.Strings(types)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "profile=%d;sec=%s;type=%s;limit=%d;start=%d;search=%s;mtime=%d;userId=%s",
+	fmt.Fprintf(&b, "profile=%d;sec=%s;type=%s;limit=%d;start=%d;search=%s;sort=%s;mtime=%d;userId=%s",
 		in.ProfileID,
 		in.Section,
 		strings.Join(types, ","),
 		in.Limit,
 		in.StartIndex,
 		in.Search,
+		in.Sort,
 		in.MaxSetAt,
 		in.JellyfinUserID,
 	)
@@ -1353,10 +1456,12 @@ func (s *Server) handleKidsNextUp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := kidsNextUpResponse{
-		EpisodeID:  episode.ID,
-		Name:       episode.Name,
-		SeriesID:   episode.SeriesID,
-		SeriesName: episode.SeriesName,
+		EpisodeID:         episode.ID,
+		Name:              episode.Name,
+		SeriesID:          episode.SeriesID,
+		SeriesName:        episode.SeriesName,
+		IndexNumber:       episode.IndexNumber,
+		ParentIndexNumber: episode.ParentIndexNumber,
 	}
 	if episode.UserData != nil {
 		resp.UserData = episode.UserData
@@ -1365,9 +1470,13 @@ func (s *Server) handleKidsNextUp(w http.ResponseWriter, r *http.Request) {
 }
 
 type kidsNextUpResponse struct {
-	EpisodeID  string                 `json:"episodeId"`
-	Name       string                 `json:"name"`
-	SeriesID   string                 `json:"seriesId,omitempty"`
-	SeriesName string                 `json:"seriesName,omitempty"`
-	UserData   *jellyfin.ItemUserData `json:"userData,omitempty"`
+	EpisodeID         string                 `json:"episodeId"`
+	Name              string                 `json:"name"`
+	SeriesID          string                 `json:"seriesId,omitempty"`
+	SeriesName        string                 `json:"seriesName,omitempty"`
+	// Episode-within-season number; the kid's "Up Next" overlay
+	// reads these to render an "S2E04" badge alongside the title.
+	IndexNumber       *int                   `json:"indexNumber,omitempty"`
+	ParentIndexNumber *int                   `json:"parentIndexNumber,omitempty"`
+	UserData          *jellyfin.ItemUserData `json:"userData,omitempty"`
 }

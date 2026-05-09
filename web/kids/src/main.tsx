@@ -3,11 +3,15 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { getSession, hydrateAuthFromBridge } from "./auth";
 import { startPerfMonitor } from "./perfMode";
+import { startPerfOverlay } from "./perfOverlay";
 import Browse from "./Browse";
 import KidOverlays from "./KidOverlays";
+import KidsHome from "./KidsHome";
 import Library from "./Library";
 import Login from "./Login";
 import Play from "./Play";
+import TagDetail from "./TagDetail";
+import Tags from "./Tags";
 import Watch from "./Watch";
 import { prefetchLibrary } from "./prefetch";
 import "./styles.css";
@@ -42,8 +46,12 @@ function AppShell() {
             <Routes>
                 <Route path="/" element={<Index />} />
                 <Route path="/login" element={<Login />} />
-                <Route path="/browse" element={<Browse />} />
-                <Route path="/library" element={<Library />} />
+                <Route element={<KidsHome />}>
+                    <Route path="/browse" element={<Browse />} />
+                    <Route path="/library" element={<Library />} />
+                    <Route path="/tags" element={<Tags />} />
+                </Route>
+                <Route path="/tags/:tagId" element={<TagDetail />} />
                 <Route path="/watch/:itemId" element={<Watch />} />
                 <Route path="/play/:itemId" element={<Play />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
@@ -125,6 +133,18 @@ hydrateAuthFromBridge();
 // devices keep the polished defaults.
 startPerfMonitor();
 
+// Live perf overlay (FPS + long-task readout + LoAF + JS heap).
+// Off by default; toggle from the kid Menu ("Turn on perf
+// overlay") which writes the localStorage flag below and reloads.
+// Useful while diagnosing perf regressions on the TV.
+if (localStorage.getItem("jellybean.kids.perfDebug") === "1") {
+    startPerfOverlay();
+}
+
+// Per-tab random vertical offsets for the rainbow bg are now
+// owned by KidsHome - each tab gets its own offset, generated
+// lazily on first visit. See KidsHome.tsx.
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
         <BrowserRouter basename="/player">
@@ -133,17 +153,63 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     </React.StrictMode>,
 );
 
-// Fade out the splash once React has mounted. Two rAFs give the browser
-// time to paint the first frame so the transition starts from a stable
-// state rather than racing the initial commit.
-requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-        const splash = document.getElementById("splash");
-        if (!splash) return;
-        splash.classList.add("hidden");
-        // Drop it from the DOM after the transition so it can't trap
-        // focus or eat input on cheap TVs that still respect display:none
-        // semantics during opacity transitions.
-        setTimeout(() => splash.remove(), 600);
-    });
+// Hold the splash until ALL of:
+//   1. React has mounted + completed its first commit (two rAFs).
+//   2. The browse page's SVG bg tile has loaded into cache.
+//   3. The first kid page (Browse / Library / Login) has rendered
+//      its real content - signalled via a `jellybean:ready` event
+//      the page dispatches once `data !== null` (or it's a no-data
+//      page like Login). Without this, the splash would hide
+//      while Browse was still showing its "Loading..." state and
+//      the kid saw an extra unstyled flash.
+//   4. A small grace tick so the browser has a frame to actually
+//      paint the loaded content before the splash crossfades.
+//
+// Cap the wait at 2s so a slow network on the initial /api/kids/browse
+// fetch doesn't strand the kid on a forever-splash; if data isn't
+// ready by then, hide the splash anyway and let the page's own
+// loading state take over.
+const SPLASH_MAX_MS = 2000;
+function hideSplash() {
+    const splash = document.getElementById("splash");
+    if (!splash || splash.classList.contains("hidden")) return;
+    splash.classList.add("hidden");
+    // Drop it from the DOM after the transition so it can't trap
+    // focus or eat input on cheap TVs that still respect display:none
+    // semantics during opacity transitions.
+    setTimeout(() => splash.remove(), 600);
+}
+
+const bgPreload = new Promise<void>((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve();
+    img.onerror = () => resolve();
+    img.src = "/player/browse-bg-tile.svg";
+});
+
+const reactMounted = new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+});
+
+const pageReady = new Promise<void>((resolve) => {
+    const onReady = () => {
+        window.removeEventListener("jellybean:ready", onReady);
+        resolve();
+    };
+    window.addEventListener("jellybean:ready", onReady);
+});
+
+const timeoutCap = new Promise<void>((resolve) =>
+    setTimeout(resolve, SPLASH_MAX_MS),
+);
+
+Promise.race([
+    Promise.all([bgPreload, reactMounted, pageReady]).then(() => undefined),
+    timeoutCap,
+]).then(() => {
+    // Two more rAFs so the bg image + tile content have frames to
+    // actually paint before the splash crossfades out.
+    requestAnimationFrame(() =>
+        requestAnimationFrame(hideSplash),
+    );
 });

@@ -267,15 +267,49 @@ func resolveContinueWatching(b *browseContext, row curation.LayoutRow, cfg map[s
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]string, 0, len(res.Items))
-	for _, it := range res.Items {
-		ids = append(ids, it.ID)
-	}
+	// Resume returns the granular position - one entry per episode the
+	// kid is mid-way through. We surface series tiles instead so:
+	// (a) curation state (categorized at the series level) actually
+	// applies - episodes have no per-episode categorization and would
+	// otherwise be filtered as hidden;
+	// (b) "I'm watching Care Bears" appears once instead of four times
+	// when the kid bounced between episodes;
+	// (c) clicking a tile lands on /watch/{seriesId} where the
+	// accordion auto-selects the in-progress episode.
+	ids := resumeIDsForCuration(res.Items)
 	visible, err := b.filterVisible(ids)
 	if err != nil {
 		return nil, err
 	}
 	return []ResolvedRow{newRow(row, "Continue Watching", "", capItems(visible, max))}, nil
+}
+
+// resumeIDsForCuration normalizes a Jellyfin Resume response into the
+// list of curation-addressable item ids: Episode ids get rewritten to
+// their parent Series id; non-episode items pass through. Order is
+// preserved (Jellyfin returns most-recent-activity-first), and
+// duplicates collapsed so a kid juggling four episodes of one show
+// gets one series tile, not four.
+//
+// Edge case: if an Episode lacks SeriesID (Jellyfin should always
+// populate it but we don't trust the network), we fall back to the
+// episode's own id - it'll likely fail visibility, but that's the
+// safe default ("if we can't resolve, hide").
+func resumeIDsForCuration(items []jellyfin.Item) []string {
+	out := make([]string, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for _, it := range items {
+		id := it.ID
+		if it.Type == "Episode" && it.SeriesID != "" {
+			id = it.SeriesID
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }
 
 func resolveFavorites(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {

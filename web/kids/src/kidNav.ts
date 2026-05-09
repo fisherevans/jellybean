@@ -13,9 +13,8 @@
 // can extend this without growing the URL surface.
 
 const HOME_TAB_KEY = "jellybean.kids.nav.homeTab";
-const TAB_FOCUS_KEY = "jellybean.kids.nav.tabFocus";
 
-export type HomeTab = "browse" | "library";
+export type HomeTab = "browse" | "library" | "tags";
 
 export function setHomeTab(tab: HomeTab): void {
     try {
@@ -29,36 +28,9 @@ export function setHomeTab(tab: HomeTab): void {
 export function getHomeTab(): HomeTab {
     try {
         const raw = sessionStorage.getItem(HOME_TAB_KEY);
-        if (raw === "library") return "library";
+        if (raw === "library" || raw === "tags") return raw;
     } catch {
         // ignore
     }
     return "browse";
-}
-
-// flagTabFocus / consumeTabFocus carry "land on this tab slot when
-// the next page mounts" across a tab-arrow navigation. Browse tab +
-// ArrowRight nav's to /library; Library should mount with focus on
-// its tab[1] so the kid can keep arrowing without backing up. The
-// flag is one-shot - the destination page consumes it on mount and
-// clears the value, so a subsequent navigation that doesn't set the
-// flag falls back to the page's normal initial-focus rules.
-export function flagTabFocus(slot: number): void {
-    try {
-        sessionStorage.setItem(TAB_FOCUS_KEY, String(slot));
-    } catch {
-        // ignore
-    }
-}
-
-export function consumeTabFocus(): number | null {
-    try {
-        const raw = sessionStorage.getItem(TAB_FOCUS_KEY);
-        if (raw === null) return null;
-        sessionStorage.removeItem(TAB_FOCUS_KEY);
-        const n = Number(raw);
-        return Number.isFinite(n) ? n : null;
-    } catch {
-        return null;
-    }
 }

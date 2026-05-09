@@ -235,6 +235,233 @@ h2,
     color: var(--error);
 }
 
+/* Kid TV login layout. Two cards (Quick Connect / password); the
+   active mode is rendered, the other tucked behind a secondary
+   link. The page sits over the same rainbow background as the
+   rest of the kid app (KidsHome's bg layer paints the whole
+   viewport regardless of route - a deliberate choice so /login
+   doesn't visually break the world). */
+.kid-login {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1.5rem 3rem;
+    gap: 1rem;
+    color: var(--fg);
+    text-align: center;
+}
+.kid-login-brand {
+    width: 96px;
+    height: 96px;
+    border-radius: 24px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.kid-login h1 {
+    margin: 0;
+    font-size: 1.6rem;
+    color: #fff;
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+.kid-login-blurb {
+    margin: 0;
+    color: #f0f0f0;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+    max-width: 560px;
+    line-height: 1.4;
+}
+.kid-login-error {
+    margin: 0;
+    color: #ffd0d0;
+    background: rgba(180, 30, 30, 0.55);
+    padding: 0.55rem 1rem;
+    border-radius: 999px;
+    max-width: 560px;
+}
+
+/* The card holding the active mode's content. Sits on a
+   semi-opaque dark fill so the rainbow shows through but text
+   stays readable. Pill-shaped corners match the rest of the kid
+   app. Width caps at 540px so the digit-grid doesn't stretch
+   awkwardly on a 1920px TV. */
+.kid-login-card {
+    background: rgba(20, 20, 28, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 22px;
+    padding: 1.4rem 1.6rem 1.6rem;
+    max-width: 540px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+}
+.kid-login-card h2 {
+    margin: 0;
+    font-size: 1.2rem;
+    color: #fff;
+    letter-spacing: 0.02em;
+}
+.kid-login-card-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+}
+/* The 6-digit code display. Big monospace digits in their own
+   pill-tile each, separated by a small gap so a kid can read
+   them at a glance from across the room. */
+.kid-login-code {
+    display: inline-flex;
+    gap: 0.4rem;
+    margin: 0.4rem 0 0.5rem;
+    font-variant-numeric: tabular-nums;
+}
+.kid-login-code-digit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    padding: 0.4rem 0.55rem;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    border-radius: 10px;
+    font-size: 2rem;
+    font-weight: 700;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.kid-login-code-loading {
+    color: #c0c0c0;
+    font-size: 2rem;
+}
+.kid-login-status {
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #d8d8d8;
+    font-size: 0.95rem;
+}
+.kid-login-spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-top-color: #fff;
+    animation: kid-login-spin 900ms linear infinite;
+}
+@keyframes kid-login-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+body[data-perf="slow"] .kid-login-spinner {
+    /* Drop the spin animation on slow devices - it's compositor-
+       cheap but the kid TV doesn't need a frame-rate-affecting
+       animation when the textual "Waiting for approval…" already
+       conveys the state. */
+    animation: none;
+    border-top-color: rgba(255, 255, 255, 0.55);
+}
+
+/* Form (password mode). Reuses the input styling from .setup
+   but in a card-friendly width. */
+.kid-login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    width: 100%;
+}
+.kid-login-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    text-align: left;
+    font-size: 0.85rem;
+    color: #c8c8c8;
+}
+.kid-login-form input {
+    background: #111;
+    color: #f0f0f0;
+    border: 1px solid #333;
+    padding: 0.65rem 0.75rem;
+    font-size: 1rem;
+    border-radius: 8px;
+}
+.kid-login-form input:focus,
+.kid-login-form input:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(128, 132, 255, 0.4);
+}
+
+/* Primary CTA: filled accent pill matching the kid app's
+   button language. Used for "Sign in" and "Get a new code." */
+.kid-login-primary {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: 0;
+    border-radius: 999px;
+    padding: 0.7rem 1.3rem;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 0.4rem;
+    transition: transform 120ms ease, background-color 120ms ease;
+}
+.kid-login-primary:hover:not(:disabled),
+.kid-login-primary:focus,
+.kid-login-primary:focus-visible {
+    outline: none;
+    transform: scale(1.03);
+}
+.kid-login-primary:focus,
+.kid-login-primary:focus-visible {
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.7);
+}
+.kid-login-primary:disabled {
+    opacity: 0.65;
+    cursor: progress;
+}
+body[data-perf="slow"] .kid-login-primary {
+    transition: none;
+}
+body[data-perf="slow"] .kid-login-primary:hover:not(:disabled),
+body[data-perf="slow"] .kid-login-primary:focus,
+body[data-perf="slow"] .kid-login-primary:focus-visible {
+    transform: none;
+}
+
+/* Secondary link: text-only with a focus ring border. Matches
+   the BackLink pattern in OverrideModal so the kid app's
+   secondary affordances all look the same. */
+.kid-login-link {
+    background: transparent;
+    border: 1px solid transparent;
+    color: #d8d8d8;
+    font: inherit;
+    font-size: 0.95rem;
+    padding: 0.4rem 0.7rem;
+    border-radius: 8px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+.kid-login-link:focus,
+.kid-login-link:focus-visible {
+    outline: none;
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.6);
+}
+
 a,
 .picker-link {
     color: var(--accent);
@@ -344,20 +571,35 @@ a,
 }
 
 .library {
-    /* The library page sits on top of an "infinite" rainbow gradient
-       (--library-bg). Bedtime + other themes redefine that token to
-       a quiet midnight gradient. The page bg is set on the .library
-       container (not body) so it scales with content height -
-       scrolling further reveals more of the gradient rather than
-       repeating. */
-    padding: 1.5rem 2rem 4rem;
+    /* No own background - the KidsHome layout's rainbow bg shows
+       through. Library used to set its own gradient via
+       --library-bg, but unifying the bg across home tabs reads as
+       a more cohesive kid app.
+
+       Padding moved onto .library-stack below so the transform
+       on the stack carries the kid's content past the page edges.
+       The .library box itself just centers + caps the max-width
+       and fills the locked viewport. */
     max-width: 1600px;
     margin: 0 auto;
-    min-height: 100vh;
-    background: var(--library-bg);
-    /* Soften the saturation so cards on top still read. The bg
-       gradient is the decoration; the content stays primary. */
-    background-blend-mode: lighten;
+    height: 100%;
+    color: #ffffff;
+    overflow: hidden;
+}
+.library-stack {
+    /* The stack carries the kid's content under transform. Padding
+       lives here (not on .library) so the kid sees natural edge
+       insets that scroll with the content rather than fixed empty
+       margins above/below the moving stack. The top padding clears
+       the absolutely-positioned TabPill (same trick Browse uses on
+       its .browse-stack) so the kid sees the tab nav above the
+       content at stackY=0; as the stack transforms up, both the
+       TabPill and this clearance scroll out together. */
+    padding:
+        calc(var(--kids-tabpill-height, 90px) + 1.5rem)
+        2rem
+        4rem;
+    box-sizing: border-box;
 }
 
 /* Banner shown only when previewing the kids client from the admin app
@@ -455,29 +697,35 @@ a,
        bar inside .library-controls, which owns the spacing below. */
 }
 
+/* Filter pills: text-only by default; white pill bg when the
+   filter is the active one; white spaced-border ring OUTSIDE the
+   pill when D-pad focused. The ring sits past the pill edge with
+   a small gap so when active+focused the kid sees both the white
+   pill AND a separate ring around it (otherwise the ring blends
+   into the pill and the focused state is invisible). */
 .filter-pill {
-    background: var(--card);
-    color: var(--fg);
-    border: 2px solid var(--border);
+    background: transparent;
+    color: #ffffff;
+    border: 0;
     border-radius: 999px;
-    padding: 0.5rem 1.25rem;
-    font-size: 1rem;
-    font-weight: 600;
+    padding: 0.55rem 1.4rem;
+    font-family: inherit;
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
     cursor: pointer;
-    transition: all 100ms ease;
-    box-shadow: 0 2px 6px rgba(32, 22, 46, 0.10);
+    transition: background-color 180ms ease, color 180ms ease;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
-
 .filter-pill.active {
-    background: var(--accent);
-    color: var(--accent-fg);
-    border-color: var(--accent);
+    background: #ffffff;
+    color: #20162e;
+    text-shadow: none;
 }
-
 .filter-pill.focused,
 .filter-pill:focus {
-    outline: none;
-    border-color: #fff;
+    outline: 3px solid rgba(255, 255, 255, 0.95);
+    outline-offset: 4px;
 }
 
 .row-title {
@@ -513,13 +761,14 @@ a,
 
 .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    /* Slightly bigger horizontal gap than vertical: the cards' aspect
-       ratio is 2:3 so equal x/y looks tight horizontally. */
-    gap: 1.1rem 1.25rem;
-    /* Headroom on every side so .tile.focused's scale(1.08) doesn't
-       clip at the leftmost column or where rows meet vertically. */
-    padding: 0.75rem 1.25rem 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    /* Match the Browse row's horizontal gap (--browse-tile-gap)
+       plus generous vertical breathing room so rows don't feel
+       cramped under the tile titles. */
+    gap: 2.2rem var(--browse-tile-gap, 1.9rem);
+    /* Headroom on every side so .tile.focused's scale(1.12) and
+       outline ring don't clip against the grid edge. */
+    padding: 1.25rem 1.25rem 1.5rem;
     /* contain: layout - layout isolation only, NO paint clipping. */
     contain: layout;
 }
@@ -550,6 +799,17 @@ a,
        caption than a left-aligned label, fits the playful kid
        look. */
     text-align: center;
+    /* Layout containment: each tile is its own layout subtree. The
+       .focused class change writes className/tabIndex on one tile;
+       without containment that DOM mutation invalidates the page's
+       full layout tree, and the next read (getBoundingClientRect /
+       offsetWidth) on a 140-tile page took 200-300ms on cheap
+       WebView. With containment, only the affected tile's layout
+       recomputes. We only contain layout - NOT paint - because the
+       focused tile's transform: scale(1.12) and the outline must
+       render outside the layout box, and `contain: paint` would
+       clip them. */
+    contain: layout;
 }
 
 .tile-cw,
@@ -663,29 +923,85 @@ a,
     top: 8px;
     right: 8px;
 }
+
+/* Watched overlay: dim the poster + place a green checkmark badge in
+   the bottom-left so the kid can see at a glance which tiles they've
+   already finished. The dim is a CSS filter on the inner img so the
+   focus-ring (sitting on the poster wrapper) is unaffected; checkmark
+   sits above the poster but below any progress bar (which won't render
+   when watched anyway, see Tile.tsx). */
+.tile-poster.is-watched > img {
+    /* brightness pushes the poster toward "background art" without
+       erasing it - the kid can still recognize the show. saturate
+       drains a bit of color so it's visually different from
+       in-progress tiles. */
+    filter: brightness(0.55) saturate(0.85);
+}
+/* When a watched tile is focused, the focus state animates inner-img
+   border-radius + the tile-poster's padding + outline. Stacking the
+   two-stage filter on top of a radius transition triggers an extra
+   raster pass per frame on Skyworth-class WebViews. Drop the saturate
+   while focused so the tile only carries a single-stage brightness
+   filter during the focus transition. The kid still sees the dim;
+   they lose only the saturation drop, which is barely perceptible
+   at the focused tile's larger size. */
+.tile.focused .tile-poster.is-watched > img,
+.tile:focus .tile-poster.is-watched > img {
+    filter: brightness(0.55);
+}
+.tile-watched-badge {
+    position: absolute;
+    bottom: 8px;
+    left: 8px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #2bbf6f;
+    color: #ffffff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+    pointer-events: none;
+}
+/* Slow-mode: the saturate filter is paint-time. Drop to a flat
+   alpha overlay via a darker background so we don't pay the per-frame
+   filter cost on Skyworth-class WebViews. */
+body[data-perf="slow"] .tile-poster.is-watched > img {
+    filter: brightness(0.55);
+}
 /* TV-show indicator: tv-show.png from /public, sized down + faded
    so it whispers "this is a series" without competing with the
    poster art. The selector beats the more general `.tile-poster
    img { width: 100%; height: 100% }` rule (which would otherwise
    inflate the badge to fill the poster). */
 .tile-poster img.tile-badge-tv {
-    width: 22px;
-    height: 22px;
-    opacity: 0.55;
+    width: 32px;
+    height: 32px;
+    /* Faded just enough to let the poster art breathe; previously
+       at 0.95 it read as a fully opaque sticker. 0.75 = ~25%
+       transparent. */
+    opacity: 0.75;
     object-fit: contain;
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.7));
     border-radius: 0;
 }
 
 .tile-title {
     /* Outer wrapper: holds font + color, no overflow clip so the
        inner span's text-shadow can extend past the line-box. The
-       line-clamp + ellipsis live on .tile-title-text below. */
+       line-clamp + ellipsis live on .tile-title-text below. White
+       text + drop-shadow is the default everywhere - reads on the
+       rainbow bg consistently across browse, library, and tag
+       detail. */
     font-family: "Cause", -apple-system, BlinkMacSystemFont, "Segoe UI",
         Roboto, sans-serif;
     font-size: 1.2rem;
     font-weight: 600;
-    color: inherit;
+    color: #ffffff;
+    text-shadow:
+        0 1px 3px rgba(0, 0, 0, 0.65),
+        0 3px 8px rgba(0, 0, 0, 0.45);
     position: relative;
     z-index: 1;
 }
@@ -1141,37 +1457,190 @@ a,
     color: rgba(255, 255, 255, 0.9);
 }
 
-/* M8: Browse / Library tab pill (renders at the top of both pages). */
-.kids-tabpill {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
+/* KidsHome shared layout. Two layout modes:
+   - Default (Library / Tags): flex column. TabPill at top in
+     normal flow, body scrolls naturally. TabPill scrolls with body.
+   - Browse: overlay layout. .kids-home-content fills the entire
+     viewport so .browse-stack tiles can scroll all the way up
+     to the top. TabPill renders absolutely on top via z-index.
+     body is locked via .kids-scroll-active so the transform-based
+     stack doesn't fight body scroll. The class is added by every
+     page that uses transform-based scroll - Browse natively, and
+     Library/Tags via useStackScroll. */
+.kids-home {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+body.kids-scroll-active {
+    overflow: hidden;
+    height: 100vh;
+}
+body.kids-scroll-active .kids-home {
+    display: block;
+    position: relative;
+    height: 100vh;
+    max-height: 100vh;
+    overflow: hidden;
+}
+body.kids-scroll-active .kids-tabpill-slot {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+}
+.kids-home-content {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+}
+body.kids-scroll-active .kids-home-content {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+}
+/* Stack wrappers used by useStackScroll. The hook sets
+   transform: translate3d() per-frame; will-change keeps the GPU
+   layer pinned so the compositor doesn't tear down + rebuild it
+   on idle frames (visible as a flicker on cheap TVs). */
+.kids-stack {
+    will-change: transform;
+}
+
+/* Tab-transition interstitial: shown for ~2 frames on slow TVs
+   between the previous page's unmount and the new page's mount,
+   so the kid sees explicit "Loading…" feedback instead of a
+   frozen frame while React commits the heavy mount work. Sits
+   on top of the rainbow bg with a centered text label - the
+   TabPill at the top remains live so the kid sees their click
+   registered. */
+.kids-route-interstitial {
+    position: absolute;
+    inset: 0;
+    display: flex;
     align-items: center;
-    margin: 0 0 1rem;
-    gap: 1rem;
-    padding: 0.5rem 0.5rem 0;
-}
-.kids-tabpill-spacer {
-    /* Mirrors the menu side so the centered tabs are truly centered. */
-}
-.kids-tabpill-tabs {
-    display: flex;
-    gap: 0.5rem;
     justify-content: center;
-    /* The active-tab background animates by transitioning bg-color
-       on each .kids-tabpill-btn rather than a separate sliding
-       indicator element - simpler and works with variable-width
-       buttons (Browse / Library label widths differ). */
+    color: #ffffff;
+    font-size: 1.6rem;
+    font-weight: 700;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    /* Pad-down slightly so the label sits below the TabPill at
+       the top of the locked viewport. */
+    padding: var(--kids-tabpill-height, 90px) 2rem 0;
 }
-.kids-tabpill-side {
+
+/* TabPill slot: wraps the TabPill so it can scroll with content on
+   /browse (where body is locked and Browse drives a transform-based
+   scroll). The CSS variable --kids-scroll-y is written by Browse
+   each animator frame; defaults to 0 so Library/Tags (where body
+   scrolls naturally) get a no-op transform and the TabPill scrolls
+   with the rest of the page. */
+.kids-tabpill-slot {
+    position: relative;
+    z-index: 2;
+    transform: translate3d(0, var(--kids-scroll-y, 0px), 0);
+    will-change: transform;
+}
+
+/* Bg layer behind all KidsHome chrome + content. position: fixed
+   so it covers the viewport regardless of scroll. Always renders
+   the rainbow tile across all home tabs for visual consistency;
+   each page chooses its own per-session random offset by writing
+   --kids-bg-offset-y on documentElement. On /browse the tile also
+   shifts in lockstep with the stack via --kids-bg-pos-y; on
+   Library/Tags that variable stays unset so the bg is static. */
+.kids-home-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: url("/player/browse-bg-tile.svg") repeat-y;
+    background-size: 100% auto;
+    background-position-y: var(
+        --kids-bg-pos-y,
+        var(--kids-bg-offset-y, 0)
+    );
+}
+.kids-home-content {
+    position: relative;
+    z-index: 1;
+}
+
+/* Browse / Library / Tags top tab pill. Single rounded-rect frame
+   with an absolutely-positioned highlight that animates between
+   tabs via transform/width CSS variables set from JS measurement. */
+.kids-tabpill {
     display: flex;
-    justify-content: flex-end;
+    justify-content: center;
+    position: relative;
+    margin: 0 0 1rem;
+    padding: 0.75rem 1rem 0;
 }
-.kids-tabpill-btn {
-    background: rgba(255, 255, 255, 0.55);
-    color: var(--fg);
-    border: 3px solid transparent;
+.kids-tabpill-frame {
+    /* The frame is a rounded-rect that holds the tab buttons + the
+       highlight pill behind them. Outer border only renders when
+       the parent has marked the nav as focused (data-perf-aware
+       transition kept on the box-shadow only, so it animates
+       cheaply on the GPU). */
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    padding: 0.4rem;
     border-radius: 999px;
-    padding: 0.55rem 1.4rem 0.55rem 0.65rem;
+    background: rgba(255, 255, 255, 0);
+    box-shadow: inset 0 0 0 0 rgba(255, 255, 255, 0);
+    transition: box-shadow 180ms ease, background-color 180ms ease;
+}
+.kids-tabpill-frame.focused {
+    background: rgba(0, 0, 0, 0.18);
+    box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.95);
+}
+/* The highlight is a single white pill positioned absolutely behind
+   the active tab. Width + offset come from JS-set CSS variables
+   measured against the active button. transform translateX scrolls
+   it horizontally; width interpolates smoothly. Slow-mode override
+   below disables the transition so it snaps. */
+.kids-tabpill-highlight {
+    position: absolute;
+    top: 0.4rem;
+    bottom: 0.4rem;
+    left: 0;
+    width: var(--hl-w, 0px);
+    transform: translate3d(var(--hl-x, 0px), 0, 0);
+    background: #ffffff;
+    border-radius: 999px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+    transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1),
+                width 220ms cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events: none;
+    z-index: 0;
+}
+/* Snapped first paint on remount: KidsHome unmounts when the kid
+   leaves for /tags/:id and remounts on the way back. Without this,
+   the highlight animates in from --hl-x=0 (the Browse slot) on
+   every return, which reads as the wrong tab being navigated to.
+   TabPill sets data-snap="1" for one frame after mount, then
+   removes it so subsequent active-tab changes animate normally. */
+.kids-tabpill-frame[data-snap="1"] .kids-tabpill-highlight {
+    transition: none;
+}
+body[data-perf="slow"] .kids-tabpill-highlight {
+    transition: none;
+}
+.kids-tabpill-tab {
+    /* Each tab is a transparent pill that sits on top of the
+       absolutely-positioned highlight. Active tab's text flips dark
+       (because the white pill is behind it); inactive tabs render
+       in white. */
+    position: relative;
+    z-index: 1;
+    background: transparent;
+    color: #ffffff;
+    border: 0;
+    border-radius: 999px;
+    padding: 0.55rem 1.4rem;
+    font-family: inherit;
     font-size: 1.15rem;
     font-weight: 700;
     letter-spacing: 0.02em;
@@ -1179,102 +1648,384 @@ a,
     display: inline-flex;
     align-items: center;
     gap: 0.55rem;
-    box-shadow: 0 4px 14px rgba(32, 22, 46, 0.12);
-    transition: background-color 220ms ease,
-                color 220ms ease,
-                transform 220ms ease,
-                box-shadow 220ms ease,
-                border-color 120ms ease;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+    transition: color 180ms ease;
 }
-.kids-tabpill-btn.active {
-    background: var(--accent);
-    color: var(--accent-fg);
-    transform: scale(1.04);
-    box-shadow: 0 8px 22px rgba(196, 56, 215, 0.35);
-}
-.kids-tabpill-btn:focus,
-.kids-tabpill-btn.focused {
+.kids-tabpill-tab:focus {
     outline: none;
-    border-color: #ffffff;
-    box-shadow: 0 0 0 4px rgba(196, 56, 215, 0.45),
-                0 8px 22px rgba(32, 22, 46, 0.18);
+}
+.kids-tabpill-tab.active {
+    color: #20162e;
+    text-shadow: none;
 }
 .kids-tabpill-icon {
-    width: 1.6em;
-    height: 1.6em;
+    width: 1.5em;
+    height: 1.5em;
     flex-shrink: 0;
-    border-radius: 50%;
-    padding: 0.18em;
-    background: rgba(255, 255, 255, 0.85);
-    /* Per-tab tint so each icon reads as its own colored badge -
-       Browse=warm orange/red sun-house, Library=teal-on-cream books. */
 }
-.kids-tabpill-icon-browse {
-    color: #FA8943;
-    background: linear-gradient(135deg, #FFE0CB 0%, #FFD7A0 100%);
+/* Idle hint: appears top-right after 5s of no input on the tab nav.
+   Fades in via opacity (cheap composite-only on slow mode too). */
+.kids-tabpill-hint {
+    position: absolute;
+    top: 1rem;
+    right: 1.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+    background: rgba(0, 0, 0, 0.55);
+    padding: 0.35rem 0.7rem;
+    border-radius: 999px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 200ms ease;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
-.kids-tabpill-icon-library {
-    color: #4F8AF7;
-    background: linear-gradient(135deg, #DDEBFF 0%, #B7D4FF 100%);
-}
-.kids-tabpill-btn.active .kids-tabpill-icon {
-    background: rgba(255, 255, 255, 0.95);
+.kids-tabpill-hint.visible {
+    opacity: 1;
 }
 
-/* Right-side Menu button. Renders as the bean icon by default; when
-   focused it expands into a pill with "Menu" text + accent fill. */
-.kids-tabpill-menu {
-    /* Default state: bare logo, no background pill. The bean PNG has
-       its own opaque art so it reads on any backdrop without
-       chrome. The pill returns only when focused / expanded so the
-       focus ring + label have a surface to live on. */
-    background: transparent;
-    color: #ddd;
-    border: 2px solid transparent;
-    border-radius: 999px;
-    padding: 0.15rem 0.25rem;
+/* Tags page. */
+.kids-tags {
+    /* Padding moved onto .kids-tags-stack so it scrolls with the
+       transformed content. .kids-tags itself just fills the locked
+       viewport and clips any content that scrolls past its edges. */
+    color: #ffffff;
+    height: 100%;
+    overflow: hidden;
+}
+.kids-tags-stack {
+    /* See .library-stack for why the top padding clears the
+       absolutely-positioned TabPill. */
+    padding:
+        calc(var(--kids-tabpill-height, 90px) + 1rem)
+        2rem
+        4rem;
+    box-sizing: border-box;
+}
+.kids-tags-empty {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: #ffffff;
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+.kids-tags-empty h1 {
+    font-size: 3rem;
+    margin: 0 0 0.5rem;
+}
+.kids-tags-empty p {
+    font-size: 1.2rem;
+    opacity: 0.9;
+}
+.kids-tags-list {
+    display: grid;
+    /* Multi-column grid that adapts to viewport: ~700px min card
+       width keeps title + a few preview posters readable. On 1920px
+       widescreens the kid sees 2 cards per row; on narrow displays
+       it collapses to 1. */
+    grid-template-columns: repeat(auto-fill, minmax(700px, 1fr));
+    gap: 1.25rem;
+    max-width: 1600px;
+    margin: 0 auto;
+}
+/* Each tag is a wide landscape card: left side is title +
+   description + count; right side is a horizontal strip of poster
+   thumbnails as a content preview. Background is slightly
+   translucent so the rainbow shows through faintly. The whole
+   card is a focusable button so D-pad navigation moves between
+   tags. */
+.kids-tag-card {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) 1.6fr;
+    gap: 1.5rem;
+    align-items: stretch;
+    background: rgba(255, 255, 255, 0.78);
+    color: #20162e;
+    border: 0;
+    border-radius: 24px;
+    padding: 1.25rem 1.5rem;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    transition: transform 180ms ease;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+.kids-tag-card:focus,
+.kids-tag-card.focused {
+    /* White spaced-border ring matching the rest of the kid app,
+       no blue accent. outline + outline-offset gives a clear gap
+       between the card edge and the ring. Bg goes fully opaque
+       so the focused card stands out from the unfocused
+       translucent siblings. */
+    outline: 3px solid rgba(255, 255, 255, 0.95);
+    outline-offset: 5px;
+    background: #ffffff;
+    transform: scale(1.015);
+}
+/* Slow-mode TVs: drop the focus-state transform animation. The
+   transform write triggers a re-rasterize across the card +
+   poster strip, which costs 100-300ms per arrow press on cheap
+   WebView. Snap-to-focus instead. */
+body[data-perf="slow"] .kids-tag-card:focus,
+body[data-perf="slow"] .kids-tag-card.focused {
+    transform: none;
+    transition: none;
+}
+.kids-tag-card-body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+}
+.kids-tag-card-title {
+    font-size: 2rem;
+    font-weight: 700;
+    margin: 0 0 0.5rem;
+    line-height: 1.1;
     display: inline-flex;
     align-items: center;
-    gap: 0;
-    cursor: pointer;
-    transition:
-        background 120ms ease,
-        color 120ms ease,
-        gap 120ms ease,
-        padding 120ms ease;
+    gap: 0.6rem;
 }
-.kids-tabpill-menu-icon {
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    object-fit: cover;
-    /* No background - the bean PNG already has its own opaque art. */
+.kids-tag-card-title-icon {
+    width: 1em;
+    height: 1em;
+    flex-shrink: 0;
 }
-.kids-tabpill-menu-label {
-    font-size: 1.05rem;
-    font-weight: 600;
-    max-width: 0;
-    opacity: 0;
+.kids-tag-card-desc {
+    font-size: 1rem;
+    line-height: 1.4;
+    margin: 0 0 0.75rem;
+    color: rgba(32, 22, 46, 0.78);
+    /* Truncate to ~3 lines so the card stays a consistent height. */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    white-space: nowrap;
-    transition:
-        max-width 150ms ease,
-        opacity 150ms ease;
 }
-.kids-tabpill-menu:focus,
-.kids-tabpill-menu.focused {
-    outline: none;
-    border-color: #fff;
+.kids-tag-card-count {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin: 0;
+    color: rgba(32, 22, 46, 0.55);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
-.kids-tabpill-menu.expanded {
-    background: var(--accent);
-    color: var(--accent-fg);
-    padding-right: 1.2rem;
-    gap: 0.55rem;
+.kids-tag-card-preview {
+    /* Posters fill horizontally and clip past the right edge; the
+       kid sees as many as fit in the remaining card width. Smaller
+       cards (narrow viewport) still show the leading 2-3 posters. */
+    display: flex;
+    gap: 0.5rem;
+    overflow: hidden;
+    align-items: stretch;
+    min-width: 0;
 }
-.kids-tabpill-menu.expanded .kids-tabpill-menu-label {
-    max-width: 6rem;
-    opacity: 1;
+.kids-tag-card-poster {
+    flex: 0 0 auto;
+    width: 86px;
+    aspect-ratio: 2 / 3;
+    border-radius: 10px;
+    overflow: hidden;
+    background: rgba(38, 121, 255, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.kids-tag-card-poster img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.kids-tag-card-poster-fallback {
+    font-size: 0.7rem;
+    text-align: center;
+    padding: 0.5rem;
+    color: rgba(32, 22, 46, 0.6);
+    line-height: 1.2;
+}
+.kids-tag-card-empty {
+    margin: 0;
+    color: rgba(32, 22, 46, 0.55);
+    font-size: 0.95rem;
+    align-self: center;
+}
+
+/* Tag detail page (/tags/:id). Sits outside KidsHome so the tab
+   nav doesn't render here - it's a dive-into-detail view. The
+   header has back, title/desc, and the sort toggle in one row;
+   below is a standard library-style grid of tiles. */
+.kids-tag-detail {
+    /* Padding moved onto .kids-tag-detail-stack so the kid's
+       content carries it under transform. .kids-tag-detail itself
+       fills the locked viewport and clips overflow. */
+    max-width: 1600px;
+    margin: 0 auto;
+    color: #ffffff;
+    height: 100%;
+    overflow: hidden;
+}
+.kids-tag-detail-stack {
+    padding: 1rem 2rem 4rem;
+    box-sizing: border-box;
+}
+/* Lift content above the .kids-home-bg fixed layer (which sits at
+   z-index 0). Without this, unpositioned siblings would paint
+   below the positioned bg in the page's stacking order and the
+   header / grid would appear blank. */
+.kids-tag-detail > *:not(.kids-home-bg) {
+    position: relative;
+    z-index: 1;
+}
+.kids-tag-detail-header {
+    /* flex-wrap so the sort toggles drop below the title on
+       narrow screens instead of overlapping. On wide displays
+       (>=900px wide content area) they stay on the same row. */
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+}
+.kids-tag-detail-titles {
+    flex: 1 1 320px;
+    min-width: 0;
+}
+.kids-tag-detail-back {
+    flex: 0 0 auto;
+}
+.kids-tag-detail-sort,
+.kids-tag-detail-controls {
+    flex: 0 0 auto;
+}
+@media (max-width: 900px) {
+    .kids-tag-detail-sort,
+    .kids-tag-detail-controls {
+        flex: 1 1 100%;
+        justify-content: flex-start;
+    }
+}
+.kids-tag-detail-controls {
+    display: flex;
+    /* Match Library's controls-row gap so adjacent dropdown focus
+       rings don't collide. */
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+/* Circular icon-only back button - matches the player's
+   .watch-back-btn style for a consistent "back out of a deep
+   view" affordance across the kid app. */
+.kids-tag-detail-back {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background-color 160ms ease, color 160ms ease,
+        transform 120ms ease;
+}
+.kids-tag-detail-back svg {
+    width: 1.6em;
+    height: 1.6em;
+}
+.kids-tag-detail-back:focus,
+.kids-tag-detail-back.focused {
+    outline: 3px solid rgba(255, 255, 255, 0.95);
+    outline-offset: 4px;
+    background: rgba(0, 0, 0, 0.7);
+}
+.kids-tag-detail-titles {
+    min-width: 0;
+}
+.kids-tag-detail-title {
+    margin: 0;
+    font-size: 2.6rem;
+    line-height: 1.05;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.65rem;
+}
+.kids-tag-detail-title-icon {
+    width: 1em;
+    height: 1em;
+    flex-shrink: 0;
+}
+.kids-tag-detail-desc {
+    margin: 0.35rem 0 0;
+    font-size: 1.15rem;
+    /* White at full opacity reads more like a label than the
+       previous 0.85 muted version which looked greyish on the
+       saturated rainbow bg. The dual text-shadow gives a soft
+       halo so the white stays legible across all bg colors. */
+    color: #ffffff;
+    text-shadow:
+        0 1px 4px rgba(0, 0, 0, 0.6),
+        0 0 12px rgba(0, 0, 0, 0.35);
+    /* Truncate to 2 lines so the header height stays bounded. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.kids-tag-detail-sort {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+.kids-tag-detail-state {
+    text-align: center;
+    color: #ffffff;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    font-size: 1.1rem;
+    margin-top: 3rem;
+}
+/* Empty state with a recovery action: bigger headline + a
+   call-to-action button below it. The headline reads as a
+   primary state message ("you're not seeing what you might
+   expect"), not a footnote. */
+.kids-tag-detail-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.25rem;
+}
+.kids-tag-detail-empty-msg {
+    margin: 0;
+    font-size: 1.9rem;
+    font-weight: 800;
+    line-height: 1.15;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+}
+.kids-tag-detail-empty-action {
+    background: rgba(255, 255, 255, 0.92);
+    color: #20162e;
+    border: 0;
+    border-radius: 999px;
+    padding: 0.85rem 1.6rem;
+    font-family: inherit;
+    font-size: 1.15rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: box-shadow 180ms ease, background 180ms ease;
+}
+.kids-tag-detail-empty-action:hover,
+.kids-tag-detail-empty-action.focused,
+.kids-tag-detail-empty-action:focus {
+    background: #ffffff;
+    outline: 3px solid rgba(255, 255, 255, 0.95);
+    outline-offset: 4px;
+}
+.kids-tag-detail-grid {
+    /* Reuse the .grid template so tiles are sized the same as the
+       Library grid. */
 }
 
 /* Main menu modal (Menu pill -> sign out / swap / exit). */
@@ -1355,87 +2106,50 @@ a,
    The rainbow band uses repeating-linear-gradient with start =
    end stop so each cycle butts cleanly against the next. */
 .browse {
-    /* Zero horizontal padding so rows clip flush at the screen
-       edges - tiles that get cut off scroll under the literal
-       viewport boundary instead of leaving a colored gap between
-       the poster and the screen. Vertical padding stays for top /
-       bottom breathing room. */
-    padding: 1.25rem 0;
+    /* Browse fills the KidsHome layout's content slot. The bg
+       lives on its own .browse-bg layer (no shared stack texture);
+       .browse-stack is a transparent container that holds the rows
+       and gets translated for vertical scroll.
+       position: absolute lets it cover the .kids-home-content
+       parent fully (which has position: relative) without taking
+       it out of the flex layout above. */
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    position: relative;
-    min-height: 100vh;
     color: #ffffff;
-    background:
-        /* Five circular blobs in palette colors. Radii in vw so the
-           blobs stay round regardless of bg-size or aspect; each
-           layer's bg-size + repeat-y cycles it vertically at a
-           different rate. Centered at 50% Y inside the tile so the
-           transparent edge wraps cleanly across tile boundaries. */
-        radial-gradient(
-            circle 32vw at 25% 50%,
-            rgba(255, 255, 255, 0.55) 0%,
-            transparent 60%
-        ),
-        radial-gradient(
-            circle 30vw at 78% 50%,
-            rgba(255, 110, 170, 0.65) 0%,
-            transparent 60%
-        ),
-        radial-gradient(
-            circle 28vw at 18% 50%,
-            rgba(250, 250, 73, 0.55) 0%,
-            transparent 60%
-        ),
-        radial-gradient(
-            circle 30vw at 88% 50%,
-            rgba(255, 255, 255, 0.50) 0%,
-            transparent 60%
-        ),
-        radial-gradient(
-            circle 26vw at 50% 50%,
-            rgba(255, 200, 220, 0.55) 0%,
-            transparent 60%
-        ),
-        /* Diagonal rainbow base. repeating-linear-gradient with
-           pixel stops repeats NATURALLY along its 155° axis - no
-           bg-size, no repeat-y, just one infinite vector. There's
-           no tile boundary to mismatch, so the diagonal wraps
-           seamlessly forever. The cycle length (1500px along the
-           gradient axis) maps to roughly 600-700px of vertical
-           scroll per full color cycle. */
-        repeating-linear-gradient(
-            155deg,
-            #E81819 0,
-            #FF6EAA 188px,
-            #C438D7 376px,
-            #4F8AF7 564px,
-            #18BFC7 752px,
-            #56CA5E 940px,
-            #FAFA49 1128px,
-            #FA8943 1316px,
-            #E81819 1500px
-        );
-    background-size:
-        auto 90vh,
-        auto 130vh,
-        auto 170vh,
-        auto 210vh,
-        auto 260vh,
-        auto auto;
-    background-repeat:
-        repeat-y,
-        repeat-y,
-        repeat-y,
-        repeat-y,
-        repeat-y,
-        repeat;
-    /* Screen blend lightens the blobs over the rainbow base instead
-       of multiplying. Avoids muddy brown / gray where complementary
-       colors overlap (red+green, orange+blue). The base layer
-       itself stays normal so the rainbow paints at full saturation. */
-    background-blend-mode: screen, screen, screen, screen, screen, normal;
+}
+/* .browse-bg used to live here; the bg has moved up to KidsHome
+   (.kids-home-bg) so it can render BEHIND the TabPill too. When
+   the TabPill scrolls up on /browse, the rainbow shows through
+   instead of a white gap. CSS variable --kids-bg-pos-y is written
+   by Browse's animator each frame to scroll the bg in lockstep. */
+.browse-stack {
+    /* Transparent container that gets translateY'd by JS for
+       vertical motion. No bg here so the stack isn't a giant
+       painted texture - only its children's contained layers
+       move when transform changes. position: relative establishes
+       a stacking context.
+       padding-top: clearance for the absolutely-positioned TabPill
+       so the first row isn't hidden under it at scrollY=0. As the
+       kid scrolls down, the stack transforms up; both the TabPill
+       and this padding move up at the same rate so the first row
+       transitions cleanly into the TabPill area as it scrolls
+       away. */
+    padding: var(--kids-tabpill-height, 90px) 0 1.25rem 0;
+    will-change: transform;
+    transform: translate3d(0, 0, 0);
+    position: relative;
+    z-index: 1;
+}
+/* Body lock for Browse (kept under .browse-active for back-compat
+   with the class KidsHome adds for /browse). Same effect as
+   .kids-scroll-active above; both are fine. */
+body.browse-active {
+    overflow: hidden;
+    height: 100vh;
 }
 /* Browse content reads in white on the saturated bg. Heavier text
    shadows than a typical UI - the bg is busy enough that subtle
@@ -1475,10 +2189,34 @@ a,
    (rainbow + blob bg). Earlier draft put per-row colored bands
    here; that fought with the page-level decoration and made
    adjacent rows feel like discrete posters rather than a single
-   playful canvas. */
+   playful canvas.
+   content-visibility: auto tells the browser to skip layout +
+   paint for rows that aren't currently in (or near) the viewport.
+   contain-intrinsic-size gives the browser a placeholder height
+   for skipped rows so scroll position + scrollbar size stay
+   accurate. Massive perf win on cheap WebView - a 22-row library
+   only paints the 2-3 rows visible at any time instead of all 22
+   on every scroll frame. The intrinsic size matches an actual
+   focused row (title + ~270px poster + 14px label + padding). */
 .browse-row {
     margin: 0 0 0.5rem;
     padding: 0;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 400px;
+    /* Layout + paint containment: each row is its own layout +
+       paint subtree. Layout: invalidations (focus class flips on a
+       child tile, animator transform writes on the track) don't
+       cascade up to the page-level layout. Paint: hints to the
+       browser that the row's pixels are independent, which tends
+       to put each row on its own compositor layer. The big payoff
+       is on window scroll - without paint containment, every
+       scroll frame repaints the entire viewport on this WebView
+       (5s freeze on a single Down press). With paint containment,
+       scroll just composites the cached row layers vertically.
+       Safe with the focused tile's transform: scale(1.12) because
+       .browse-row-items has top/bottom padding that absorbs the
+       scaled tile's bleed inside the row's box. */
+    contain: layout paint;
 }
 .browse-row-title {
     font-size: 2rem;
@@ -1664,7 +2402,10 @@ a,
 }
 
 /* M9 adult override modal. Renders over Browse / Library / Play
-   with a backdrop click-out + Esc dismissal. */
+   with a backdrop click-out + Back/Esc dismissal. Portaled to body
+   so it sits above everything (TabPill included).
+   z-index 1000 puts it above .kids-tabpill-slot (z-index 2 in
+   .kids-home stacking context). */
 .override-backdrop {
     position: fixed;
     inset: 0;
@@ -1672,25 +2413,30 @@ a,
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 50;
+    z-index: 1000;
 }
 .override-modal {
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 1.5rem 1.75rem;
-    min-width: 320px;
-    max-width: 460px;
-    max-height: 90vh;
+    /* Tighter padding + smaller max-width so the modal fits 720p
+       (1280x720) comfortably with room around the edges. The PIN
+       pad is the tallest sub-view; capping the modal height +
+       making the pad buttons compact keeps the kid from having
+       to scroll inside the modal. */
+    padding: 1.1rem 1.25rem;
+    min-width: 280px;
+    max-width: 380px;
+    max-height: 85vh;
     overflow-y: auto;
     color: var(--fg);
     display: flex;
     flex-direction: column;
-    gap: 0.85rem;
+    gap: 0.6rem;
 }
 .override-modal h2 {
     margin: 0;
-    font-size: 1.4rem;
+    font-size: 1.25rem;
 }
 .override-modal .muted {
     color: var(--muted);
@@ -1699,51 +2445,36 @@ a,
 
 .override-pin-display {
     display: flex;
-    gap: 0.55rem;
+    gap: 0.85rem;
     justify-content: center;
     align-items: center;
-    padding: 0.5rem 0;
+    padding: 0.75rem 0;
 }
 .override-pin-dot {
-    width: 16px;
-    height: 16px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     border: 2px solid var(--border);
     background: var(--bg);
-    transition: all 80ms ease;
+    transition: background 120ms ease, border-color 120ms ease,
+        transform 120ms ease;
 }
 .override-pin-dot.filled {
     background: var(--accent);
     border-color: var(--accent);
+    transform: scale(1.05);
 }
-.override-pin-extra {
-    color: var(--muted);
-    font-size: 0.85rem;
-    margin-left: 0.4rem;
+/* Wrong-pattern flash: tints all dots red briefly so the kid sees
+   the failure even though we wipe the digits immediately. */
+.override-pin-display.error-flash .override-pin-dot {
+    background: #d94c4c;
+    border-color: #d94c4c;
+    transform: scale(1.05);
 }
-
-.override-pinpad {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0.4rem;
-    margin: 0.5rem 0 0.25rem;
-}
-.override-pinpad-btn {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid var(--border);
-    color: var(--fg);
-    border-radius: 8px;
-    font-size: 1.4rem;
-    padding: 0.85rem 0;
-    cursor: pointer;
-}
-.override-pinpad-btn:focus,
-.override-pinpad-btn:hover {
-    outline: 2px solid var(--accent);
-    background: rgba(128, 132, 255, 0.18);
-}
-.override-pinpad-btn.is-action {
-    background: rgba(128, 132, 255, 0.18);
+.override-pin-hint {
+    text-align: center;
+    margin: 0;
+    font-size: 0.8rem;
 }
 .override-cancel {
     margin-top: 0.5rem;
@@ -1802,6 +2533,381 @@ a,
     font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
     font-size: 0.85rem;
     word-break: break-all;
+}
+
+/* M9 v2 adult-style overrides. Distinct from the kid app's
+   playful pill/bubble palette: dark+desaturated, sharper corners,
+   gray accent. The kids-override-adult class lives on the
+   .override-backdrop root so all descendants pick it up.
+
+   Variable scope: redefining --accent / --card / --border etc.
+   on .kids-override-adult lets nested CSS that already references
+   these tokens (existing override-modal, override-pin-dot, etc.)
+   inherit the adult palette without a separate selector for each. */
+.kids-override-adult {
+    --card: #1a1a1a;
+    --bg: #111;
+    --fg: #d8d8d8;
+    --muted: #8a8a8a;
+    --border: #333;
+    --accent: #888;
+    --accent-fg: #1a1a1a;
+}
+.kids-override-adult.override-backdrop {
+    background: rgba(0, 0, 0, 0.92);
+}
+.kids-override-adult .override-modal {
+    border-radius: 6px;
+    /* 720p-friendly: cap height, allow internal scroll. */
+    max-height: 88vh;
+    /* Slightly wider so dim/warm sliders + previews fit. */
+    max-width: 440px;
+    min-width: 320px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+}
+.kids-override-adult h2 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #b8b8b8;
+    margin-bottom: 0.2rem;
+}
+.kids-override-adult .override-subtitle {
+    margin: 0;
+    color: #b0b0b0;
+    font-size: 0.95rem;
+}
+
+/* Action list (vertical D-pad-friendly buttons). */
+.override-action-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+.override-action {
+    background: #222;
+    color: #d8d8d8;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 0.6rem 0.8rem;
+    font-family: inherit;
+    font-size: 0.95rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background 100ms ease, border-color 100ms ease;
+}
+.override-action:hover:not(:disabled) {
+    background: #2a2a2a;
+}
+.override-action:focus,
+.override-action:focus-visible {
+    outline: none;
+    background: #2a2a2a;
+    border-color: #888;
+    box-shadow: 0 0 0 1px #888;
+}
+.override-action:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+.override-action.selected {
+    border-color: #888;
+    background: #2a2a2a;
+}
+.override-action.danger {
+    color: #f87171;
+    border-color: rgba(248, 113, 113, 0.4);
+}
+.override-action.danger:focus,
+.override-action.danger:focus-visible {
+    background: rgba(248, 113, 113, 0.12);
+    border-color: rgba(248, 113, 113, 0.7);
+    box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.7);
+}
+.override-action-footer {
+    margin-top: 0.5rem;
+    text-align: center;
+    color: #b0b0b0;
+}
+
+/* Section headings + paired rows for the post-PIN menu. The
+   heading is small, uppercase, and lives above its row group;
+   each row is either a single full-width primary button or
+   primary+reset side-by-side. */
+.override-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin-top: 0.4rem;
+}
+.override-section-heading {
+    margin: 0;
+    color: #909090;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.override-section-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+.override-row {
+    display: flex;
+    gap: 0.35rem;
+    align-items: stretch;
+}
+.override-row-primary {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+}
+.override-row-primary.has-reset {
+    /* Leave room for the reset button without squeezing the label. */
+    flex: 1 1 60%;
+}
+.override-row-reset {
+    flex: 0 1 auto;
+    text-align: center;
+    white-space: nowrap;
+    color: #d0d0d0;
+    background: #1c1c1c;
+    /* Slightly muted vs. primary to read as the secondary action. */
+}
+.override-row-reset:focus,
+.override-row-reset:focus-visible {
+    /* Reset button uses the danger-ish red focus ring so the parent
+       can tell at a glance which button is destructive. */
+    background: rgba(248, 113, 113, 0.12);
+    border-color: rgba(248, 113, 113, 0.7);
+    box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.7);
+}
+.override-action-icon {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    color: #b8b8b8;
+}
+.override-action-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Back link: text + arrow icon, no full button bezel. The focus
+   ring is a subtle border around the inline text so it sits
+   visually below the action buttons (lower visual weight). */
+.override-back-link {
+    margin-top: 0.6rem;
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 0.3rem 0.55rem;
+    color: #b0b0b0;
+    font-family: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: color 100ms ease, border-color 100ms ease;
+}
+.override-back-link:hover:not(:disabled) {
+    color: #e0e0e0;
+}
+.override-back-link:focus,
+.override-back-link:focus-visible {
+    outline: none;
+    color: #f0f0f0;
+    border-color: #888;
+}
+.override-back-link:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+.override-back-link-icon {
+    display: inline-flex;
+    align-items: center;
+    color: inherit;
+}
+
+/* Tag editor grid: D-pad-friendly chip-buttons in a 2-column
+   layout. The check mark column inside the chip stays a fixed
+   width so labels align across rows. */
+.override-tag-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.3rem 0.4rem;
+    max-height: 280px;
+    overflow-y: auto;
+    margin: 0;
+    padding: 0;
+}
+.override-tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.55rem;
+    background: #222;
+    border: 1px solid #333;
+    border-radius: 4px;
+    color: #d8d8d8;
+    font-family: inherit;
+    font-size: 0.9rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background 100ms ease, border-color 100ms ease;
+}
+.override-tag-chip:hover:not(:disabled) {
+    background: #2a2a2a;
+}
+.override-tag-chip:focus,
+.override-tag-chip:focus-visible {
+    outline: none;
+    border-color: #888;
+    box-shadow: 0 0 0 1px #888;
+}
+.override-tag-chip:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+.override-tag-chip.on {
+    background: #2a2a2a;
+    border-color: #888;
+    color: #f0f0f0;
+}
+.override-tag-chip-mark {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    background: #181818;
+    border: 1px solid #444;
+    color: #f0f0f0;
+}
+.override-tag-chip.on .override-tag-chip-mark {
+    background: #888;
+    border-color: #888;
+    color: #1a1a1a;
+}
+.override-tag-chip-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Slider for dim/warm. The fill represents the chosen percent;
+   the focused slider gets a subtle outline ring. */
+.override-slider {
+    position: relative;
+    height: 28px;
+    background: #222;
+    border: 1px solid #333;
+    border-radius: 4px;
+    overflow: hidden;
+}
+.override-slider:focus,
+.override-slider:focus-visible {
+    outline: none;
+    border-color: #888;
+    box-shadow: 0 0 0 1px #888;
+}
+.override-slider-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: linear-gradient(90deg, #555, #aaa);
+    transition: width 80ms ease;
+}
+.override-slider-label {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #f0f0f0;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+/* Live preview for dim/warm setup. Mirrors the admin's
+   ViewingPreview pipeline: an outer "bezel" carries the dim
+   filter (brightness only); the inner image carries the warm
+   filter (sepia + saturate + hue-rotate + contrast); a
+   multiply-blended orange overlay above the image actually
+   suppresses blue (CSS filter alone can't). Asset served from
+   /player/viewing-preview.jpg (a copy of the admin's preview
+   JPG). Keep the kid + admin previews in lockstep when tuning
+   either side. */
+.override-preview {
+    display: flex;
+    justify-content: center;
+    padding: 0.4rem 0;
+}
+.override-preview-bezel {
+    transition: filter 120ms ease;
+    border-radius: 6px;
+    overflow: hidden;
+    width: 320px;
+    max-width: 100%;
+}
+.override-preview-frame {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    background: #000;
+}
+.override-preview-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: filter 120ms ease;
+}
+.override-preview-warm {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+/* Auto-off shift card. Big delta number; sub-line shows the
+   resulting target time. */
+.override-shift {
+    background: #222;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 1rem;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+.override-shift:focus,
+.override-shift:focus-visible {
+    outline: none;
+    border-color: #888;
+    box-shadow: 0 0 0 1px #888;
+}
+.override-shift-delta {
+    font-size: 2rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: #f0f0f0;
+}
+.override-shift-target {
+    font-size: 1rem;
+    color: #c0c0c0;
 }
 
 /* M7 watch interstitial. Hero composition over a blurred backdrop;
@@ -2119,9 +3225,35 @@ a,
     font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
     margin-right: 0.25rem;
 }
-.watch-episode-done {
-    color: var(--accent);
-    margin-left: 0.4rem;
+/* Watched-state for an episode thumb: dim the artwork like the kid
+   tile + stamp a green check in the corner, so a kid scanning the
+   accordion can see "done" at a glance. The thumb wrapper carries
+   `is-watched` only when the episode is fully watched (Played ||
+   pct >= 90); in-progress episodes use the per-thumb progress bar
+   below and don't dim. */
+.watch-episode-thumb-wrap.is-watched .watch-episode-thumb {
+    filter: brightness(0.55) saturate(0.85);
+}
+body[data-perf="slow"] .watch-episode-thumb-wrap.is-watched .watch-episode-thumb {
+    /* Drop saturate on slow WebViews; brightness alone composites
+       cheaply, multi-stage filter chains do not. */
+    filter: brightness(0.55);
+}
+.watch-episode-thumb-watched {
+    position: absolute;
+    bottom: 6px;
+    left: 6px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #2bbf6f;
+    color: #ffffff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+    pointer-events: none;
+    z-index: 2;
 }
 .watch-episode-meta {
     color: var(--muted);
@@ -2175,74 +3307,93 @@ a,
    actual <input> only gets DOM focus when the kid presses Enter,
    which is when the IME is supposed to come up. */
 .library-controls {
-    margin: 0 0 0.75rem;
+    /* Bottom margin keeps the search row from hugging the first
+       grid section's title; the gap matches what TagDetail's header
+       gets via the .kids-tag-detail-header margin. */
+    margin: 0 0 1.75rem;
     /* Search bar (flex: 1) + filter pills aligned to the right of it
        on the same row. The pills used to live in their own row below
        the search; collapsing them keeps the All / Movies / TV toggle
        within the same eyeline as the search input, freeing a row of
-       vertical real estate above the grid. */
+       vertical real estate above the grid.
+
+       Gap is wide enough that adjacent buttons' D-pad focus rings
+       (3px outline + 4px offset = ~14px combined) don't visually
+       collide when the kid arrows from one to the next. */
     display: flex;
     align-items: stretch;
-    gap: 0.75rem;
+    gap: 1.25rem;
 }
+/* Search wrap: pill on transparent bg, white spaced-border ring
+   when D-pad focused (matches the tab nav frame's focused look).
+   The inner <input> renders on top of the pill bg. */
 .library-search-wrap {
     flex: 1;
-    background: var(--card);
-    border: 2px solid var(--border);
+    background: rgba(255, 255, 255, 0.92);
+    border: 0;
     border-radius: 999px;
-    color: var(--fg);
+    color: #20162e;
     padding: 0;
     cursor: pointer;
-    transition: border-color 100ms ease, box-shadow 100ms ease;
-    /* Display as a row so the inner input lays out correctly. */
+    transition: box-shadow 180ms ease;
     display: flex;
     align-items: stretch;
     text-align: left;
 }
 .library-search-wrap:focus,
 .library-search-wrap.focused {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(255, 188, 0, 0.25);
+    outline: 3px solid rgba(255, 255, 255, 0.95);
+    outline-offset: 4px;
 }
 .library-search {
     flex: 1;
     background: transparent;
     border: 0;
-    color: var(--fg);
+    color: #20162e;
     padding: 0.7rem 1.1rem;
+    font-family: inherit;
     font-size: 1.05rem;
     outline: none;
 }
 .library-search::placeholder {
-    color: var(--muted);
+    color: rgba(32, 22, 46, 0.55);
 }
 
-/* A-Z button on the library controls row, left of the search bar.
-   Opens the AlphaPickerModal on activation. */
+/* A-Z button: text-only, no background. Spaced white border ring
+   appears only when D-pad focused. */
 .library-alpha-btn {
     flex: 0 0 auto;
-    background: var(--card);
-    color: var(--fg);
-    border: 2px solid var(--border);
+    background: transparent;
+    color: #ffffff;
+    border: 0;
     border-radius: 999px;
     padding: 0 1.25rem;
-    font-size: 1rem;
+    font-family: inherit;
+    font-size: 1.1rem;
     font-weight: 700;
     letter-spacing: 0.05em;
     cursor: pointer;
-    transition: background 120ms ease, border-color 120ms ease,
-        color 120ms ease;
-}
-.library-alpha-btn:hover {
-    color: #fff;
+    transition: box-shadow 180ms ease;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
 .library-alpha-btn.focused,
 .library-alpha-btn:focus {
-    outline: none;
-    background: var(--accent);
-    color: var(--accent-fg);
-    border-color: var(--accent);
+    outline: 3px solid rgba(255, 255, 255, 0.95);
+    outline-offset: 4px;
+}
+/* Jump variant: when sort isn't alphabetical, the same button shows
+   an icon + "Jump" label that opens the section-jump picker
+   (bucketed time windows / Never watched). Same focus-ring shell as
+   A-Z so the two states feel like one button. */
+.library-jump-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    letter-spacing: 0.02em;
+}
+.library-jump-btn svg {
+    width: 1.1em;
+    height: 1.1em;
 }
 
 /* AlphaPickerModal: 7-wide letter grid in a centered overlay card.
@@ -2260,20 +3411,20 @@ a,
     backdrop-filter: blur(6px);
 }
 .alpha-picker-card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 1.5rem 1.75rem;
-    min-width: 480px;
+    background: #ffffff;
+    border: 0;
+    border-radius: 20px;
+    padding: 1.75rem 2rem 1.5rem;
+    min-width: 520px;
     max-width: 90vw;
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
 }
 .alpha-picker-title {
-    margin: 0 0 1rem;
-    font-size: 1.1rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    margin: 0 0 1.25rem;
+    font-size: 2.2rem;
+    color: #20162e;
+    text-transform: none;
+    letter-spacing: 0;
     text-align: center;
 }
 .alpha-picker-grid {
@@ -2282,38 +3433,142 @@ a,
     gap: 0.5rem;
 }
 .alpha-picker-cell {
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--fg);
-    border: 2px solid transparent;
+    background: rgba(38, 121, 255, 0.08);
+    color: #20162e;
+    border: 0;
     border-radius: 12px;
     width: 100%;
     aspect-ratio: 1 / 1;
-    font-size: 1.6rem;
+    font-family: inherit;
+    font-size: 1.7rem;
     font-weight: 700;
     cursor: pointer;
     transition: background 120ms ease, color 120ms ease,
-        transform 120ms ease, border-color 120ms ease;
+        transform 120ms ease, box-shadow 120ms ease;
 }
 .alpha-picker-cell:hover:not(.disabled) {
-    background: rgba(255, 255, 255, 0.14);
+    background: rgba(38, 121, 255, 0.18);
 }
 .alpha-picker-cell.focused,
 .alpha-picker-cell:focus {
     outline: none;
-    background: var(--accent);
-    color: var(--accent-fg);
-    border-color: #fff;
+    background: #2679ff;
+    color: #ffffff;
+    box-shadow: 0 0 0 3px #ffffff, 0 0 0 5px #2679ff;
     transform: scale(1.05);
 }
 .alpha-picker-cell.disabled {
-    color: #444;
+    color: rgba(32, 22, 46, 0.3);
     cursor: default;
 }
 .alpha-picker-hint {
-    margin: 1rem 0 0;
-    color: var(--muted);
-    font-size: 0.85rem;
+    margin: 1.25rem 0 0;
+    color: rgba(32, 22, 46, 0.55);
+    font-size: 0.9rem;
     text-align: center;
+}
+
+/* OptionPickerModal: shared "pick one of N" modal used by the Library
+   + TagDetail Filter and Sort dropdown buttons. Reuses the
+   .alpha-picker-* card chrome; only the inner list styling is custom. */
+.option-picker-card {
+    min-width: 360px;
+    max-width: 90vw;
+}
+.option-picker-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+.option-picker-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    background: rgba(38, 121, 255, 0.08);
+    color: #20162e;
+    border: 0;
+    border-radius: 12px;
+    padding: 0.85rem 1.1rem;
+    font-family: inherit;
+    font-size: 1.15rem;
+    font-weight: 700;
+    text-align: left;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease,
+        transform 120ms ease, box-shadow 120ms ease;
+}
+.option-picker-item.current {
+    background: rgba(38, 121, 255, 0.18);
+}
+.option-picker-item:hover {
+    background: rgba(38, 121, 255, 0.18);
+}
+.option-picker-item.focused,
+.option-picker-item:focus {
+    outline: none;
+    background: #2679ff;
+    color: #ffffff;
+    box-shadow: 0 0 0 3px #ffffff, 0 0 0 5px #2679ff;
+    transform: scale(1.02);
+}
+.option-picker-check {
+    font-size: 1.2rem;
+    line-height: 1;
+}
+
+/* Library + TagDetail dropdown buttons (Filter: All / Sort: A-Z).
+   Pill-shaped, white background to mirror the search wrap; bold
+   value, lighter label. White spaced-border ring on D-pad focus.
+   Single visual primitive used on both pages so they feel consistent. */
+.library-dropdown-btn {
+    flex: 0 0 auto;
+    background: rgba(255, 255, 255, 0.92);
+    color: #20162e;
+    border: 0;
+    border-radius: 999px;
+    padding: 0.55rem 1.1rem;
+    font-family: inherit;
+    font-size: 1.05rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: box-shadow 180ms ease, background 180ms ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    white-space: nowrap;
+}
+.library-dropdown-btn:hover {
+    background: #ffffff;
+}
+.library-dropdown-btn.focused,
+.library-dropdown-btn:focus {
+    outline: 3px solid rgba(255, 255, 255, 0.95);
+    outline-offset: 4px;
+}
+.library-dropdown-label {
+    font-weight: 500;
+    color: rgba(32, 22, 46, 0.7);
+}
+.library-dropdown-value {
+    font-weight: 800;
+}
+
+/* Section blocks rendered when Library / TagDetail sort by recency.
+   Title sits above the grid; subsequent sections inherit the same
+   gap so the page reads as a stack of buckets. */
+.kids-section {
+    margin-bottom: 1.75rem;
+}
+.kids-section:last-child {
+    margin-bottom: 0;
+}
+.kids-section-title {
+    margin: 0.25rem 0 0.85rem;
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #ffffff;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
 
 
@@ -2395,4 +3650,219 @@ body[data-theme="focus"] {
 body[data-theme="default"],
 body:not([data-theme]) {
     /* Inherits the existing default background from the kid styles. */
+}
+
+/* ===== Slow-device perf overrides ===============================
+   perfMode.ts stamps body[data-perf="slow"] when the FPS sample
+   measures under 50fps (cheap Android TV WebView). The rules below
+   simplify the most expensive paint paths so the kid still gets
+   the colorful look but with fewer composited layers per frame.
+*/
+
+/* No bg override on slow anymore - the SVG-tile approach the
+   default now uses is already perf-friendly across all devices
+   (browser caches the rasterized tile once + blits per frame).
+   The other slow-device tweaks below (outline instead of
+   box-shadow, simpler text-shadow, dropped drop-shadow filter)
+   still apply since those costs accumulate beyond the bg. */
+
+/* Focused-tile selection ring: outline + outline-offset only. No
+   box-shadow (paint cost), no padding change (layout reflow on
+   the aspect-ratio:2/3 poster + img each focus change), no bg-
+   color change. Outline + offset draws OUTSIDE the element, so it
+   gives the visual gap between poster and ring without touching
+   layout. This was the dominant per-frame cost on cheap WebView -
+   focus change forced a layout reflow + paint pass on the entire
+   .tile-poster + .tile-poster img each time the kid arrowed. */
+body[data-perf="slow"] .tile.focused .tile-poster,
+body[data-perf="slow"] .tile:focus .tile-poster {
+    box-shadow: none;
+    padding: 0;
+    background-color: transparent;
+    outline: 4px solid #ffffff;
+    outline-offset: 6px;
+}
+/* Drop the inner-img radius change too - radius transitions
+   on the focused state were triggering an extra paint pass on
+   the img layer. With outline-only focus, no nested-card visual
+   to maintain anyway. */
+body[data-perf="slow"] .tile.focused .tile-poster img,
+body[data-perf="slow"] .tile:focus .tile-poster img {
+    border-radius: inherit;
+}
+/* Disable the transform transition on slow - the scale(1.12)
+   animation runs over var(--motion-quick) (70ms slow / 120ms
+   fast) and on cheap WebView each animation frame is a fresh
+   compositor pass. Snap-to-focus (no animation) cuts that
+   transition's per-frame cost down to one paint instead of N. */
+body[data-perf="slow"] .tile {
+    transition: none;
+}
+
+/* Drop the multi-stop drop-shadow filter on the row icon. CSS
+   filters force a GPU offscreen render that's a real cost on
+   Android WebView. The text-shadow on the row title still gives
+   surrounding visual hierarchy. */
+body[data-perf="slow"] .browse .browse-row-icon {
+    filter: none;
+}
+
+/* Single-stop text shadows on slow. Keep readability, drop the
+   second blurry stop. */
+body[data-perf="slow"] .browse .browse-row-title {
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+}
+body[data-perf="slow"] .browse .tile-title {
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
+}
+
+/* Tile poster shadow that lifted off the page on focus - drop on
+   slow, keep clean white outline as the only focus affordance. */
+body[data-perf="slow"] .tile-badge-tv {
+    filter: none;
+}
+
+/* Watch + Play slow-mode overrides. The pages had no slow-mode
+   rules; the audit flagged this as the biggest regression vs
+   Browse/Library on Skyworth-class WebViews. We disable
+   transitions on focus-bearing surfaces and drop the transform:
+   scale(1.05) bumps that trigger a compositor pass per arrow
+   press. Backdrop's filter chain stays - it's a one-shot render
+   on mount, not animated, and removing it leaves a hard-edge
+   fallback that looks worse than the cost. */
+body[data-perf="slow"] .watch-back-btn,
+body[data-perf="slow"] .watch-fav,
+body[data-perf="slow"] .watch-action,
+body[data-perf="slow"] .watch-episode,
+body[data-perf="slow"] .watch-season-head,
+body[data-perf="slow"] .play-back,
+body[data-perf="slow"] .play-fav {
+    transition: none;
+}
+body[data-perf="slow"] .watch-back-btn:focus,
+body[data-perf="slow"] .watch-back-btn:hover,
+body[data-perf="slow"] .watch-fav:focus,
+body[data-perf="slow"] .watch-fav.focused,
+body[data-perf="slow"] .play-fav:focus,
+body[data-perf="slow"] .play-fav:hover {
+    transform: none;
+}
+/* The watch backdrop's blur is paint-time. On the kid TV that's
+   one chunky frame on mount, but if we're in a particularly
+   degraded state (perf-overlay caught fps < 30), drop the blur
+   entirely - the backdrop becomes a flat dimmed image, which
+   reads as deliberate rather than broken. */
+body[data-perf="slow"] .watch-backdrop {
+    filter: brightness(0.4);
+    transform: none;
+}
+
+/* PlayerTransport buttons: drop the box-shadow focus ring (paint-
+   time) for an outline (composite-cheap). Disable transitions and
+   the focused-scrubber's height/size grow animations - on slow
+   the kid sees an instant "you're here" instead of a 150ms
+   transition that competes with playback decode. */
+body[data-perf="slow"] .pt-button,
+body[data-perf="slow"] .pt-rail,
+body[data-perf="slow"] .pt-thumb,
+body[data-perf="slow"] .pt-fill {
+    transition: none;
+}
+body[data-perf="slow"] .pt-button.focused {
+    box-shadow: none;
+    outline: 4px solid var(--accent);
+    outline-offset: 2px;
+    background: rgba(128, 132, 255, 0.2);
+}
+
+/* Up Next overlay: a card pinned to the bottom-right of the player
+   when the kid crosses the 90% threshold on a series episode. The
+   countdown ticks down from 10; reaching 0 (or video ended) auto-
+   advances to the next episode. Skip Now / Cancel buttons sit
+   inside the card; D-pad navigation is just Left/Right within the
+   card (handled by native button focus order).
+   Layered above the player chrome (z above .play-header) so the
+   parent's nav doesn't occlude it. */
+.up-next-overlay {
+    position: fixed;
+    bottom: 8rem;
+    right: 2rem;
+    z-index: 50;
+    /* Size the wrapper to the card so it can't extend past the
+       card's actual width and accidentally block clicks across the
+       bottom strip of the player chrome. */
+    width: max-content;
+    pointer-events: none;
+}
+.up-next-card {
+    pointer-events: auto;
+}
+.up-next-card {
+    background: rgba(20, 20, 28, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 14px;
+    padding: 1rem 1.25rem;
+    min-width: 320px;
+    max-width: 420px;
+    color: #f2f2f2;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+.up-next-label {
+    color: var(--accent);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 0.85rem;
+}
+.up-next-badge {
+    color: var(--accent);
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-size: 0.85rem;
+}
+.up-next-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+.up-next-series {
+    color: #c8c8c8;
+    font-size: 0.95rem;
+}
+.up-next-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.4rem;
+}
+.up-next-btn {
+    flex: 1 1 auto;
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
+    padding: 0.55rem 0.9rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 100ms ease, border-color 100ms ease;
+}
+.up-next-btn.primary {
+    background: var(--accent);
+    color: #111;
+    border-color: var(--accent);
+}
+.up-next-btn:focus,
+.up-next-btn:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+}
+body[data-perf="slow"] .up-next-btn {
+    transition: none;
 }

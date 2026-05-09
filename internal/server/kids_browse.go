@@ -38,17 +38,22 @@ type browseRowResponse struct {
 }
 
 // browseItem is the slim per-tile payload shipped to the kid client.
-// Used to be []jellyfin.Item, but the client only reads five fields
-// (Id, Name, Type, ImageTags.Primary, UserData) and the full
-// jellyfin.Item includes MediaStreams, Genres, Studios, etc. - over
-// 80% of the wire weight. JSON keys keep the capitalized Jellyfin
-// shape so the existing client TypeScript types still match.
+// Used to be []jellyfin.Item, but the client only reads a handful of
+// fields and the full jellyfin.Item includes MediaStreams, Genres,
+// Studios, etc. - over 80% of the wire weight. JSON keys keep the
+// capitalized Jellyfin shape so the existing client TypeScript types
+// still match.
+//
+// DateCreated is included so the kid client's date-bucketing utility
+// (Library + TagDetail recency sorts) can group items by "Added today
+// / this week / earlier" without a second round-trip.
 type browseItem struct {
-	ID        string                 `json:"Id"`
-	Name      string                 `json:"Name"`
-	Type      string                 `json:"Type"`
-	ImageTags *browseImageTags       `json:"ImageTags,omitempty"`
-	UserData  *jellyfin.ItemUserData `json:"UserData,omitempty"`
+	ID          string                 `json:"Id"`
+	Name        string                 `json:"Name"`
+	Type        string                 `json:"Type"`
+	DateCreated string                 `json:"DateCreated,omitempty"`
+	ImageTags   *browseImageTags       `json:"ImageTags,omitempty"`
+	UserData    *jellyfin.ItemUserData `json:"UserData,omitempty"`
 }
 
 // browseImageTags carries only the Primary tag - the kid client uses
@@ -63,10 +68,11 @@ type browseImageTags struct {
 // page renders.
 func toBrowseItem(it jellyfin.Item) browseItem {
 	out := browseItem{
-		ID:       it.ID,
-		Name:     it.Name,
-		Type:     it.Type,
-		UserData: it.UserData,
+		ID:          it.ID,
+		Name:        it.Name,
+		Type:        it.Type,
+		DateCreated: it.DateCreated,
+		UserData:    it.UserData,
 	}
 	if it.ImageTags.Primary != "" {
 		out.ImageTags = &browseImageTags{Primary: it.ImageTags.Primary}

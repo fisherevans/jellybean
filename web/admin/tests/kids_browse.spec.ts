@@ -19,7 +19,7 @@ test.describe("kids browse + tab pill", () => {
     }) => {
         await gotoKids(page, "/player/browse?profileId=1");
         const browseBtn = page
-            .locator(".kids-tabpill-btn")
+            .locator(".kids-tabpill-tab")
             .filter({ hasText: "Browse" });
         await expect(browseBtn).toHaveClass(/active/);
         // Wait for at least one row title to render. The seeded
@@ -34,12 +34,12 @@ test.describe("kids browse + tab pill", () => {
     test("clicking Library tab navigates to /library", async ({ page }) => {
         await gotoKids(page, "/player/browse?profileId=1");
         await page
-            .locator(".kids-tabpill-btn")
+            .locator(".kids-tabpill-tab")
             .filter({ hasText: "Library" })
             .click();
         await expect(page).toHaveURL(/\/player\/library/);
         const libraryBtn = page
-            .locator(".kids-tabpill-btn")
+            .locator(".kids-tabpill-tab")
             .filter({ hasText: "Library" });
         await expect(libraryBtn).toHaveClass(/active/);
     });

@@ -66,6 +66,7 @@ func (s *Server) adminLayoutRoutes(r *mux.Router) {
 	r.HandleFunc("/layouts/{id}/rows/{rowId}", s.handleAdminUpdateRow).Methods(http.MethodPatch)
 	r.HandleFunc("/layouts/{id}/rows/{rowId}", s.handleAdminDeleteRow).Methods(http.MethodDelete)
 	r.HandleFunc("/dev/refresh-layout-cache", s.handleAdminRefreshLayoutCache).Methods(http.MethodPost)
+	r.HandleFunc("/dev/bg-svg", s.handleAdminDevSaveBgSvg).Methods(http.MethodPost)
 }
 
 func (s *Server) adminAPIKeyRoutes(r *mux.Router) {
@@ -124,6 +125,8 @@ func (s *Server) kidsLibraryRoutes(r *mux.Router) {
 	r.HandleFunc("/library", s.handleKidsLibrary).Methods(http.MethodGet)
 	r.HandleFunc("/browse", s.handleKidsBrowse).Methods(http.MethodGet)
 	r.HandleFunc("/browse/row/{rowId}", s.handleKidsBrowseRow).Methods(http.MethodGet)
+	r.HandleFunc("/tags", s.handleKidsListTags).Methods(http.MethodGet)
+	r.HandleFunc("/tags/{id}", s.handleKidsTagDetail).Methods(http.MethodGet)
 	r.HandleFunc("/maintenance/refresh-layout", s.handleKidsRefreshLayout).Methods(http.MethodPost)
 	r.HandleFunc("/items/{id}", s.handleKidsItem).Methods(http.MethodGet)
 	r.HandleFunc("/items/{id}/image", s.handleKidsImage).Methods(http.MethodGet)
@@ -140,6 +143,14 @@ func (s *Server) kidsPlaybackRoutes(r *mux.Router) {
 	r.HandleFunc("/playback/stop-encoding", s.handleKidsStopEncoding).Methods(http.MethodPost)
 }
 
+// kidsOverrideRoutes are the parent-override actions that mutate
+// curation / Jellyfin state. Per-device runtime overrides (time
+// grants, break-skip, viewing tints, mode pinning) used to live
+// here too but moved to localStorage on the kid client - see
+// web/kids/src/parentOverrides.ts. The server status endpoints
+// (/api/kids/time-status, /api/kids/active-mode, etc.) continue
+// to return base config; the kid client merges the local layer
+// on read.
 func (s *Server) kidsOverrideRoutes(r *mux.Router) {
 	r.HandleFunc("/override/verify-pin", s.handleKidsOverrideVerifyPIN).Methods(http.MethodPost)
 	r.HandleFunc("/override/refresh", s.handleKidsOverrideRefresh).Methods(http.MethodPost)
@@ -149,9 +160,8 @@ func (s *Server) kidsOverrideRoutes(r *mux.Router) {
 	r.HandleFunc("/override/items/{id}/tags", s.handleKidsOverrideTags).Methods(http.MethodPut)
 	r.HandleFunc("/override/items/{id}/hide", s.handleKidsOverrideHide).Methods(http.MethodPost)
 	r.HandleFunc("/override/items/{id}/mark/{state}", s.handleKidsOverrideMarkPlayed).Methods(http.MethodPost)
+	r.HandleFunc("/override/items/{id}/mark-season/{state}", s.handleKidsOverrideMarkSeason).Methods(http.MethodPost)
 	r.HandleFunc("/override/items/{id}/qr", s.handleKidsOverrideQR).Methods(http.MethodGet)
-	r.HandleFunc("/override/grant-time", s.handleKidsOverrideGrantTime).Methods(http.MethodPost)
-	r.HandleFunc("/override/skip-break", s.handleKidsOverrideSkipBreak).Methods(http.MethodPost)
 }
 
 func (s *Server) kidsTimeRoutes(r *mux.Router) {
@@ -162,12 +172,10 @@ func (s *Server) kidsTimeRoutes(r *mux.Router) {
 
 func (s *Server) kidsViewingRoutes(r *mux.Router) {
 	r.HandleFunc("/viewing-state", s.handleKidsViewingState).Methods(http.MethodGet)
-	r.HandleFunc("/override/viewing/{action}", s.handleKidsOverrideSetViewing).Methods(http.MethodPost)
 }
 
 func (s *Server) kidsModeRoutes(r *mux.Router) {
 	r.HandleFunc("/active-mode", s.handleKidsActiveMode).Methods(http.MethodGet)
-	r.HandleFunc("/override/set-mode", s.handleKidsOverrideSetMode).Methods(http.MethodPost)
 }
 
 func (s *Server) kidsChannelRoutes(r *mux.Router) {

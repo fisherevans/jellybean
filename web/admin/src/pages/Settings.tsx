@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, HttpError } from "../api";
 import Spinner from "../Spinner";
-import PinInput from "../PinInput";
+import ArrowPinInput from "../ArrowPinInput";
 
 // Settings page (M9 #57). Houses the override PIN config + the
 // public_url app_setting that the kid client's QR-code generator
@@ -49,8 +49,8 @@ export default function Settings() {
 
     async function savePIN(e: React.FormEvent) {
         e.preventDefault();
-        if (pin.length < 4) {
-            setError("PIN must be 4 digits.");
+        if (pin.length < 4 || !/^[UDLR]{4}$/.test(pin)) {
+            setError("Pattern must be 4 arrow steps.");
             return;
         }
         setBusy(true);
@@ -60,7 +60,7 @@ export default function Settings() {
             await api.setOverridePIN(pin);
             setPin("");
             setEditingPIN(false);
-            setNotice("PIN saved.");
+            setNotice("Pattern saved.");
             await refresh();
         } catch (err) {
             setError(err instanceof HttpError ? err.message : String(err));
@@ -137,7 +137,12 @@ export default function Settings() {
             {error && <div className="error">{error}</div>}
             {notice && <div className="settings-notice">{notice}</div>}
 
-            <h2 className="section-title">Adult override PIN</h2>
+            <h2 className="section-title">Adult override pattern</h2>
+            <p className="muted">
+                4-step arrow sequence. The kid TV's override modal accepts the
+                pattern via D-pad arrow keys; we never display the actual
+                directions there, just whether the kid has filled all 4 dots.
+            </p>
             <p className="muted">
                 Status:{" "}
                 {override.pinSet ? (
@@ -161,15 +166,13 @@ export default function Settings() {
             {override.pinSet && !editingPIN ? (
                 <div className="settings-form">
                     <label>
-                        Current PIN
-                        {/* Show the configured PIN as four masked
-                            cells so the layout is consistent with
-                            the edit-mode input. The actual digits
-                            stay server-side; the read view only
-                            confirms one is set. */}
-                        <div className="pin-input">
+                        Current pattern
+                        {/* Configured pattern is shown as 4 filled
+                            dots - the actual arrows stay server-
+                            side. */}
+                        <div className="arrow-pin-cells">
                             {[0, 1, 2, 3].map((i) => (
-                                <div key={i} className="pin-input-cell readonly">
+                                <div key={i} className="arrow-pin-cell filled">
                                     •
                                 </div>
                             ))}
@@ -185,14 +188,14 @@ export default function Settings() {
                             }}
                             disabled={busy}
                         >
-                            Edit PIN
+                            Edit pattern
                         </button>
                         <button
                             type="button"
                             onClick={clearPIN}
                             disabled={busy}
                         >
-                            Clear PIN
+                            Clear pattern
                         </button>
                         {override.lockedForSeconds > 0 ? (
                             <button type="button" onClick={clearLockout}>
@@ -204,8 +207,8 @@ export default function Settings() {
             ) : (
                 <form className="settings-form" onSubmit={savePIN}>
                     <label>
-                        {override.pinSet ? "New PIN" : "PIN"}
-                        <PinInput
+                        {override.pinSet ? "New pattern" : "Pattern"}
+                        <ArrowPinInput
                             value={pin}
                             onChange={setPin}
                             disabled={busy}
@@ -224,8 +227,8 @@ export default function Settings() {
                             {busy
                                 ? "Saving…"
                                 : override.pinSet
-                                  ? "Update PIN"
-                                  : "Set PIN"}
+                                  ? "Update pattern"
+                                  : "Set pattern"}
                         </button>
                         {override.pinSet ? (
                             <button

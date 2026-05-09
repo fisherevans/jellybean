@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 // End-to-end checks for the kids client. The auth model is now
 // "Jellyfin username + password on the device" (see docs/auth-pivot-plan.md);
@@ -25,9 +25,26 @@ async function clearKidsLocalStorage(page: import("@playwright/test").Page) {
     });
 }
 
+// Force the password mode so legacy username+password tests can
+// reach the form without first clicking past the QC card. Routes
+// /quickconnect/enabled to return false; the login screen settles
+// directly on the password view.
+async function forcePasswordMode(page: Page) {
+    await page.route(
+        "**/api/kids/auth/quickconnect/enabled",
+        async (route) =>
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ enabled: false }),
+            }),
+    );
+}
+
 test.describe("kids login", () => {
     test("/kids redirects to /player/login when not signed in", async ({ page }) => {
         await clearKidsLocalStorage(page);
+        await forcePasswordMode(page);
         await page.goto(KIDS_BASE);
         await expect(page).toHaveURL(/\/player\/login$/);
         await expect(page.getByRole("heading", { name: /Sign in/ })).toBeVisible();
@@ -35,10 +52,11 @@ test.describe("kids login", () => {
 
     test("login form: invalid credentials show an error", async ({ page }) => {
         await clearKidsLocalStorage(page);
+        await forcePasswordMode(page);
         await page.goto("/player/login");
         await page.getByLabel("Username").fill("definitely-not-a-real-user");
         await page.getByLabel("Password").fill("definitely-not-a-real-password");
-        await page.getByRole("button", { name: /Sign in/ }).click();
+        await page.getByRole("button", { name: /^Sign in$/ }).click();
         // Backend responds 401, login screen shows the error message.
         await expect(page.getByText(/Wrong username or password/)).toBeVisible({
             timeout: 10_000,
@@ -55,10 +73,11 @@ test.describe("kids login", () => {
             "JELLYFIN_USERNAME / JELLYFIN_PASSWORD env vars required",
         );
         await clearKidsLocalStorage(page);
+        await forcePasswordMode(page);
         await page.goto("/player/login");
         await page.getByLabel("Username").fill(username!);
         await page.getByLabel("Password").fill(password!);
-        await page.getByRole("button", { name: /Sign in/ }).click();
+        await page.getByRole("button", { name: /^Sign in$/ }).click();
 
         // Two acceptable outcomes:
         //   - The admin user is mapped to a kid: we land on /library.
@@ -73,6 +92,66 @@ test.describe("kids login", () => {
             ).toBeVisible();
         }).toPass({ timeout: 10_000 });
     });
+
+    test("Quick Connect mode: shows code, then flips to password on link", async ({
+        page,
+    }) => {
+        await clearKidsLocalStorage(page);
+        // Stub the three QC endpoints so we exercise the login UI
+        // deterministically without depending on the upstream
+        // Jellyfin's QC state (which an admin can flip at any time).
+        await page.route(
+            "**/api/kids/auth/quickconnect/enabled",
+            async (route) =>
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ enabled: true }),
+                }),
+        );
+        await page.route(
+            "**/api/kids/auth/quickconnect/start",
+            async (route) =>
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        id: "test-id",
+                        code: "123456",
+                        expiresAt: new Date(
+                            Date.now() + 10 * 60_000,
+                        ).toISOString(),
+                    }),
+                }),
+        );
+        await page.route(
+            "**/api/kids/auth/quickconnect/poll**",
+            async (route) =>
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ status: "pending" }),
+                }),
+        );
+
+        await page.goto("/player/login");
+
+        // Code grid renders the 6 digits.
+        const digits = page.locator(".kid-login-code-digit");
+        await expect(digits).toHaveCount(6);
+        for (let i = 0; i < 6; i++) {
+            await expect(digits.nth(i)).toHaveText("123456".charAt(i));
+        }
+        // "Waiting for approval..." status is visible.
+        await expect(
+            page.getByText(/Waiting for approval/),
+        ).toBeVisible();
+
+        // Click "Use password instead" and the form takes over.
+        await page.getByRole("button", { name: /Use password instead/ }).click();
+        await expect(page.getByLabel("Username")).toBeVisible();
+        await expect(page.getByLabel("Password")).toBeVisible();
+    });
 });
 
 // Library / browse grid. Uses the admin preview path (?profileId=N)
@@ -81,40 +160,86 @@ test.describe("kids login", () => {
 async function gotoLibrary(page: import("@playwright/test").Page, profileId: number) {
     await clearKidsLocalStorage(page);
     await page.goto(`/player/library?profileId=${profileId}`);
-    await expect(page.getByRole("tablist")).toBeVisible();
+    // The controls row (search + filter + sort + jump) is always
+    // present on Library; wait for the search wrap as a stable anchor.
+    await expect(page.locator(".library-search-wrap")).toBeVisible();
+}
+
+// selectFilter opens the Filter dropdown modal and clicks the named
+// option. The dropdown lives in a portal on document.body, so we
+// match the modal's option-picker-item buttons rather than scope to
+// the page tree.
+async function selectFilter(
+    page: import("@playwright/test").Page,
+    label: "All" | "Movies" | "Shows",
+) {
+    await page.locator(".library-dropdown-btn").filter({ hasText: "Filter:" }).click();
+    await expect(page.locator(".alpha-picker-backdrop")).toBeVisible();
+    await page.locator(".option-picker-item").filter({ hasText: label }).click();
+    await expect(page.locator(".alpha-picker-backdrop")).toBeHidden();
+}
+
+// advanceWatchMenuIfPresent: when a Library tile click lands on the
+// M7 watch menu (movies with resume progress, all series), press
+// the primary action button (Play / Resume) so playback proceeds.
+// No-op when the click went straight to /play.
+async function advanceWatchMenuIfPresent(
+    page: import("@playwright/test").Page,
+) {
+    // Give the URL a moment to settle.
+    await page.waitForLoadState("domcontentloaded");
+    if (!/\/player\/watch\//.test(page.url())) return;
+    const primary = page.locator(".watch-action.primary").first();
+    await primary.waitFor({ state: "visible", timeout: 5_000 });
+    await primary.click();
 }
 
 test.describe("kids library", () => {
-    test("renders the type filter, defaulted to Both", async ({ page }) => {
+    test("controls row renders search, Filter, Sort, and Jump", async ({ page }) => {
         await gotoLibrary(page, 1);
-        const tabs = page.getByRole("tab");
-        await expect(tabs).toHaveCount(3);
-        await expect(tabs.nth(0)).toHaveText("Both");
-        await expect(tabs.nth(0)).toHaveClass(/active/);
+        await expect(page.locator(".library-search-wrap")).toBeVisible();
+        const filterBtn = page
+            .locator(".library-dropdown-btn")
+            .filter({ hasText: "Filter:" });
+        const sortBtn = page
+            .locator(".library-dropdown-btn")
+            .filter({ hasText: "Sort:" });
+        const jumpBtn = page.locator(".library-jump-btn");
+        await expect(filterBtn).toBeVisible();
+        await expect(sortBtn).toBeVisible();
+        await expect(jumpBtn).toBeVisible();
+        // Defaults: All + A - Z (sort=name).
+        await expect(filterBtn).toContainText("All");
+        await expect(sortBtn).toContainText("A - Z");
     });
 
-    test("clicking a filter pill swaps the type query param", async ({ page }) => {
+    test("Filter dropdown -> Movies fires ?type=Movie", async ({ page }) => {
         await gotoLibrary(page, 1);
         // Wait for the initial fetch to finish so a click triggers a fresh
         // request we can observe.
         await page.locator(".tile-library, .library-state").first().waitFor();
         const moviesReq = page.waitForRequest((req) => {
             const url = req.url();
-            return url.includes("/api/kids/library") && url.includes("type=Movie") &&
-                !url.includes("type=Movie%2CSeries");
+            return (
+                url.includes("/api/kids/library") &&
+                url.includes("type=Movie") &&
+                !url.includes("type=Movie%2CSeries")
+            );
         });
-        await page.getByRole("tab", { name: "Movies" }).click();
+        await selectFilter(page, "Movies");
         await moviesReq;
     });
 
-    test("library tiles render and clicking one navigates to /play", async ({ page }) => {
+    test("library tiles render and clicking one navigates", async ({ page }) => {
         await gotoLibrary(page, 1);
         // Wait for at least one tile to render. Server returns visible items
         // for the Default profile; if empty the test data is misconfigured.
         const firstTile = page.locator(".tile-library").first();
         await expect(firstTile).toBeVisible({ timeout: 10_000 });
         await firstTile.click();
-        await expect(page).toHaveURL(/\/player\/play\//);
+        // Movies route to /play directly; series + items with resume
+        // progress route to /watch (M7 watch menu).
+        await expect(page).toHaveURL(/\/player\/(play|watch)\//);
     });
 
     test("search box filters server-side via /api/kids/library?search= (M8 #49)", async ({
@@ -138,26 +263,32 @@ test.describe("kids library", () => {
         expect(searches).toContain("scoo");
     });
 
-    test("D-pad: ArrowDown from filter focuses a tile, Enter activates it", async ({ page }) => {
+    test("D-pad: ArrowDown walks tab → search → first tile", async ({ page }) => {
         await gotoLibrary(page, 1);
-        // Wait for the grid to load.
         await page.locator(".tile-library").first().waitFor({ state: "visible" });
-        // Focus the active filter pill, then ArrowDown.
-        await page.getByRole("tab", { name: "Both" }).focus();
+        // Page mounts with the tab nav focused. ArrowDown #1 hands
+        // focus from the tab pill to the search wrap; ArrowDown #2
+        // moves into the first grid tile.
         await page.keyboard.press("ArrowDown");
-        // Some tile (cw or grid) should now have .focused.
+        await expect(page.locator(".library-search-wrap.focused")).toBeVisible();
+        await page.keyboard.press("ArrowDown");
         await expect(page.locator(".tile.focused")).toHaveCount(1);
-        await page.keyboard.press("Enter");
-        await expect(page).toHaveURL(/\/player\/play\//);
+        // Enter doesn't activate in admin-preview (the kid-only
+        // useLongPressEnter hook is disabled without a session, and
+        // the page's keydown handler preventDefault's Enter). Verify
+        // the equivalent click path instead.
+        await page.locator(".tile.focused").click();
+        await expect(page).toHaveURL(/\/player\/(play|watch)\//);
     });
 
-    test("Series tiles get a TV badge when present", async ({ page }) => {
+    test("Series tiles get a TV badge when filtered to Shows", async ({ page }) => {
         await gotoLibrary(page, 1);
         await page.locator(".tile-library, .library-state").first().waitFor();
         const seriesReq = page.waitForRequest((req) =>
-            req.url().includes("/api/kids/library") && req.url().includes("type=Series"),
+            req.url().includes("/api/kids/library") &&
+            req.url().includes("type=Series"),
         );
-        await page.getByRole("tab", { name: "TV" }).click();
+        await selectFilter(page, "Shows");
         await seriesReq;
         const firstTile = page.locator(".tile-library").first();
         await expect(firstTile).toBeVisible({ timeout: 10_000 });
@@ -214,14 +345,16 @@ test.describe("kids library cache", () => {
         const FAKE_USER_ID = "cache-test-user-id";
         const FAKE_ETAG = 'W/"cache-test-etag"';
         const CACHE_TILE_NAME = "Cached Test Tile";
-        const CACHE_KEY_ALL = `${FAKE_USER_ID}:all:Movie,Series:24:0:`;
-        const CACHE_KEY_CW = `${FAKE_USER_ID}:continue-watching:Movie,Series:24:0:`;
+        // Cache key shape mirrors libraryCache.cacheKey:
+        //   `${userId}:${section}:${type}:${limit}:${startIndex}:${search}:${sort}`
+        // Library mounts with PAGE_SIZE=5000, sort=name, no search.
+        const CACHE_KEY_ALL = `${FAKE_USER_ID}:all:Movie,Series:5000:0::name`;
 
         // Seed the kids client's localStorage + IDB before the SPA boots.
         // addInitScript runs in every page context within this test, so
         // the second navigation (the "reload") sees the same state.
         await page.addInitScript(
-            ({ userId, etag, tileName, allKey, cwKey }) => {
+            ({ userId, etag, tileName, allKey }) => {
                 if (location.pathname.startsWith("/player")) {
                     localStorage.setItem("jellybean.kids.token", "fake-bearer-token");
                     localStorage.setItem("jellybean.kids.userId", userId);
@@ -271,20 +404,14 @@ test.describe("kids library cache", () => {
                     NextStartIndex: 1,
                     ProfileId: 1,
                 };
-                const cwPage = { Items: [], ProfileId: 1 };
-                // Fire-and-await both seeds; tests block on this script
-                // because it's awaited.
                 (window as unknown as { __cacheSeed: Promise<void> }).__cacheSeed =
-                    Promise.all([seed(allKey, allPage), seed(cwKey, cwPage)]).then(
-                        () => undefined,
-                    );
+                    seed(allKey, allPage);
             },
             {
                 userId: FAKE_USER_ID,
                 etag: FAKE_ETAG,
                 tileName: CACHE_TILE_NAME,
                 allKey: CACHE_KEY_ALL,
-                cwKey: CACHE_KEY_CW,
             },
         );
 
@@ -347,14 +474,11 @@ test.describe("kids library cache", () => {
         const FAKE_ETAG = 'W/"filter-switch-etag"';
         const MOVIE_TILE = "Filter Switch Movie";
         const TV_TILE = "Filter Switch Series";
-        const KEY_MOVIE_ALL = `${FAKE_USER_ID}:all:Movie:24:0:`;
-        const KEY_MOVIE_CW = `${FAKE_USER_ID}:continue-watching:Movie:24:0:`;
-        const KEY_TV_ALL = `${FAKE_USER_ID}:all:Series:24:0:`;
-        const KEY_TV_CW = `${FAKE_USER_ID}:continue-watching:Series:24:0:`;
-        // The library defaults to the "Both" filter on first load, so
-        // also seed those keys to keep the initial render flicker-free.
-        const KEY_BOTH_ALL = `${FAKE_USER_ID}:all:Movie,Series:24:0:`;
-        const KEY_BOTH_CW = `${FAKE_USER_ID}:continue-watching:Movie,Series:24:0:`;
+        // PAGE_SIZE=5000, sort=name, no search. Cache keys for each
+        // filter the test will exercise.
+        const KEY_MOVIE_ALL = `${FAKE_USER_ID}:all:Movie:5000:0::name`;
+        const KEY_TV_ALL = `${FAKE_USER_ID}:all:Series:5000:0::name`;
+        const KEY_BOTH_ALL = `${FAKE_USER_ID}:all:Movie,Series:5000:0::name`;
 
         await page.addInitScript(
             ({
@@ -363,11 +487,8 @@ test.describe("kids library cache", () => {
                 movieTile,
                 tvTile,
                 keyMovieAll,
-                keyMovieCw,
                 keyTvAll,
-                keyTvCw,
                 keyBothAll,
-                keyBothCw,
             }) => {
                 if (location.pathname.startsWith("/player")) {
                     localStorage.setItem("jellybean.kids.token", "fake-bearer-token");
@@ -375,10 +496,10 @@ test.describe("kids library cache", () => {
                     localStorage.setItem("jellybean.kids.userName", "filter-switch");
                     localStorage.setItem("jellybean.kids.profileId", "1");
                     localStorage.setItem("jellybean.kids.kidName", "Filter Switch Kid");
-                    // Force the default filter to "Both" so the first
-                    // render uses the Both cache; the test then clicks
-                    // Movies and TV in turn.
-                    localStorage.setItem("jellybean.kids.typeFilter", "Both");
+                    // Force the default filter to "all" so the first
+                    // render uses the All cache; the test then clicks
+                    // Movies and Shows in turn.
+                    localStorage.setItem("jellybean.kids.library.filter", "all");
                 }
                 const seed = (key: string, page: unknown) =>
                     new Promise<void>((resolve) => {
@@ -442,15 +563,11 @@ test.describe("kids library cache", () => {
                     NextStartIndex: 2,
                     ProfileId: 1,
                 };
-                const emptyCw = { Items: [], ProfileId: 1 };
                 (window as unknown as { __cacheSeed: Promise<void> }).__cacheSeed =
                     Promise.all([
                         seed(keyMovieAll, moviePage),
-                        seed(keyMovieCw, emptyCw),
                         seed(keyTvAll, tvPage),
-                        seed(keyTvCw, emptyCw),
                         seed(keyBothAll, bothPage),
-                        seed(keyBothCw, emptyCw),
                     ]).then(() => undefined);
             },
             {
@@ -459,11 +576,8 @@ test.describe("kids library cache", () => {
                 movieTile: MOVIE_TILE,
                 tvTile: TV_TILE,
                 keyMovieAll: KEY_MOVIE_ALL,
-                keyMovieCw: KEY_MOVIE_CW,
                 keyTvAll: KEY_TV_ALL,
-                keyTvCw: KEY_TV_CW,
                 keyBothAll: KEY_BOTH_ALL,
-                keyBothCw: KEY_BOTH_CW,
             },
         );
 
@@ -492,21 +606,20 @@ test.describe("kids library cache", () => {
 
         const loadingText = page.locator(".library-state");
 
-        // Click TV. The cache hit should swap tiles synchronously; the
-        // loading text must never appear during the transition. We poll
-        // .library-state across a short window after the click and
-        // assert it stayed hidden the whole time.
-        const tvTab = page.getByRole("tab", { name: "TV" });
+        // Switch to Shows. The cache hit should swap tiles
+        // synchronously; the loading text must never appear during
+        // the transition. We poll .library-state across a short
+        // window after the selection and assert it stayed hidden
+        // the whole time.
         const sawLoadingDuringTv = pollVisibleEver(loadingText, 250);
-        await tvTab.click();
+        await selectFilter(page, "Shows");
         const tvFlash = await sawLoadingDuringTv;
         expect(tvFlash).toBe(false);
         await expect(page.locator(".tile-library").first()).toBeVisible();
 
-        // Now click Movies, same assertion.
-        const moviesTab = page.getByRole("tab", { name: "Movies" });
+        // Now switch to Movies, same assertion.
         const sawLoadingDuringMovies = pollVisibleEver(loadingText, 250);
-        await moviesTab.click();
+        await selectFilter(page, "Movies");
         const moviesFlash = await sawLoadingDuringMovies;
         expect(moviesFlash).toBe(false);
         await expect(page.locator(".tile-library").first()).toBeVisible();
@@ -542,11 +655,10 @@ test.describe("kids offline", () => {
         const FAKE_USER_ID = "offline-test-user-id";
         const FAKE_ETAG = 'W/"offline-test-etag"';
         const CACHE_TILE_NAME = "Offline Cached Tile";
-        const CACHE_KEY_ALL = `${FAKE_USER_ID}:all:Movie,Series:24:0:`;
-        const CACHE_KEY_CW = `${FAKE_USER_ID}:continue-watching:Movie,Series:24:0:`;
+        const CACHE_KEY_ALL = `${FAKE_USER_ID}:all:Movie,Series:5000:0::name`;
 
         await page.addInitScript(
-            ({ userId, etag, tileName, allKey, cwKey }) => {
+            ({ userId, etag, tileName, allKey }) => {
                 if (location.pathname.startsWith("/player")) {
                     localStorage.setItem("jellybean.kids.token", "fake-bearer-token");
                     localStorage.setItem("jellybean.kids.userId", userId);
@@ -594,18 +706,14 @@ test.describe("kids offline", () => {
                     NextStartIndex: 1,
                     ProfileId: 1,
                 };
-                const cwPage = { Items: [], ProfileId: 1 };
                 (window as unknown as { __cacheSeed: Promise<void> }).__cacheSeed =
-                    Promise.all([seed(allKey, allPage), seed(cwKey, cwPage)]).then(
-                        () => undefined,
-                    );
+                    seed(allKey, allPage);
             },
             {
                 userId: FAKE_USER_ID,
                 etag: FAKE_ETAG,
                 tileName: CACHE_TILE_NAME,
                 allKey: CACHE_KEY_ALL,
-                cwKey: CACHE_KEY_CW,
             },
         );
 
@@ -707,9 +815,8 @@ test.describe("kids playback", () => {
         // browser-driven onPlay -> /playback/start chain is verified in Go
         // unit tests instead. Here we confirm the navigation, the stream
         // resolve call, and the video element wiring.
-        await clearKidsLocalStorage(page);
-        await page.goto(`/player/library?profileId=1`);
-        await page.getByRole("tab", { name: "Movies" }).click();
+        await gotoLibrary(page, 1);
+        await selectFilter(page, "Movies");
         const movieTile = page.locator(".tile-library").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
 
@@ -717,6 +824,9 @@ test.describe("kids playback", () => {
             req.url().includes("/api/kids/items/") && req.url().includes("/stream"),
         );
         await movieTile.click();
+        // Movies with resume progress route via the M7 watch menu;
+        // click "Play" / "Resume" there to land on /play.
+        await advanceWatchMenuIfPresent(page);
         await streamReq;
         await expect(page).toHaveURL(/\/player\/play\//);
         const video = page.locator("video");
@@ -724,9 +834,8 @@ test.describe("kids playback", () => {
     });
 
     test("Esc returns to the watch menu (M7 #44)", async ({ page }) => {
-        await clearKidsLocalStorage(page);
-        await page.goto(`/player/library?profileId=1`);
-        await page.getByRole("tab", { name: "Movies" }).click();
+        await gotoLibrary(page, 1);
+        await selectFilter(page, "Movies");
         const movieTile = page.locator(".tile-library").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
         await movieTile.click();
@@ -743,9 +852,8 @@ test.describe("kids playback", () => {
     });
 
     test("back button returns to the watch menu (M7 #44)", async ({ page }) => {
-        await clearKidsLocalStorage(page);
-        await page.goto(`/player/library?profileId=1`);
-        await page.getByRole("tab", { name: "Movies" }).click();
+        await gotoLibrary(page, 1);
+        await selectFilter(page, "Movies");
         const movieTile = page.locator(".tile-library").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
         await movieTile.click();
@@ -763,12 +871,12 @@ test.describe("kids playback", () => {
         // buffer state to avoid showing a "Play" button while the video
         // is loading; first user keypress reveals it. Verify it mounts
         // with a scrubber and at least the restart + play/pause buttons.
-        await clearKidsLocalStorage(page);
-        await page.goto(`/player/library?profileId=1`);
-        await page.getByRole("tab", { name: "Movies" }).click();
+        await gotoLibrary(page, 1);
+        await selectFilter(page, "Movies");
         const movieTile = page.locator(".tile-library").first();
         await expect(movieTile).toBeVisible({ timeout: 10_000 });
         await movieTile.click();
+        await advanceWatchMenuIfPresent(page);
         await expect(page).toHaveURL(/\/player\/play\//);
         // Transport mounts hidden during the buffer state. Send a key
         // to wake it up.

@@ -301,6 +301,61 @@ func TestKidsLibraryContinueWatching(t *testing.T) {
 	}
 }
 
+// Resume API hands back episodes; we surface the parent series in the
+// kid's Continue Watching row instead. This test pins:
+// (a) Episode -> series id rewrite on a per-item basis.
+// (b) Deduplication when multiple episodes belong to the same series.
+// (c) Visibility filter applies at the series level (so a hidden series
+// doesn't leak through any of its in-progress episodes).
+// (d) Movies pass through unchanged.
+// (e) Order is preserved (Resume is most-recent-activity-first; the row
+// must respect that across at least three positions, with a dup
+// collapsed mid-list and a hidden series filtered out).
+func TestKidsLibraryContinueWatchingEpisodeToSeries(t *testing.T) {
+	library := []jellyfin.Item{
+		{ID: "movie-1", Name: "A Movie", Type: "Movie"},
+		{ID: "series-a", Name: "Series A", Type: "Series"},
+		{ID: "series-b", Name: "Series B (hidden)", Type: "Series"},
+		{ID: "series-c", Name: "Series C", Type: "Series"},
+	}
+	resume := []jellyfin.Item{
+		// Most recently played first.
+		{ID: "ep-a-2", Name: "A E2", Type: "Episode", SeriesID: "series-a"},
+		{ID: "movie-1", Name: "A Movie", Type: "Movie"},
+		{ID: "ep-c-1", Name: "C E1", Type: "Episode", SeriesID: "series-c"},
+		{ID: "ep-a-1", Name: "A E1", Type: "Episode", SeriesID: "series-a"}, // dup of series-a, must collapse
+		{ID: "ep-b-1", Name: "B E1", Type: "Episode", SeriesID: "series-b"}, // hidden series, must drop
+	}
+	srv, profileID := kidsTestServer(t, library, resume, nil)
+	store := curation.NewStore(srv.db)
+	visible := curation.StateVisible
+	hidden := curation.StateHidden
+	store.SetState(t.Context(), "movie-1", profileID, &visible, "admin")
+	store.SetState(t.Context(), "series-a", profileID, &visible, "admin")
+	store.SetState(t.Context(), "series-b", profileID, &hidden, "admin")
+	store.SetState(t.Context(), "series-c", profileID, &visible, "admin")
+
+	rec := kidRequest(srv, http.MethodGet, "/api/kids/library?section=continue-watching", true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	var resp struct{ Items []jellyfin.Item }
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	gotIDs := itemIDsFromTest(resp.Items)
+	// Expected order: series-a (first occurrence wins; dup collapsed)
+	// -> movie-1 (passes through) -> series-c (Episode rewritten).
+	// series-b drops at the visibility filter.
+	wantIDs := []string{"series-a", "movie-1", "series-c"}
+	if len(gotIDs) != len(wantIDs) {
+		t.Fatalf("got %v, want %v", gotIDs, wantIDs)
+	}
+	for i, id := range wantIDs {
+		if gotIDs[i] != id {
+			t.Fatalf("got %v, want %v", gotIDs, wantIDs)
+		}
+	}
+}
+
 func TestKidsLibraryRejectsBadSection(t *testing.T) {
 	srv, _ := kidsTestServer(t, nil, nil, nil)
 	rec := kidRequest(srv, http.MethodGet, "/api/kids/library?section=bogus", true)
