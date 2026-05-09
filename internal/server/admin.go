@@ -335,44 +335,18 @@ enrich:
 		return
 	}
 
-	enriched := make([]map[string]any, 0, len(items))
+	enriched := make([]adminItemDTO, 0, len(items))
 	for _, it := range items {
-		row := map[string]any{
-			"Id":             it.ID,
-			"Name":           it.Name,
-			"Type":           it.Type,
-			"OfficialRating": it.OfficialRating,
-			"Genres":         it.Genres,
-			"Studios":        it.Studios,
-			"ProductionYear": it.ProductionYear,
-			"DateCreated":    it.DateCreated,
-			"ImageTags":      it.ImageTags,
-			"AudioLanguage":  it.PrimaryAudioLanguage(),
-			"AudioLanguages": it.AudioLanguages(),
-		}
+		var statePtr *curation.State
 		if st, ok := states[it.ID]; ok {
-			row["State"] = string(st)
-		} else {
-			row["State"] = nil
+			statePtr = &st
 		}
-		// Decorate with the item's tag set so the kebab UI on each
-		// tile can render checkboxes without an extra round trip.
-		if tags, ok := tagSets[it.ID]; ok {
-			compact := make([]map[string]any, 0, len(tags))
-			for _, tg := range tags {
-				compact = append(compact, map[string]any{
-					"id":   tg.ID,
-					"name": tg.Name,
-				})
-			}
-			row["Tags"] = compact
-		} else {
-			row["Tags"] = []map[string]any{}
-		}
+		var suggestPtr *curation.Suggestion
 		if withSuggest {
-			row["Suggestion"] = curation.Suggest(it)
+			s := curation.Suggest(it)
+			suggestPtr = &s
 		}
-		enriched = append(enriched, row)
+		enriched = append(enriched, toAdminItemDTO(it, statePtr, tagSets[it.ID], suggestPtr))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -411,31 +385,15 @@ func (s *Server) handleAdminGetItem(w http.ResponseWriter, r *http.Request) {
 	}
 	states, _ := s.curation.GetStatesForItems(r.Context(), profileID, []string{id})
 	tagSets, _ := s.curation.GetTagsForItems(r.Context(), []string{id})
-	row := map[string]any{
-		"Id":             item.ID,
-		"Name":           item.Name,
-		"Type":           item.Type,
-		"OfficialRating": item.OfficialRating,
-		"Genres":         item.Genres,
-		"Studios":        item.Studios,
-		"ProductionYear": item.ProductionYear,
-		"ImageTags":      item.ImageTags,
-		"AudioLanguage":  item.PrimaryAudioLanguage(),
-		"AudioLanguages": item.AudioLanguages(),
-	}
+	var statePtr *curation.State
 	if st, ok := states[id]; ok {
-		row["State"] = string(st)
-	} else {
-		row["State"] = nil
+		statePtr = &st
 	}
-	tagsJSON := make([]map[string]any, 0)
-	if tags, ok := tagSets[id]; ok {
-		for _, tg := range tags {
-			tagsJSON = append(tagsJSON, map[string]any{"id": tg.ID, "name": tg.Name})
-		}
-	}
-	row["Tags"] = tagsJSON
-	writeJSON(w, http.StatusOK, row)
+	dto := toAdminItemDTO(*item, statePtr, tagSets[id], nil)
+	// The single-item endpoint historically omits DateCreated; the
+	// items list endpoint always emits it. Preserve that split.
+	dto.DateCreated = nil
+	writeJSON(w, http.StatusOK, dto)
 }
 
 // pageUnsetForProfile walks Jellyfin's catalog and returns items that have
