@@ -15,6 +15,7 @@ import {
     Shuffle,
     SkipForward,
 } from "@phosphor-icons/react";
+import type { Item as SharedItem, ItemUserData } from "jellybean-shared";
 import {
     authHeaders,
     clearSession,
@@ -42,24 +43,19 @@ import { useProgressiveBack } from "./useProgressiveBack";
 // Back from /play always lands on /watch (hardware back + the
 // player's onBack share the same handler in Play.tsx).
 
-type ItemUserData = {
-    PlaybackPositionTicks?: number;
-    PlayedPercentage?: number;
-    Played?: boolean;
-};
-
-type Item = {
-    Id: string;
-    Name: string;
-    Type: string;
-    ProductionYear?: number;
-    RunTimeTicks?: number;
-    ImageTags?: { Primary?: string; Backdrop?: string };
-    UserData?: ItemUserData;
-    IsFavorite?: boolean;
-    SeriesId?: string;
-    SeriesName?: string;
-};
+type Item = Pick<
+    SharedItem,
+    | "Id"
+    | "Name"
+    | "Type"
+    | "ProductionYear"
+    | "RunTimeTicks"
+    | "ImageTags"
+    | "UserData"
+    | "IsFavorite"
+    | "SeriesId"
+    | "SeriesName"
+>;
 
 type SeriesEpisode = {
     id: string;

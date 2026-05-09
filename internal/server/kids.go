@@ -199,14 +199,14 @@ func (s *Server) handleKidsLogin(w http.ResponseWriter, r *http.Request) {
 		Int64("profile_id", kid.ProfileID).
 		Msg("kid login")
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"token":       res.AccessToken,
-		"userId":      res.User.ID,
-		"userName":    res.User.Name,
-		"kidId":       kid.ID,
-		"kidName":     kid.Name,
-		"profileId":   kid.ProfileID,
-		"profileName": kid.ProfileName,
+	writeJSON(w, http.StatusOK, kidAuthResponse{
+		Token:       res.AccessToken,
+		UserID:      res.User.ID,
+		UserName:    res.User.Name,
+		KidID:       kid.ID,
+		KidName:     kid.Name,
+		ProfileID:   kid.ProfileID,
+		ProfileName: kid.ProfileName,
 	})
 }
 

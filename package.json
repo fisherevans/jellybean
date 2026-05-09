@@ -2,6 +2,7 @@
   "name": "jellybean-web",
   "private": true,
   "workspaces": [
+    "web/shared",
     "web/admin",
     "web/kids"
   ],

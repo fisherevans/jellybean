@@ -44,6 +44,10 @@ import {
 // recently added) live in the same OptionPickerModal-driven dropdown
 // pattern as Library, so the two pages feel consistent.
 
+// TODO(types): TagDetail still uses lowercase keys; normalize
+// server-side to the canonical Item PascalCase shape (see
+// jellybean-shared `Item`) and switch this to a Pick<Item, ...> like
+// the other kid pages.
 type TagItem = {
     id: string;
     name: string;

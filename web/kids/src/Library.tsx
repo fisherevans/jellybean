@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowBendRightDown } from "@phosphor-icons/react";
+import type { Item } from "jellybean-shared";
 import {
     authHeaders,
     clearSession,
@@ -56,18 +57,10 @@ import {
 // Continue Watching lives only on Browse; Library is curation +
 // browse, not "what was I in the middle of."
 
-type LibraryItem = {
-    Id: string;
-    Name: string;
-    Type: string;
-    DateCreated?: string;
-    ImageTags?: { Primary?: string };
-    UserData?: {
-        PlaybackPositionTicks?: number;
-        PlayedPercentage?: number;
-        LastPlayedDate?: string;
-    };
-};
+type LibraryItem = Pick<
+    Item,
+    "Id" | "Name" | "Type" | "DateCreated" | "ImageTags" | "UserData"
+>;
 
 type LibraryResponse = {
     Items: LibraryItem[] | null;

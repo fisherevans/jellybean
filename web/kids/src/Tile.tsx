@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { Check } from "@phosphor-icons/react";
+import type { Item } from "jellybean-shared";
 import { imageAuthSuffix } from "./auth";
 
 // Tile is the shared poster card used by both the Browse rows and the
@@ -14,17 +15,10 @@ import { imageAuthSuffix } from "./auth";
 // enough headroom (overflow: visible + padding) so the zoom doesn't
 // clip - see styles.css `.tile-focus-padded` for the helper class.
 
-export type TileItem = {
-    Id: string;
-    Name: string;
-    Type: string;
-    ImageTags?: { Primary?: string };
-    UserData?: {
-        PlaybackPositionTicks?: number;
-        PlayedPercentage?: number;
-        Played?: boolean;
-    };
-};
+export type TileItem = Pick<
+    Item,
+    "Id" | "Name" | "Type" | "ImageTags" | "UserData"
+>;
 
 export type TileSize = "browse" | "library" | "cw";
 

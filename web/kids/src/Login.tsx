@@ -7,6 +7,10 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, DeviceMobile, KeyReturn } from "@phosphor-icons/react";
+import type {
+    KidLoginResponse,
+    QuickConnectPollResponse,
+} from "jellybean-shared";
 import { clearSession, getSession, setSession, type Session } from "./auth";
 import { prefetchLibrary } from "./prefetch";
 import {
@@ -56,20 +60,11 @@ function consumeDevCreds(): { user: string; pass: string } | null {
 // Both paths converge on the same /api/kids/auth/login response
 // shape, so the post-login hydration is identical.
 
-type LoginResponse = {
-    token: string;
-    userId: string;
-    userName: string;
-    kidId?: number;
-    kidName?: string;
-    profileId: number;
-    profileName?: string;
-};
-
-type QCPollResponse = {
-    status: "pending" | "authorized" | "expired";
-    kid?: LoginResponse;
-};
+// Shared with the server's kidAuthResponse struct
+// (internal/server/quickconnect.go + internal/server/kids.go).
+// Kid-side QC poll embeds the same LoginResponse under `kid`.
+type LoginResponse = KidLoginResponse;
+type QCPollResponse = QuickConnectPollResponse<LoginResponse>;
 
 // Fetchers normalize the kid app's /api/kids/auth/quickconnect/* shapes
 // into the QuickConnectError vocabulary the shared hook speaks.

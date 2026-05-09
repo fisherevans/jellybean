@@ -7,6 +7,7 @@ import {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowUUpLeft, Plus } from "@phosphor-icons/react";
+import type { BrowseResponse, BrowseRow } from "jellybean-shared";
 import {
     authHeaders,
     clearSession,
@@ -30,40 +31,8 @@ import { useKidsHome } from "./KidsHome";
 // The Library tab still exists at /library; the tab pill at the
 // top of both pages toggles between them.
 
-type BrowseItem = {
-    Id: string;
-    Name: string;
-    Type: string;
-    ImageTags?: { Primary?: string };
-    UserData?: {
-        PlaybackPositionTicks?: number;
-        PlayedPercentage?: number;
-    };
-};
-
-type BrowseRow = {
-    rowId: number;
-    type: string;
-    title: string;
-    subtitle?: string;
-    // Optional Phosphor icon name set by the server. "Heart" for the
-    // favorites row; the tag's own icon for tag / tag_fanout rows
-    // when configured. Empty/missing = no icon.
-    icon?: string;
-    // True when more items are available beyond what was returned.
-    // Drives the terminal button: "Load more" (true) vs "Loop back
-    // to start" (false). Set by random_unwatched + recently_added;
-    // every other row type stays false.
-    hasMore?: boolean;
-    items: BrowseItem[];
-};
-
-type BrowseResponse = {
-    layoutId: number;
-    layoutName: string;
-    profileId: number;
-    rows: BrowseRow[];
-};
+// BrowseItem / BrowseRow / BrowseResponse: shared with admin's
+// layout-preview consumer + the server wire format.
 
 type Focus = { kind: "tile"; row: number; col: number };
 
