@@ -258,10 +258,16 @@ export function useKidsResource<T>(
                 const msg = err instanceof Error ? err.message : "load failed";
                 if (cached !== null) {
                     setRefreshError(msg);
+                    // Leave isStale=true so consumers keep rendering
+                    // their "still serving stale cache" UI (Library's
+                    // "Offline - showing cached library" pill). Old
+                    // hand-rolled Library never cleared cacheHit on
+                    // fetch failure; clearing isStale here flashed
+                    // the pill off the moment the fetch rejected.
                 } else {
                     setError(msg);
+                    setIsStale(false);
                 }
-                setIsStale(false);
                 setLoading(false);
             }
         },
