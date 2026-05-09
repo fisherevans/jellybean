@@ -15,6 +15,7 @@ import {
     Tag as TagIcon,
 } from "@phosphor-icons/react";
 import { authHeaders } from "./auth";
+import KidModalShell from "./KidModalShell";
 import { useProgressiveBack } from "./useProgressiveBack";
 import * as overrides from "./parentOverrides";
 import {
@@ -268,17 +269,14 @@ export default function OverrideModal({
     const replaceTop = (s: Stage) =>
         setStack((prev) => [...prev.slice(0, -1), s]);
 
-    // PIN entry state.
+    // PIN entry state. The PIN stage's keyboard listener +
+    // armed/keyup gate + portal/Escape/repeat-Enter swallow live in
+    // PinStage (below) which wraps KidModalShell. Other stages keep
+    // using the file-local ModalShell + their own listeners.
     const [pinDigits, setPinDigits] = useState<string>("");
     const [pinBusy, setPinBusy] = useState(false);
     const [pinError, setPinError] = useState<string | null>(null);
     const [pinFlashError, setPinFlashError] = useState(false);
-    const [armed, setArmed] = useState(false);
-    useEffect(() => {
-        const onKeyUp = () => setArmed(true);
-        window.addEventListener("keyup", onKeyUp, { once: true });
-        return () => window.removeEventListener("keyup", onKeyUp);
-    }, []);
 
     const closeRef = useRef(onClose);
     closeRef.current = onClose;
@@ -325,79 +323,6 @@ export default function OverrideModal({
     // pointer, and on sign-out via auth.ts's clearSession (which
     // iterates the jellybean.kids. prefix).
 
-    // Reuse refs across the capture-phase listener. Use refs so
-    // the listener attaches once and reads latest values.
-    const stageRef = useRef(stage);
-    stageRef.current = stage;
-    const pinDigitsRef = useRef(pinDigits);
-    pinDigitsRef.current = pinDigits;
-    const pinBusyRef = useRef(pinBusy);
-    pinBusyRef.current = pinBusy;
-    const armedRef = useRef(armed);
-    armedRef.current = armed;
-    const submitPINRef = useRef<(candidate: string) => void>(() => {});
-
-    const ARROW_KEY_MAP: Record<string, string> = {
-        ArrowUp: "U",
-        ArrowDown: "D",
-        ArrowLeft: "L",
-        ArrowRight: "R",
-    };
-
-    // Dispatch arrow / Enter / Escape / Backspace at capture phase
-    // for the PIN stage only. Other stages render their own
-    // sub-view components which install their own listeners (or
-    // take focus + use native button activation).
-    useEffect(() => {
-        const onKey = (e: KeyboardEvent) => {
-            if (stageRef.current.kind !== "pin") return;
-            const k = e.key;
-            const isArrow = ARROW_KEY_MAP[k] !== undefined;
-            const handles =
-                isArrow ||
-                k === "Enter" ||
-                k === " " ||
-                k === "Escape" ||
-                k === "Backspace";
-            if (!handles) return;
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            if (k === "Escape") {
-                closeRef.current();
-                return;
-            }
-            if (e.repeat) return;
-            if (!armedRef.current) return;
-            if (pinBusyRef.current) return;
-            if (isArrow) {
-                if (pinDigitsRef.current.length >= 4) return;
-                const ch = ARROW_KEY_MAP[k];
-                setPinDigits((d) => {
-                    const next = d + ch;
-                    if (next.length === 4) {
-                        setTimeout(() => submitPINRef.current(next), 0);
-                    }
-                    return next;
-                });
-                return;
-            }
-            if (k === "Backspace") {
-                setPinDigits((d) => d.slice(0, -1));
-                return;
-            }
-            if (k === "Enter" || k === " ") {
-                submitPINRef.current(pinDigitsRef.current);
-                return;
-            }
-        };
-        window.addEventListener("keydown", onKey, { capture: true });
-        return () =>
-            window.removeEventListener("keydown", onKey, { capture: true });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    submitPINRef.current = (candidate: string) => void submitPIN(candidate);
     async function submitPIN(candidate: string) {
         if (candidate.length < 4) {
             setPinError("Enter the full 4-step pattern.");
@@ -463,28 +388,35 @@ export default function OverrideModal({
 
     if (stage.kind === "pin") {
         return (
-            <ModalShell title="Adult pattern">
-                <p className="muted">
-                    Press the 4-step arrow pattern for "{itemName}".
-                </p>
-                <div
-                    className={`override-pin-display ${pinFlashError ? "error-flash" : ""}`}
-                    role="status"
-                    aria-label="Pattern progress"
-                >
-                    {[0, 1, 2, 3].map((i) => (
-                        <span
-                            key={i}
-                            className={`override-pin-dot ${i < pinDigits.length ? "filled" : ""}`}
-                        />
-                    ))}
-                </div>
-                {pinError && <div className="error">{pinError}</div>}
-                <p className="muted override-pin-hint">
-                    Use the remote's arrow keys. We never show what you press.
-                    Press Back to close.
-                </p>
-            </ModalShell>
+            <PinStage
+                itemName={itemName}
+                pinDigits={pinDigits}
+                pinBusy={pinBusy}
+                pinError={pinError}
+                pinFlashError={pinFlashError}
+                onClose={() => closeRef.current()}
+                onAppendDigit={(ch) => {
+                    if (pinBusy) return;
+                    setPinDigits((d) => {
+                        if (d.length >= 4) return d;
+                        const next = d + ch;
+                        if (next.length === 4) {
+                            // Defer to next tick so the dot fills
+                            // before the request fires.
+                            setTimeout(() => void submitPIN(next), 0);
+                        }
+                        return next;
+                    });
+                }}
+                onBackspace={() => {
+                    if (pinBusy) return;
+                    setPinDigits((d) => d.slice(0, -1));
+                }}
+                onSubmit={() => {
+                    if (pinBusy) return;
+                    void submitPIN(pinDigits);
+                }}
+            />
         );
     }
 
@@ -2172,6 +2104,134 @@ function TagGrid({
                 );
             })}
         </div>
+    );
+}
+
+// ============================================================
+// PinStage
+// ============================================================
+
+// PinStage is the PIN-entry view, refactored onto KidModalShell so
+// the cross-cutting bits (portal, Escape -> close, repeat-Enter
+// swallow, armed/keyup gate, focus trap, useProgressiveBack) live
+// in the shared primitive. The PIN-specific keyboard math (arrows
+// -> ULDR digit chars, Backspace -> pop, Enter -> manual submit)
+// stays inline because it doesn't fit the useDpadCursor pattern.
+//
+// Visually identical to the previous ModalShell + adult styling -
+// we render the same .override-backdrop.kids-override-adult /
+// .override-modal class pair through the shell.
+
+type PinStageProps = {
+    itemName: string;
+    pinDigits: string;
+    pinBusy: boolean;
+    pinError: string | null;
+    pinFlashError: boolean;
+    onClose: () => void;
+    /** Called once per arrow press with "U" / "D" / "L" / "R". The
+     *  parent appends, then auto-submits when the 4th digit lands. */
+    onAppendDigit: (ch: "U" | "D" | "L" | "R") => void;
+    onBackspace: () => void;
+    onSubmit: () => void;
+};
+
+const PIN_ARROW_MAP: Record<string, "U" | "D" | "L" | "R"> = {
+    ArrowUp: "U",
+    ArrowDown: "D",
+    ArrowLeft: "L",
+    ArrowRight: "R",
+};
+
+function PinStage({
+    itemName,
+    pinDigits,
+    pinBusy,
+    pinError,
+    pinFlashError,
+    onClose,
+    onAppendDigit,
+    onBackspace,
+    onSubmit,
+}: PinStageProps) {
+    // Mirror callbacks via refs so the listener attaches once and
+    // reads latest values without re-binding.
+    const onAppendRef = useRef(onAppendDigit);
+    onAppendRef.current = onAppendDigit;
+    const onBackspaceRef = useRef(onBackspace);
+    onBackspaceRef.current = onBackspace;
+    const onSubmitRef = useRef(onSubmit);
+    onSubmitRef.current = onSubmit;
+
+    // Window capture-phase keydown for PIN-specific input.
+    // KidModalShell already swallowed Escape -> close, repeat-Enter,
+    // and pre-arm Enter. We pass closeOnBackspace=false on the shell
+    // so Backspace falls through here to delete a digit (matches
+    // the original desktop behavior; the TV remote routes hardware
+    // Back through useProgressiveBack independent of Backspace).
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            const k = e.key;
+            const arrow = PIN_ARROW_MAP[k];
+            if (arrow !== undefined) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                onAppendRef.current(arrow);
+                return;
+            }
+            if (k === "Backspace") {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                onBackspaceRef.current();
+                return;
+            }
+            if (k === "Enter" || k === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                onSubmitRef.current();
+                return;
+            }
+        };
+        window.addEventListener("keydown", onKey, { capture: true });
+        return () =>
+            window.removeEventListener("keydown", onKey, { capture: true });
+    }, []);
+
+    return (
+        <KidModalShell
+            onClose={onClose}
+            ariaLabel="Adult pattern"
+            backdropClassName="override-backdrop kids-override-adult"
+            cardClassName="override-modal"
+            variant="adult"
+            closeOnBackspace={false}
+        >
+            <h2>Adult pattern</h2>
+            <p className="muted">
+                Press the 4-step arrow pattern for "{itemName}".
+            </p>
+            <div
+                className={`override-pin-display ${pinFlashError ? "error-flash" : ""}`}
+                role="status"
+                aria-label="Pattern progress"
+            >
+                {[0, 1, 2, 3].map((i) => (
+                    <span
+                        key={i}
+                        className={`override-pin-dot ${i < pinDigits.length ? "filled" : ""}`}
+                    />
+                ))}
+            </div>
+            {pinError && <div className="error">{pinError}</div>}
+            <p className="muted override-pin-hint">
+                Use the remote's arrow keys. We never show what you press.
+                Press Back to close.
+            </p>
+            {pinBusy && <p className="muted">Checking…</p>}
+        </KidModalShell>
     );
 }
 
