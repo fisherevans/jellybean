@@ -504,10 +504,11 @@ func resolveRandomUnwatched(b *browseContext, row curation.LayoutRow, cfg map[st
 			return []ResolvedRow{newRow(row, "Discover Something New", "", nil)}, nil
 		}
 		// Filter to unplayed via Jellyfin (PlayCount=0). Fetch in
-		// chunks so we don't hit URL-length limits.
+		// chunks so we don't hit URL-length limits. Can't go through
+		// GetItemsByIDsBatched because we need the IsUnplayed filter.
 		unplayed := []string{}
-		for i := 0; i < len(visible); i += jellyfinIDBatchSize {
-			end := i + jellyfinIDBatchSize
+		for i := 0; i < len(visible); i += jellyfin.IDBatchSize {
+			end := i + jellyfin.IDBatchSize
 			if end > len(visible) {
 				end = len(visible)
 			}
@@ -556,35 +557,26 @@ func resolveWatchAgain(b *browseContext, row curation.LayoutRow, cfg map[string]
 	}
 	out := []scored{}
 	cutoff := time.Now().AddDate(0, 0, -dormantDays)
-	for i := 0; i < len(visible); i += jellyfinIDBatchSize {
-		end := i + jellyfinIDBatchSize
-		if end > len(visible) {
-			end = len(visible)
+	items, err := b.jelly.GetItemsByIDsBatched(b.ctx, visible, b.userTok)
+	if err != nil {
+		return nil, err
+	}
+	for _, it := range items {
+		if it.UserData == nil || it.UserData.PlayCount < 1 {
+			continue
 		}
-		batch := visible[i:end]
-		res, err := b.jelly.GetItemsAsUser(b.ctx, jellyfin.ItemsFilter{
-			IDs: batch,
-		}, b.userTok)
+		lp := it.UserData.LastPlayedDate
+		if lp == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, lp)
 		if err != nil {
-			return nil, err
+			continue
 		}
-		for _, it := range res.Items {
-			if it.UserData == nil || it.UserData.PlayCount < 1 {
-				continue
-			}
-			lp := it.UserData.LastPlayedDate
-			if lp == "" {
-				continue
-			}
-			t, err := time.Parse(time.RFC3339Nano, lp)
-			if err != nil {
-				continue
-			}
-			if t.After(cutoff) {
-				continue // played too recently
-			}
-			out = append(out, scored{id: it.ID, when: t})
+		if t.After(cutoff) {
+			continue // played too recently
 		}
+		out = append(out, scored{id: it.ID, when: t})
 	}
 	// Most-recently-watched-but-still-dormant first.
 	sort.Slice(out, func(i, j int) bool { return out[i].when.After(out[j].when) })
@@ -596,8 +588,6 @@ func resolveWatchAgain(b *browseContext, row curation.LayoutRow, cfg map[string]
 }
 
 // --- helpers ------------------------------------------------------------
-
-const jellyfinIDBatchSize = 100
 
 func newRow(row curation.LayoutRow, defaultTitle, subtitle string, ids []string) ResolvedRow {
 	title := row.Title

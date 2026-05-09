@@ -375,35 +375,14 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		// the kid's user token so each tile carries series-level
 		// poster + UserData (Jellyfin aggregates child progress to
 		// the series).
-		byID := make(map[string]jellyfin.Item, len(visibleIDs))
-		if len(visibleIDs) > 0 {
-			const batch = 100
-			for i := 0; i < len(visibleIDs); i += batch {
-				end := i + batch
-				if end > len(visibleIDs) {
-					end = len(visibleIDs)
-				}
-				resItems, err := s.jellyfin.GetItemsAsUser(
-					ctx,
-					jellyfin.ItemsFilter{IDs: visibleIDs[i:end]},
-					kc.JellyfinToken,
-				)
-				if err != nil {
-					s.logger.Error().Err(err).Msg("resume series fetch")
-					writeUpstreamError(w, err, "failed to load continue watching")
-					return
-				}
-				for _, it := range resItems.Items {
-					byID[it.ID] = it
-				}
-			}
+		items, err := s.jellyfin.GetItemsByIDsBatched(ctx, visibleIDs, kc.JellyfinToken)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("resume series fetch")
+			writeUpstreamError(w, err, "failed to load continue watching")
+			return
 		}
-		out := make([]browseItem, 0, len(visibleIDs))
-		for _, id := range visibleIDs {
-			it, ok := byID[id]
-			if !ok {
-				continue
-			}
+		out := make([]browseItem, 0, len(items))
+		for _, it := range items {
 			if _, allowed := allowedTypes[it.Type]; !allowed {
 				continue
 			}
@@ -462,8 +441,8 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 	// we re-sort after the merge because Jellyfin's order is only
 	// valid within a batch.
 	merged := make([]jellyfin.Item, 0, len(ids))
-	for i := 0; i < len(ids); i += jellyfinIDBatchSize {
-		end := i + jellyfinIDBatchSize
+	for i := 0; i < len(ids); i += jellyfin.IDBatchSize {
+		end := i + jellyfin.IDBatchSize
 		if end > len(ids) {
 			end = len(ids)
 		}

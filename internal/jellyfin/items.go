@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // GetItems lists items matching the filter. Service-account scoped (uses the
@@ -78,6 +80,83 @@ func (c *Client) getItemsWith(ctx context.Context, f ItemsFilter, userToken stri
 		return nil, fmt.Errorf("get items: %w", err)
 	}
 	return &out, nil
+}
+
+// IDBatchSize bounds how many ids we cram into a single /Items?Ids=
+// call. Jellyfin's URL-length tolerance is a few thousand bytes;
+// profiles with hundreds of visible items would otherwise blow past
+// 8KB and trip 414 URI Too Long. Exported so server-side callers that
+// need extra filter knobs (SortBy, SearchTerm, Filters) can chunk
+// using the same size as GetItemsByIDsBatched without re-declaring it.
+const IDBatchSize = 100
+
+// idBatchConcurrency caps fan-out inside GetItemsByIDsBatched. Each
+// chunk is one Jellyfin round trip; on the parent's Cloudflare tunnel
+// these are dominated by RTT, so running them in parallel is the
+// difference between a 500-item profile decorating in ~1 RTT vs ~5.
+// Capped at 4 because upstream Jellyfin will rate-limit aggressive
+// callers and the page-decorate use case never produces more than ~5
+// chunks anyway.
+const idBatchConcurrency = 4
+
+// GetItemsByIDsBatched fetches items for the supplied id list, chunking
+// internally so the /Items?Ids= query stays under Jellyfin's URL-length
+// limit. Chunks are fetched concurrently (capped at idBatchConcurrency)
+// because the original sequential implementation dominated wall-time on
+// big profiles - 3-4 sequential round trips over the Cloudflare tunnel.
+// Returns items in the order their ids appear in the input, silently
+// dropping any id Jellyfin doesn't return. Empty input is a no-op
+// (returns nil, nil) and never hits Jellyfin.
+//
+// The underlying call is GetItemsAsUser with an ItemsFilter that only
+// sets IDs. Callers that need extra filter knobs (SortBy, SearchTerm,
+// Filters, etc.) should still go through GetItemsAsUser directly. Field
+// selection is whatever getItemsWith's default is - identical to what
+// the previous hand-rolled batch loops were getting.
+func (c *Client) GetItemsByIDsBatched(ctx context.Context, ids []string, userToken string) ([]Item, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	// Slice the input into chunks first so each goroutine has a stable
+	// index to write back into.
+	var chunks [][]string
+	for i := 0; i < len(ids); i += IDBatchSize {
+		end := i + IDBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunks = append(chunks, ids[i:end])
+	}
+	results := make([][]Item, len(chunks))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(idBatchConcurrency)
+	for idx, chunk := range chunks {
+		idx, chunk := idx, chunk
+		g.Go(func() error {
+			res, err := c.GetItemsAsUser(gctx, ItemsFilter{IDs: chunk}, userToken)
+			if err != nil {
+				return err
+			}
+			results[idx] = res.Items
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	byID := make(map[string]Item, len(ids))
+	for _, batch := range results {
+		for _, it := range batch {
+			byID[it.ID] = it
+		}
+	}
+	out := make([]Item, 0, len(byID))
+	for _, id := range ids {
+		if it, ok := byID[id]; ok {
+			out = append(out, it)
+		}
+	}
+	return out, nil
 }
 
 // GetResumeItems returns items the user has started but not finished,
