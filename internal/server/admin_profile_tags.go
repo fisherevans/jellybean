@@ -1,12 +1,9 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-
-	"github.com/gorilla/mux"
 
 	"github.com/fisherevans/jellybean/internal/curation"
 )
@@ -26,14 +23,13 @@ type profileTagFilterResponse struct {
 // profile, enriched with the tag name so the UI doesn't need a
 // separate roundtrip per filter row.
 func (s *Server) handleAdminListProfileTagFilters(w http.ResponseWriter, r *http.Request) {
-	id, err := parseIDParam(mux.Vars(r)["id"])
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad profile id", http.StatusBadRequest)
 		return
 	}
 	if _, err := s.curation.GetProfile(r.Context(), id); err != nil {
-		if errors.Is(err, curation.ErrProfileNotFound) {
-			http.Error(w, "profile not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		s.logger.Error().Err(err).Msg("get profile")
@@ -96,22 +92,21 @@ type profileTagFilterEntry struct {
 // modes here (unknown tag id, bad mode) all fail before any writes
 // would happen because we validate up front.
 func (s *Server) handleAdminPutProfileTagFilters(w http.ResponseWriter, r *http.Request) {
-	id, err := parseIDParam(mux.Vars(r)["id"])
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad profile id", http.StatusBadRequest)
 		return
 	}
 	if _, err := s.curation.GetProfile(r.Context(), id); err != nil {
-		if errors.Is(err, curation.ErrProfileNotFound) {
-			http.Error(w, "profile not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		http.Error(w, "failed to load profile", http.StatusInternalServerError)
 		return
 	}
 
-	var req []profileTagFilterEntry
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[[]profileTagFilterEntry](r, 0)
+	if err != nil {
 		http.Error(w, "bad request: expected array of {tagId, mode}", http.StatusBadRequest)
 		return
 	}
@@ -184,12 +179,12 @@ func (s *Server) handleAdminPutProfileTagFilters(w http.ResponseWriter, r *http.
 
 // handleAdminDeleteProfileTagFilter clears a single (profile, tag) rule.
 func (s *Server) handleAdminDeleteProfileTagFilter(w http.ResponseWriter, r *http.Request) {
-	profileID, err := parseIDParam(mux.Vars(r)["id"])
+	profileID, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad profile id", http.StatusBadRequest)
 		return
 	}
-	tagID, err := parseIDParam(mux.Vars(r)["tagId"])
+	tagID, err := pathID(r, "tagId")
 	if err != nil {
 		http.Error(w, "bad tag id", http.StatusBadRequest)
 		return

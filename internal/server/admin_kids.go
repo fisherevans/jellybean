@@ -1,12 +1,7 @@
 package server
 
 import (
-	"encoding/json"
-	"errors"
 	"net/http"
-	"strconv"
-
-	"github.com/gorilla/mux"
 
 	"github.com/fisherevans/jellybean/internal/curation"
 )
@@ -55,8 +50,8 @@ type createKidRequest struct {
 // pivot: no password is collected here. The kid TV will authenticate
 // directly with Jellyfin via /api/kids/auth/login on first launch.
 func (s *Server) handleCreateKid(w http.ResponseWriter, r *http.Request) {
-	var req createKidRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[createKidRequest](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -70,13 +65,11 @@ func (s *Server) handleCreateKid(w http.ResponseWriter, r *http.Request) {
 		JellyfinUserID: req.JellyfinUserID,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, curation.ErrKidUserCollision):
-			http.Error(w, err.Error(), http.StatusConflict)
-		default:
-			s.logger.Error().Err(err).Msg("create kid")
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if writeDomainError(w, err) {
+			return
 		}
+		s.logger.Error().Err(err).Msg("create kid")
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	s.logger.Info().Int64("kid_id", kid.ID).Str("name", kid.Name).Msg("kid created")
@@ -86,43 +79,38 @@ func (s *Server) handleCreateKid(w http.ResponseWriter, r *http.Request) {
 // handleUpdateKid renames a kid and/or reassigns it to a different
 // profile. Body: {"name"?, "profileId"?}; at least one must be present.
 func (s *Server) handleUpdateKid(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	var req struct {
+	req, err := decodeJSON[struct {
 		Name      string `json:"name"`
 		ProfileID int64  `json:"profileId"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 	if err := s.curation.UpdateKid(r.Context(), id, req.Name, req.ProfileID); err != nil {
-		switch {
-		case errors.Is(err, curation.ErrKidNotFound):
-			http.Error(w, "kid not found", http.StatusNotFound)
-		case errors.Is(err, curation.ErrProfileNotFound):
-			http.Error(w, "profile not found", http.StatusBadRequest)
-		default:
-			s.logger.Error().Err(err).Int64("kid_id", id).Msg("update kid")
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if writeDomainError(w, err) {
+			return
 		}
+		s.logger.Error().Err(err).Int64("kid_id", id).Msg("update kid")
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleDeleteKid(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	if err := s.curation.DeleteKid(r.Context(), id); err != nil {
-		if errors.Is(err, curation.ErrKidNotFound) {
-			http.Error(w, "kid not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		s.logger.Error().Err(err).Int64("kid_id", id).Msg("delete kid")

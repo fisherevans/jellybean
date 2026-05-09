@@ -122,43 +122,42 @@ type CanPlayResult struct {
 // the migration defaults if no row exists yet (we don't auto-seed on
 // profile creation - admins enable it explicitly).
 func (s *Store) GetProfileTimeLimits(ctx context.Context, profileID int64) (*ProfileTimeLimits, error) {
-	row := s.db.QueryRowContext(ctx, `
+	defaults := &ProfileTimeLimits{
+		ProfileID:           profileID,
+		Enabled:             false,
+		DailyCapMinutes:     240,
+		RefillIntervalHours: 1,
+		DayStartHour:        2,
+	}
+	return loadOrDefault(ctx, s.db, `
 		SELECT profile_id, enabled, daily_cap_minutes, refill_interval_hours,
 		       day_start_hour, default_show_cap_minutes, default_movie_starts,
 		       updated_at
-		FROM profile_time_limits WHERE profile_id = ?`, profileID)
-	var (
-		out      ProfileTimeLimits
-		enabled  int
-		showCap  sql.NullInt64
-		movieCap sql.NullInt64
-		updated  int64
-	)
-	err := row.Scan(&out.ProfileID, &enabled, &out.DailyCapMinutes,
-		&out.RefillIntervalHours, &out.DayStartHour, &showCap, &movieCap, &updated)
-	if errors.Is(err, sql.ErrNoRows) {
-		return &ProfileTimeLimits{
-			ProfileID:           profileID,
-			Enabled:             false,
-			DailyCapMinutes:     240,
-			RefillIntervalHours: 1,
-			DayStartHour:        2,
-		}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	out.Enabled = enabled != 0
-	if showCap.Valid {
-		v := int(showCap.Int64)
-		out.DefaultShowCapMinutes = &v
-	}
-	if movieCap.Valid {
-		v := int(movieCap.Int64)
-		out.DefaultMovieStarts = &v
-	}
-	out.UpdatedAt = time.Unix(updated, 0).UTC()
-	return &out, nil
+		FROM profile_time_limits WHERE profile_id = ?`, profileID,
+		func(row *sql.Row) (*ProfileTimeLimits, error) {
+			var (
+				out      ProfileTimeLimits
+				enabled  int
+				showCap  sql.NullInt64
+				movieCap sql.NullInt64
+				updated  int64
+			)
+			if err := row.Scan(&out.ProfileID, &enabled, &out.DailyCapMinutes,
+				&out.RefillIntervalHours, &out.DayStartHour, &showCap, &movieCap, &updated); err != nil {
+				return nil, err
+			}
+			out.Enabled = enabled != 0
+			if showCap.Valid {
+				v := int(showCap.Int64)
+				out.DefaultShowCapMinutes = &v
+			}
+			if movieCap.Valid {
+				v := int(movieCap.Int64)
+				out.DefaultMovieStarts = &v
+			}
+			out.UpdatedAt = unixToTime(updated)
+			return &out, nil
+		}, defaults)
 }
 
 // UpsertProfileTimeLimits writes / updates the profile config. The
@@ -240,7 +239,7 @@ func (s *Store) ListContentOverrides(ctx context.Context, profileID int64) ([]Co
 			v := int(startsN.Int64)
 			o.OverrideStarts = &v
 		}
-		o.UpdatedAt = time.Unix(updated, 0).UTC()
+		o.UpdatedAt = unixToTime(updated)
 		out = append(out, o)
 	}
 	return out, rows.Err()
@@ -457,22 +456,20 @@ func (s *Store) activeGrants(ctx context.Context, kidID int64, now time.Time, da
 		if err := rows.Scan(&g.ID, &g.KidID, &grantedAt, &g.GrantedBy, &minutes, &expires, &g.Scope, &scopeID); err != nil {
 			return nil, err
 		}
-		g.GrantedAt = time.Unix(grantedAt, 0).UTC()
+		g.GrantedAt = unixToTime(grantedAt)
 		if minutes.Valid {
 			v := int(minutes.Int64)
 			g.MinutesGranted = &v
 		}
 		if expires.Valid {
-			t := time.Unix(expires.Int64, 0).UTC()
+			t := unixToTime(expires.Int64)
 			g.ExpiresAt = &t
 		} else {
 			// Implicit: until next day reset.
 			t := dayResetAt
 			g.ExpiresAt = &t
 		}
-		if scopeID.Valid {
-			g.ScopeID = scopeID.String
-		}
+		g.ScopeID = scanNullableString(scopeID)
 		// Filter expired.
 		if g.ExpiresAt != nil && now.After(*g.ExpiresAt) {
 			continue

@@ -9,8 +9,16 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowBendRightDown } from "@phosphor-icons/react";
 import {
+    bucketByAdded,
+    bucketByWatched,
+    ADDED_ORDER,
+    WATCHED_ORDER,
+    type AddedBucket,
+    type Item,
+    type WatchedBucket,
+} from "jellybean-shared";
+import {
     authHeaders,
-    clearSession,
     getSession,
     probeAdmin,
     withAuthRetry,
@@ -18,12 +26,14 @@ import {
     type Session,
 } from "./auth";
 import Tile from "./Tile";
+import { clear as clearLibraryCache } from "./libraryCache";
+import TileGrid, { type GridFocus, type GridSection } from "./TileGrid";
 import {
-    cacheKey as buildCacheKey,
-    get as cacheGet,
-    set as cacheSet,
-    clear as clearLibraryCache,
-} from "./libraryCache";
+    buildLibraryKey,
+    idbLibraryCache,
+    idbLibraryEtags,
+} from "./kidsCache";
+import { useKidsResource } from "./useKidsResource";
 import { useItemHiddenEvent } from "./itemHidden";
 import { useOnlineStatus } from "./onlineStatus";
 import AlphaPickerModal from "./AlphaPickerModal";
@@ -33,14 +43,7 @@ import { useKidsHome } from "./KidsHome";
 import { setHomeTab } from "./kidNav";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { useStackScroll } from "./useStackScroll";
-import {
-    bucketByAdded,
-    bucketByWatched,
-    ADDED_ORDER,
-    WATCHED_ORDER,
-    type AddedBucket,
-    type WatchedBucket,
-} from "./dateBuckets";
+import { useHomeTabFocus } from "./useHomeTabFocus";
 
 // Library is the kid's main browsing screen. Top-to-bottom:
 //
@@ -53,21 +56,17 @@ import {
 // and hides the A-Z jump - alpha quick-jump doesn't apply when
 // content isn't alphabetized.
 //
+// The sectioned grid + arrow nav inside it lives in <TileGrid>; this
+// page owns the controls row, the focus state machine, and the
+// load-more sentinel.
+//
 // Continue Watching lives only on Browse; Library is curation +
 // browse, not "what was I in the middle of."
 
-type LibraryItem = {
-    Id: string;
-    Name: string;
-    Type: string;
-    DateCreated?: string;
-    ImageTags?: { Primary?: string };
-    UserData?: {
-        PlaybackPositionTicks?: number;
-        PlayedPercentage?: number;
-        LastPlayedDate?: string;
-    };
-};
+type LibraryItem = Pick<
+    Item,
+    "Id" | "Name" | "Type" | "DateCreated" | "ImageTags" | "UserData"
+>;
 
 type LibraryResponse = {
     Items: LibraryItem[] | null;
@@ -125,14 +124,6 @@ function labelFor<T extends { id: string; label: string }>(
     return list.find((o) => o.id === id)?.label ?? "";
 }
 
-// Section identity: visible sections only, with a stable id so React
-// keys don't churn between sort changes.
-type Section = {
-    id: string;
-    title?: string;
-    items: LibraryItem[];
-};
-
 const ADDED_TITLES: Record<AddedBucket, string> = {
     today: "Added today",
     week: "Added this week",
@@ -151,7 +142,10 @@ const WATCHED_TITLES: Record<WatchedBucket, string> = {
     never: "Never watched",
 };
 
-function buildSections(items: LibraryItem[], sort: SortId): Section[] {
+function buildSections(
+    items: LibraryItem[],
+    sort: SortId,
+): GridSection<LibraryItem>[] {
     if (items.length === 0) return [];
     if (sort === "name") {
         return [{ id: "all", items }];
@@ -164,7 +158,7 @@ function buildSections(items: LibraryItem[], sort: SortId): Section[] {
         const buckets = bucketByAdded(adapted);
         return ADDED_ORDER.filter((b) => buckets[b].length > 0).map((b) => ({
             id: `added:${b}`,
-            title: ADDED_TITLES[b],
+            label: ADDED_TITLES[b],
             items: buckets[b].map((x) => x.it),
         }));
     }
@@ -177,7 +171,7 @@ function buildSections(items: LibraryItem[], sort: SortId): Section[] {
     const buckets = bucketByWatched(adapted);
     return WATCHED_ORDER.filter((b) => buckets[b].length > 0).map((b) => ({
         id: `watched:${b}`,
-        title: WATCHED_TITLES[b],
+        label: WATCHED_TITLES[b],
         items: buckets[b].map((x) => x.it),
     }));
 }
@@ -257,27 +251,26 @@ export default function Library() {
     const [alphaModalOpen, setAlphaModalOpen] = useState(false);
     const [hasMore, setHasMore] = useState(false);
     const [nextStart, setNextStart] = useState(0);
-    const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [refreshError, setRefreshError] = useState<string | null>(null);
-    const [cacheHit, setCacheHit] = useState(false);
-    useEffect(() => {
-        if (!loading) {
-            window.dispatchEvent(new Event("jellybean:ready"));
-        }
-    }, [loading]);
+    const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
     const [retryNonce, setRetryNonce] = useState(0);
     const online = useOnlineStatus();
 
-    const [focus, setFocus] = useState<Focus>({ kind: "search" });
-    const tileRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+    const chromeRefs = useRef<Record<string, HTMLButtonElement | null>>({});
     const homeCtx = useKidsHome();
-    const { tabFocused, setTabFocused } = homeCtx;
+    const { focus, setFocus, tabFocused, setTabFocused, handleBack } =
+        useHomeTabFocus<Focus>({
+            initialFocus: { kind: "search" },
+            getFirstContentSlot: () => ({ kind: "search" }),
+            scrollToTop: () => stack.setStackY(0, true),
+            tabNav: {
+                tabFocused: homeCtx.tabFocused,
+                setTabFocused: homeCtx.setTabFocused,
+            },
+        });
     const searchWrapRef = useRef<HTMLDivElement | null>(null);
     const searchInputRef = useRef<HTMLInputElement | null>(null);
     const sentinelRef = useRef<HTMLDivElement | null>(null);
-    const sectionGridRefs = useRef<(HTMLDivElement | null)[]>([]);
     const [override, setOverride] = useState<{
         itemId: string;
         itemName: string;
@@ -314,6 +307,11 @@ export default function Library() {
         wasOnline.current = online;
     }, [online]);
 
+    // buildURL is shared between the first-page hook and the
+    // load-more callback. The hook calls it with startIndex=0; load
+    // more with the running cursor. searchDebounced disables both
+    // the cache (server response varies per query) and the
+    // background refetch on cache hit (no cache to revalidate).
     const buildURL = useCallback(
         (startIndex: number) => {
             const url = new URL("/api/kids/library", window.location.origin);
@@ -334,139 +332,104 @@ export default function Library() {
         [filter, sort, adminProfileId, searchDebounced],
     );
 
-    const fetchPage = useCallback(
-        async (
-            startIndex: number,
-            ifNoneMatch?: string,
-        ): Promise<
-            | { status: "modified"; page: LibraryResponse; etag: string }
-            | { status: "not-modified"; etag: string }
-        > => {
-            const headers: Record<string, string> = { ...authHeaders() };
-            if (ifNoneMatch) headers["If-None-Match"] = ifNoneMatch;
-            const res = await withAuthRetry(() =>
-                fetch(buildURL(startIndex), {
-                    credentials: "same-origin",
-                    headers,
-                }),
-            );
-            const etag = res.headers.get("ETag") ?? "";
-            if (res.status === 304) {
-                return { status: "not-modified", etag };
-            }
-            if (!res.ok) {
-                if (res.status === 401) {
-                    const e = new Error("unauthorized");
-                    (e as Error & { code?: string }).code = "UNAUTHORIZED";
-                    throw e;
-                }
-                throw new Error(`${res.status}: ${await res.text()}`);
-            }
-            const page = (await res.json()) as LibraryResponse;
-            return { status: "modified", page, etag };
-        },
-        [buildURL],
-    );
-
     const useCache = !!session && !adminProfileId && !searchDebounced;
     const userId = session?.userId ?? "";
     const typeStr = filterToType(filter);
-    const allKey = useCache
-        ? buildCacheKey(userId, "all", typeStr, PAGE_SIZE, 0, "", sort)
-        : null;
+    const cacheKey = useCache
+        ? buildLibraryKey(userId, "all", typeStr, PAGE_SIZE, 0, "", sort)
+        : "";
 
+    const cache = useMemo(() => idbLibraryCache<LibraryResponse>(), []);
+    const etagBackend = useMemo(() => idbLibraryEtags(), []);
+    const firstPageURL = useMemo(() => {
+        if (admin === undefined) return null;
+        if (!session && !adminProfileId) return null;
+        return buildURL(0);
+    }, [admin, session, adminProfileId, buildURL]);
+
+    const {
+        data: firstPage,
+        error: hookError,
+        loading,
+        isStale: cacheHit,
+        refreshError: hookRefreshError,
+    } = useKidsResource<LibraryResponse>({
+        url: firstPageURL,
+        cache: useCache ? cache : undefined,
+        cacheKey: useCache ? cacheKey : undefined,
+        etag: useCache ? etagBackend : undefined,
+        // Refetch when filter/sort/search/retry change. cacheKey
+        // covers filter+sort+searchDebounced indirectly but isn't a
+        // dep on its own (it's "" when useCache is false).
+        deps: [firstPageURL, retryNonce],
+    });
+
+    // Drive the page-state from the hook's data. When the hook
+    // delivers a cache hit synchronously, this fires immediately
+    // and the kid sees tiles. When the network revalidation lands
+    // and is a 200 (modified), the hook re-fires with the fresh
+    // data and we re-derive. 304s don't refire data so we don't
+    // re-derive (correct - the cached values are still current).
+    useEffect(() => {
+        if (!firstPage) return;
+        setItems(firstPage.Items ?? []);
+        setHasMore(!!firstPage.HasMore);
+        setNextStart(firstPage.NextStartIndex ?? (firstPage.Items?.length ?? 0));
+        setLettersByName(firstPage.LettersByName ?? {});
+    }, [firstPage]);
+
+    // Reset paging state when the URL changes (filter/sort/search
+    // swap). Otherwise the IntersectionObserver-driven load-more
+    // would fire against the previous filter's nextStart.
+    useEffect(() => {
+        setNextStart(0);
+        setHasMore(false);
+        setLoadMoreError(null);
+    }, [firstPageURL]);
+
+    // Map the hook's refreshError to Library's banner text. The
+    // dedicated "unauthorized" sentinel surfaces a friendlier "Sign-in
+    // expired" rather than the literal status code.
+    const refreshError =
+        hookRefreshError === "unauthorized"
+            ? "Sign-in expired"
+            : hookRefreshError !== null
+              ? "Couldn't refresh"
+              : null;
+    const error = hookError;
+
+    useEffect(() => {
+        if (!loading) {
+            window.dispatchEvent(new Event("jellybean:ready"));
+        }
+    }, [loading]);
+
+    // Auth gate (mirrors Browse). Runs once admin probe completes.
     useEffect(() => {
         if (admin === undefined) return;
         if (!session && !adminProfileId) {
             nav("/login", { replace: true });
-            return;
         }
-        let cancelled = false;
-        setError(null);
-        setRefreshError(null);
-        setCacheHit(false);
-        setNextStart(0);
-        setHasMore(false);
-
-        const allK = allKey;
-        let allEtag: string | undefined;
-
-        const cacheReads = (async () => {
-            if (!allK) {
-                setLoading(true);
-                setItems([]);
-                return;
-            }
-            const allHit = await cacheGet(allK);
-            if (cancelled) return;
-            if (allHit) {
-                const cached = allHit.page as LibraryResponse;
-                setItems(cached.Items ?? []);
-                setHasMore(!!cached.HasMore);
-                setNextStart(
-                    cached.NextStartIndex ?? (cached.Items?.length ?? 0),
-                );
-                setLettersByName(cached.LettersByName ?? {});
-                allEtag = allHit.etag;
-                setLoading(false);
-                setCacheHit(true);
-            } else {
-                setItems([]);
-                setLoading(true);
-            }
-        })();
-
-        cacheReads
-            .then(() => fetchPage(0, allEtag))
-            .then((all) => {
-                if (cancelled) return;
-                if (all.status === "modified") {
-                    setItems(all.page.Items ?? []);
-                    setHasMore(!!all.page.HasMore);
-                    setNextStart(
-                        all.page.NextStartIndex ??
-                            (all.page.Items?.length ?? 0),
-                    );
-                    setLettersByName(all.page.LettersByName ?? {});
-                    if (allK && all.etag) {
-                        cacheSet(allK, all.page, all.etag).catch(() => {});
-                    }
-                }
-                setLoading(false);
-                setRefreshError(null);
-                setCacheHit(false);
-            })
-            .catch((err) => {
-                if (cancelled) return;
-                const isUnauthorized =
-                    err &&
-                    typeof err === "object" &&
-                    (err as { code?: string }).code === "UNAUTHORIZED";
-                const haveCache = allEtag !== undefined;
-                if (isUnauthorized && !haveCache) {
-                    clearSession();
-                    nav("/login", { replace: true });
-                    return;
-                }
-                if (haveCache) {
-                    setRefreshError(
-                        isUnauthorized
-                            ? "Sign-in expired"
-                            : "Couldn't refresh",
-                    );
-                } else {
-                    setError(String(err.message ?? err));
-                }
-                setLoading(false);
-            });
-        return () => {
-            cancelled = true;
-        };
-    }, [admin, session, adminProfileId, fetchPage, nav, allKey, retryNonce]);
+    }, [admin, session, adminProfileId, nav]);
 
     // Infinite scroll only applies when sort=name (recency sorts
     // return the entire visible set in one response, so there's no
-    // sentinel to observe).
+    // sentinel to observe). Load-more stays a manual fetch (no
+    // useKidsResource) - the hook is shaped for "page-level data
+    // that flips on URL change," not for appending to a list.
+    const loadMorePage = useCallback(async () => {
+        const url = buildURL(nextStart);
+        const res = await withAuthRetry(() =>
+            fetch(url, {
+                credentials: "same-origin",
+                headers: authHeaders(),
+            }),
+        );
+        if (!res.ok) {
+            throw new Error(`${res.status}: ${await res.text()}`);
+        }
+        return (await res.json()) as LibraryResponse;
+    }, [buildURL, nextStart]);
     useEffect(() => {
         if (sort !== "name") return;
         if (!sentinelRef.current || !hasMore || loadingMore || loading) return;
@@ -476,22 +439,22 @@ export default function Library() {
                 const visible = entries[0]?.isIntersecting ?? false;
                 if (!visible) return;
                 setLoadingMore(true);
-                fetchPage(nextStart)
-                    .then((res) => {
-                        if (res.status !== "modified") return;
-                        const page = res.page;
+                loadMorePage()
+                    .then((page) => {
                         setItems((cur) => [...cur, ...(page.Items ?? [])]);
                         setNextStart(page.NextStartIndex ?? nextStart);
                         setHasMore(!!page.HasMore);
                     })
-                    .catch((err) => setError(String(err.message ?? err)))
+                    .catch((err) =>
+                        setLoadMoreError(String(err.message ?? err)),
+                    )
                     .finally(() => setLoadingMore(false));
             },
             { rootMargin: "400px" },
         );
         obs.observe(el);
         return () => obs.disconnect();
-    }, [sort, hasMore, loadingMore, loading, nextStart, fetchPage]);
+    }, [sort, hasMore, loadingMore, loading, nextStart, loadMorePage]);
 
     // Parent hid an item from the modal: drop it from the in-memory
     // list and nuke the library cache so a remount refetches a clean
@@ -510,8 +473,8 @@ export default function Library() {
 
     // After a sort change, any "grid" focus that pointed into the
     // previous section layout may now point past the new sections /
-    // out of bounds. Clamp it so the focus DOM-management effect
-    // doesn't try to focus a missing ref. Controls focus is fine as-is.
+    // out of bounds. Clamp it so TileGrid doesn't try to focus a
+    // missing ref. Controls focus is fine as-is.
     useEffect(() => {
         if (focus.kind !== "grid") return;
         const sec = sections[focus.section];
@@ -556,38 +519,35 @@ export default function Library() {
         });
     }, [loading, totalItems, stack]);
 
-    const columns = useGridColumns(sectionGridRefs, sections);
+    // Bridge Library's Focus union to TileGrid's GridFocus shape.
+    // null means a chrome control or the tab nav is focused and
+    // TileGrid should idle.
+    const gridFocus: GridFocus | null =
+        focus.kind === "grid" && !tabFocused
+            ? { sectionIdx: focus.section, itemIdx: focus.item }
+            : null;
+    const onGridFocusChange = useCallback((g: GridFocus) => {
+        setFocus({ kind: "grid", section: g.sectionIdx, item: g.itemIdx });
+    }, []);
+    const onGridExitTop = useCallback(() => {
+        // Up off section 0 row 0 hands focus back to the controls row.
+        setFocus({ kind: "search" });
+    }, []);
 
-    // Focus DOM management.
+    // Focus DOM management for chrome focus. TileGrid handles the
+    // grid case (focus + scroll on cell change) on its own.
     useEffect(() => {
         if (tabFocused) return;
+        if (focus.kind === "grid") return;
         if (focus.kind === "search") {
             searchWrapRef.current?.focus({ preventScroll: true });
             stack.scrollToTop();
             return;
         }
-        if (
-            focus.kind === "alphaBtn" ||
-            focus.kind === "filter" ||
-            focus.kind === "sort"
-        ) {
-            const el = tileRefs.current[focusKey(focus)];
-            if (el) el.focus({ preventScroll: true });
-            stack.scrollToTop();
-            return;
-        }
-        // grid
-        const el = tileRefs.current[focusKey(focus)];
-        if (!el) return;
-        el.focus({ preventScroll: true });
-        const onFirstRow =
-            focus.section === 0 && focus.item < Math.max(1, columns);
-        if (onFirstRow) {
-            stack.scrollToTop();
-        } else {
-            stack.scrollToCenter(el);
-        }
-    }, [focus, columns, tabFocused, stack]);
+        const el = chromeRefs.current[focus.kind];
+        if (el) el.focus({ preventScroll: true });
+        stack.scrollToTop();
+    }, [focus, tabFocused, stack]);
 
     const wasTabFocused = useRef(true);
     useEffect(() => {
@@ -603,22 +563,17 @@ export default function Library() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    useEffect(() => {
-        if (!tabFocused) return;
-        stack.setStackY(0, true);
-        if (
-            document.activeElement instanceof HTMLElement &&
-            document.activeElement !== document.body
-        ) {
-            document.activeElement.blur();
-        }
-    }, [tabFocused, stack]);
+    // tabFocused → true scroll-to-top + blur lives in useHomeTabFocus.
 
+    // Page keydown for the controls row. TileGrid runs its own
+    // listener for grid arrow nav when grid focus is active; the two
+    // listeners coexist because they target disjoint focus regions.
     const lastMoveRef = useRef(0);
     const REPEAT_MIN_MS = 90;
     useEffect(() => {
         if (override || tabFocused) return;
         if (filterOpen || sortOpen || alphaModalOpen) return;
+        if (focus.kind === "grid") return; // TileGrid owns the keys here
         const handler = (e: KeyboardEvent) => {
             const k = e.key;
             if (
@@ -650,28 +605,16 @@ export default function Library() {
                 lastMoveRef.current = performance.now();
             }
             // Up off the controls row hands focus back to the tab nav.
-            if (
-                k === "ArrowUp" &&
-                (focus.kind === "search" ||
-                    focus.kind === "filter" ||
-                    focus.kind === "sort" ||
-                    focus.kind === "alphaBtn")
-            ) {
+            if (k === "ArrowUp") {
                 setTabFocused(true);
                 return;
             }
             setFocus((f) =>
-                moveFocus(f, k, {
-                    sections,
-                    columns,
-                    onActivate: () =>
-                        activate(f, {
-                            setFilterOpen,
-                            setSortOpen,
-                            setAlphaModalOpen,
-                            openSearch: () =>
-                                searchInputRef.current?.focus(),
-                        }),
+                moveControls(f, k, sections, {
+                    setFilterOpen,
+                    setSortOpen,
+                    setAlphaModalOpen,
+                    openSearch: () => searchInputRef.current?.focus(),
                 }),
             );
         };
@@ -680,7 +623,6 @@ export default function Library() {
     }, [
         focus,
         sections,
-        columns,
         override,
         tabFocused,
         setTabFocused,
@@ -739,30 +681,17 @@ export default function Library() {
                 setFocus({ kind: "alphaBtn" });
                 return true;
             }
-            if (!tabFocused) {
-                setTabFocused(true);
-                // Reset content focus to the page's first slot
-                // (search wrap) so the next Down lands on a fresh
-                // entry point - not on the previously-focused tile.
-                // wasTabFocused below already covers the
-                // false→true→false cycle, but resetting here makes
-                // the contract explicit (matches Browse) and avoids
-                // a one-render flash where focus DOM-management
-                // would re-focus the old tile and scrollWindowToCenter
-                // it before the wasTabFocused effect's setFocus
-                // commits. See web/kids/CLAUDE.md ("Back-then-Down
-                // focus contract").
-                setFocus({ kind: "search" });
-                return true;
-            }
-            return false;
+            // Hand off to useHomeTabFocus for the load-bearing reset
+            // (setTabFocused + setFocus(search) in a single render).
+            // See web/kids/CLAUDE.md ("Back-then-Down focus contract").
+            return handleBack();
         }, [
-            tabFocused,
-            setTabFocused,
             override,
             alphaModalOpen,
             filterOpen,
             sortOpen,
+            setFocus,
+            handleBack,
         ]),
     );
 
@@ -796,7 +725,7 @@ export default function Library() {
                 </div>
                 <button
                     type="button"
-                    ref={(el) => (tileRefs.current["filter"] = el)}
+                    ref={(el) => (chromeRefs.current["filter"] = el)}
                     className={`library-dropdown-btn ${
                         !tabFocused && focus.kind === "filter" ? "focused" : ""
                     }`}
@@ -811,7 +740,7 @@ export default function Library() {
                 </button>
                 <button
                     type="button"
-                    ref={(el) => (tileRefs.current["sort"] = el)}
+                    ref={(el) => (chromeRefs.current["sort"] = el)}
                     className={`library-dropdown-btn ${
                         !tabFocused && focus.kind === "sort" ? "focused" : ""
                     }`}
@@ -826,7 +755,7 @@ export default function Library() {
                 </button>
                 <button
                     type="button"
-                    ref={(el) => (tileRefs.current["alphaBtn"] = el)}
+                    ref={(el) => (chromeRefs.current["alphaBtn"] = el)}
                     className={`library-alpha-btn library-jump-btn ${
                         !tabFocused && focus.kind === "alphaBtn"
                             ? "focused"
@@ -845,7 +774,9 @@ export default function Library() {
                 </button>
             </div>
 
-            {error && <p className="error">{error}</p>}
+            {(error || loadMoreError) && (
+                <p className="error">{error ?? loadMoreError}</p>
+            )}
             {!online && cacheHit && (
                 <p className="kids-offline-pill" role="status">
                     Offline - showing cached library
@@ -864,68 +795,57 @@ export default function Library() {
                     Nothing here yet. Ask a parent to mark titles visible.
                 </p>
             ) : (
-                <>
-                    {sections.map((s, sIdx) => (
-                        <section
-                            key={s.id}
-                            className="kids-section"
-                            aria-label={s.title ?? "Library"}
-                        >
-                            {s.title && (
-                                <h2 className="kids-section-title">
-                                    {s.title}
-                                </h2>
+                <TileGrid<LibraryItem>
+                    items={items}
+                    sections={sections}
+                    focus={gridFocus}
+                    onFocusChange={onGridFocusChange}
+                    onExitTop={onGridExitTop}
+                    enabled={
+                        !override && !filterOpen && !sortOpen && !alphaModalOpen
+                    }
+                    scrollToTop={stack.scrollToTop}
+                    scrollToCenter={stack.scrollToCenter}
+                    footer={
+                        <>
+                            {sort === "name" && (
+                                <div ref={sentinelRef} className="sentinel" />
                             )}
-                            <div
-                                className="grid"
-                                ref={(el) =>
-                                    (sectionGridRefs.current[sIdx] = el)
-                                }
-                            >
-                                {s.items.map((it, i) => {
-                                    const key = `grid:${sIdx}:${i}`;
-                                    const isFoc =
-                                        focus.kind === "grid" &&
-                                        focus.section === sIdx &&
-                                        focus.item === i;
-                                    return (
-                                        <Tile
-                                            key={`${s.id}:${it.Id}`}
-                                            item={it}
-                                            size="library"
-                                            focused={!tabFocused && isFoc}
-                                            showProgress
-                                            onClick={() => {
-                                                setFocus({
-                                                    kind: "grid",
-                                                    section: sIdx,
-                                                    item: i,
-                                                });
-                                                navToWatch(it.Id);
-                                            }}
-                                            onFocus={() =>
-                                                setFocus({
-                                                    kind: "grid",
-                                                    section: sIdx,
-                                                    item: i,
-                                                })
-                                            }
-                                            refCallback={(el) =>
-                                                (tileRefs.current[key] = el)
-                                            }
-                                        />
-                                    );
-                                })}
-                            </div>
-                        </section>
-                    ))}
-                    {sort === "name" && (
-                        <div ref={sentinelRef} className="sentinel" />
+                            {loadingMore && (
+                                <p className="library-state">
+                                    Loading more...
+                                </p>
+                            )}
+                        </>
+                    }
+                    renderCell={(it, isFoc, refCallback, ctx) => (
+                        <Tile
+                            key={`${sections[ctx.sectionIdx].id}:${it.Id}`}
+                            item={it}
+                            size="library"
+                            focused={!tabFocused && isFoc}
+                            showProgress
+                            onClick={() => {
+                                setFocus({
+                                    kind: "grid",
+                                    section: ctx.sectionIdx,
+                                    item: ctx.itemIdx,
+                                });
+                                navToWatch(it.Id);
+                            }}
+                            onFocus={() =>
+                                setFocus({
+                                    kind: "grid",
+                                    section: ctx.sectionIdx,
+                                    item: ctx.itemIdx,
+                                })
+                            }
+                            refCallback={(el) =>
+                                refCallback(el as HTMLElement | null)
+                            }
+                        />
                     )}
-                    {loadingMore && (
-                        <p className="library-state">Loading more...</p>
-                    )}
-                </>
+                />
             )}
             </div>
             {override && (
@@ -987,7 +907,7 @@ export default function Library() {
                         title="Jump to"
                         options={sections.map((s) => ({
                             id: s.id,
-                            label: s.title ?? "All",
+                            label: s.label ?? "All",
                         }))}
                         currentId=""
                         onSelect={(id) => {
@@ -1029,24 +949,32 @@ function AdminPreviewBanner() {
     );
 }
 
-function focusKey(f: Focus): string {
-    if (f.kind === "grid") return `grid:${f.section}:${f.item}`;
-    return f.kind;
-}
-
-type MoveOpts = {
-    sections: Section[];
-    columns: number;
-    onActivate: () => void;
+type ActivateHandlers = {
+    setFilterOpen: (v: boolean) => void;
+    setSortOpen: (v: boolean) => void;
+    setAlphaModalOpen: (v: boolean) => void;
+    openSearch: () => void;
 };
 
-function moveFocus(f: Focus, key: string, opts: MoveOpts): Focus {
+// moveControls handles arrow nav within the controls row only. Down
+// from any control hands off to the first grid cell (TileGrid takes
+// over from there). Up off the row is handled by the page's keydown
+// listener separately.
+function moveControls(
+    f: Focus,
+    key: string,
+    sections: GridSection<LibraryItem>[],
+    h: ActivateHandlers,
+): Focus {
     if (key === "Enter" || key === " ") {
-        opts.onActivate();
+        if (f.kind === "filter") h.setFilterOpen(true);
+        else if (f.kind === "sort") h.setSortOpen(true);
+        else if (f.kind === "alphaBtn") h.setAlphaModalOpen(true);
+        else if (f.kind === "search") h.openSearch();
         return f;
     }
     const firstGrid: Focus | null =
-        opts.sections.length > 0 && opts.sections[0].items.length > 0
+        sections.length > 0 && sections[0].items.length > 0
             ? { kind: "grid", section: 0, item: 0 }
             : null;
     switch (f.kind) {
@@ -1069,176 +997,10 @@ function moveFocus(f: Focus, key: string, opts: MoveOpts): Focus {
             if (key === "ArrowLeft") return { kind: "sort" };
             if (key === "ArrowDown") return firstGrid ?? f;
             return f;
-        case "grid": {
-            return moveGrid(f, key, opts);
-        }
+        case "grid":
+            // grid arrows are owned by TileGrid; this case never
+            // fires in practice (the page-level handler skips when
+            // grid focus is active).
+            return f;
     }
-}
-
-function moveGrid(
-    f: { kind: "grid"; section: number; item: number },
-    key: string,
-    opts: MoveOpts,
-): Focus {
-    const cols = Math.max(1, opts.columns);
-    const sec = opts.sections[f.section];
-    if (!sec) return f;
-    const len = sec.items.length;
-    const i = f.item;
-    const col = i % cols;
-    const rowInSec = Math.floor(i / cols);
-    if (key === "ArrowLeft") {
-        if (col === 0) return f;
-        return { kind: "grid", section: f.section, item: i - 1 };
-    }
-    if (key === "ArrowRight") {
-        if (col + 1 >= cols || i + 1 >= len) return f;
-        return { kind: "grid", section: f.section, item: i + 1 };
-    }
-    if (key === "ArrowDown") {
-        // Within section: advance to next row even if it's a partial
-        // (last) row. Clamp the column to the last item that row has.
-        const nextRowStart = (rowInSec + 1) * cols;
-        if (nextRowStart < len) {
-            const nextRowItems = Math.min(cols, len - nextRowStart);
-            const target = Math.min(col, nextRowItems - 1);
-            return {
-                kind: "grid",
-                section: f.section,
-                item: nextRowStart + target,
-            };
-        }
-        // No next row in this section: hop to first row of next
-        // section, clamped to that row's width.
-        const nextSec = opts.sections[f.section + 1];
-        if (nextSec) {
-            const firstRowItems = Math.min(cols, nextSec.items.length);
-            const target = Math.min(col, firstRowItems - 1);
-            return {
-                kind: "grid",
-                section: f.section + 1,
-                item: Math.max(0, target),
-            };
-        }
-        // No further sections: stay (don't drift to a different col).
-        return f;
-    }
-    if (key === "ArrowUp") {
-        if (rowInSec > 0) {
-            const prevRowStart = (rowInSec - 1) * cols;
-            return {
-                kind: "grid",
-                section: f.section,
-                item: prevRowStart + col,
-            };
-        }
-        // First row of section: hop to last row of previous section,
-        // clamped to that row's width.
-        if (f.section > 0) {
-            const prev = opts.sections[f.section - 1];
-            const prevLen = prev.items.length;
-            const lastRowStart = Math.floor((prevLen - 1) / cols) * cols;
-            const lastRowItems = prevLen - lastRowStart;
-            const target = Math.min(col, lastRowItems - 1);
-            return {
-                kind: "grid",
-                section: f.section - 1,
-                item: lastRowStart + Math.max(0, target),
-            };
-        }
-        // First row of first section: hand off to controls row.
-        return { kind: "search" };
-    }
-    return f;
-}
-
-type ActivateHandlers = {
-    setFilterOpen: (v: boolean) => void;
-    setSortOpen: (v: boolean) => void;
-    setAlphaModalOpen: (v: boolean) => void;
-    openSearch: () => void;
-};
-
-function activate(f: Focus, h: ActivateHandlers) {
-    if (f.kind === "filter") {
-        h.setFilterOpen(true);
-        return;
-    }
-    if (f.kind === "sort") {
-        h.setSortOpen(true);
-        return;
-    }
-    if (f.kind === "alphaBtn") {
-        h.setAlphaModalOpen(true);
-        return;
-    }
-    if (f.kind === "search") {
-        h.openSearch();
-        return;
-    }
-    // grid Enter is owned by useLongPressEnter; not reached here.
-}
-
-// useGridColumns reports the grid track count (CSS columns) shared
-// across all section grids. All grids use the same `.grid` CSS
-// template so the count is identical between them.
-//
-// Reading `getComputedStyle(grid).gridTemplateColumns` is the
-// authoritative source: with `grid-template-columns: repeat(auto-fill,
-// minmax(170px, 1fr))`, the computed value resolves to a list of
-// real px tracks (e.g. "186.4px 186.4px ..."). Counting whitespace-
-// separated tokens gives the actual column count regardless of how
-// many items the first row has.
-//
-// The previous implementation counted children sharing offsetTop on
-// the first non-empty grid, which broke when sections like "Added
-// today" had only one item: that section's first row had 1 child, so
-// columns was reported as 1 and Down navigation collapsed to "next
-// item" instead of "next row".
-function useGridColumns(
-    refs: React.MutableRefObject<(HTMLDivElement | null)[]>,
-    sections: Section[],
-): number {
-    const [cols, setCols] = useState(4);
-    useEffect(() => {
-        const update = () => {
-            const grid = refs.current.find((g) => g && g.children.length > 0);
-            if (!grid) return;
-            const tpl = window
-                .getComputedStyle(grid)
-                .gridTemplateColumns.trim();
-            if (tpl && tpl !== "none") {
-                const tracks = tpl.split(/\s+/).filter(Boolean).length;
-                if (tracks > 0) {
-                    setCols(tracks);
-                    return;
-                }
-            }
-            // Fallback: count children sharing the first child's
-            // offsetTop on the LARGEST grid (most likely to have a
-            // full first row).
-            let best: HTMLDivElement | null = null;
-            let bestLen = 0;
-            for (const g of refs.current) {
-                if (g && g.children.length > bestLen) {
-                    best = g;
-                    bestLen = g.children.length;
-                }
-            }
-            if (!best) return;
-            const first = best.children[0] as HTMLElement;
-            const firstTop = first.offsetTop;
-            let count = 0;
-            for (let i = 0; i < best.children.length; i++) {
-                const c = best.children[i] as HTMLElement;
-                if (Math.abs(c.offsetTop - firstTop) > 1) break;
-                count++;
-            }
-            if (count > 0) setCols(count);
-        };
-        update();
-        window.addEventListener("resize", update);
-        return () => window.removeEventListener("resize", update);
-    }, [refs, sections]);
-    return cols;
 }

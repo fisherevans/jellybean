@@ -54,16 +54,7 @@ type kidsTagsResponse struct {
 //
 // GET /api/kids/tags
 func (s *Server) handleKidsListTags(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	profileID, msg := s.resolveKidsProfileID(r, kc)
-	if msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
-		return
-	}
+	kc, profileID := KidsContextFromRequest(r)
 	ctx := r.Context()
 
 	tags, err := s.curation.ListTags(ctx, curation.TagSortName)
@@ -129,23 +120,14 @@ func (s *Server) handleKidsListTags(w http.ResponseWriter, r *http.Request) {
 		for id := range idSet {
 			ids = append(ids, id)
 		}
-		const batch = 100
-		for i := 0; i < len(ids); i += batch {
-			end := i + batch
-			if end > len(ids) {
-				end = len(ids)
-			}
-			res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
-				IDs: ids[i:end],
-			}, kc.JellyfinToken)
-			if err != nil {
-				s.logger.Error().Err(err).Msg("kids tags item batch")
-				writeUpstreamError(w, err, "failed to load items")
-				return
-			}
-			for _, it := range res.Items {
-				itemsByID[it.ID] = it
-			}
+		items, err := s.jellyfin.GetItemsByIDsBatched(ctx, ids, kc.JellyfinToken)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("kids tags item batch")
+			writeUpstreamError(w, err, "failed to load items")
+			return
+		}
+		for _, it := range items {
+			itemsByID[it.ID] = it
 		}
 	}
 
@@ -229,16 +211,7 @@ type kidsTagDetailResponse struct {
 //
 // GET /api/kids/tags/{id}
 func (s *Server) handleKidsTagDetail(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	profileID, msg := s.resolveKidsProfileID(r, kc)
-	if msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
-		return
-	}
+	kc, profileID := KidsContextFromRequest(r)
 	tagID, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
 	if err != nil || tagID <= 0 {
 		http.Error(w, "bad tag id", http.StatusBadRequest)
@@ -277,23 +250,14 @@ func (s *Server) handleKidsTagDetail(w http.ResponseWriter, r *http.Request) {
 
 	itemsByID := map[string]jellyfin.Item{}
 	if len(visibleIDs) > 0 {
-		const batch = 100
-		for i := 0; i < len(visibleIDs); i += batch {
-			end := i + batch
-			if end > len(visibleIDs) {
-				end = len(visibleIDs)
-			}
-			res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
-				IDs: visibleIDs[i:end],
-			}, kc.JellyfinToken)
-			if err != nil {
-				s.logger.Error().Err(err).Msg("kids tag detail item batch")
-				writeUpstreamError(w, err, "failed to load items")
-				return
-			}
-			for _, it := range res.Items {
-				itemsByID[it.ID] = it
-			}
+		items, err := s.jellyfin.GetItemsByIDsBatched(ctx, visibleIDs, kc.JellyfinToken)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("kids tag detail item batch")
+			writeUpstreamError(w, err, "failed to load items")
+			return
+		}
+		for _, it := range items {
+			itemsByID[it.ID] = it
 		}
 	}
 

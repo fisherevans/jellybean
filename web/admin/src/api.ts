@@ -1,6 +1,13 @@
 // Thin client over Jellybean's HTTP API. The session cookie is set by the
 // server; we never touch it explicitly.
 
+import type {
+    BrowseResponse as SharedBrowseResponse,
+    BrowseRow as SharedBrowseRow,
+    QuickConnectPollResponse as SharedQCPollResponse,
+    QuickConnectStartResponse as SharedQCStartResponse,
+} from "jellybean-shared";
+
 export type User = {
     id: string;
     name: string;
@@ -101,7 +108,7 @@ export type Tag = {
     description?: string;
     sortOrder: number;
     // Optional Phosphor icon name from the curated allow-list (see
-    // tagIcons.ts in admin + kid). Empty string = no icon.
+    // jellybean-shared/tagIcons.ts). Empty string = no icon.
     icon?: string;
     itemCount?: number;
     createdAt?: number;
@@ -309,19 +316,17 @@ export type APIAccessLogEntry = {
     occurredAt: number;
 };
 
-// BrowseRow is what the admin preview / kid browse endpoint returns.
-export type BrowseRow = {
-    rowId: number;
+// BrowseRow / BrowseResponse is what the admin preview / kid browse
+// endpoint returns. The shared shape uses BrowseItem (a Pick of Item
+// without the admin-only Suggestion / Tags fields); admin overlays the
+// admin-flavored Item back on top via type intersection so the preview
+// modal can still surface State / Suggestion when present.
+export type BrowseRow = Omit<SharedBrowseRow, "type" | "items"> & {
     type: RowType;
-    title: string;
-    subtitle?: string;
     items: Item[];
 };
 
-export type BrowseResponse = {
-    layoutId: number;
-    layoutName: string;
-    profileId: number;
+export type BrowseResponse = Omit<SharedBrowseResponse, "rows"> & {
     rows: BrowseRow[];
 };
 
@@ -405,16 +410,8 @@ export function formatState(state: ItemState): string {
     return "Hidden";
 }
 
-export type QuickConnectStartResponse = {
-    id: string;
-    code: string;
-    expiresAt: string;
-};
-
-export type QuickConnectPollResponse = {
-    status: "pending" | "authorized" | "expired";
-    user?: User;
-};
+export type QuickConnectStartResponse = SharedQCStartResponse;
+export type QuickConnectPollResponse = SharedQCPollResponse<User>;
 
 export const api = {
     login: (username: string, password: string) =>

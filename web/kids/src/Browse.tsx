@@ -1,12 +1,14 @@
 import {
     useCallback,
     useEffect,
+    useMemo,
     useRef,
     useState,
     type ReactNode,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowUUpLeft, Plus } from "@phosphor-icons/react";
+import type { BrowseResponse, BrowseRow } from "jellybean-shared";
 import {
     authHeaders,
     clearSession,
@@ -14,13 +16,16 @@ import {
     withAuthRetry,
     type Session,
 } from "./auth";
-import { TAG_ICONS, isTagIconName } from "./tagIcons";
+import { TAG_ICONS, isTagIconName } from "jellybean-shared";
 import OverrideModal, { useLongPressEnter } from "./OverrideModal";
 import { useItemHiddenEvent } from "./itemHidden";
 import Tile from "./Tile";
 import { useBrowseRowAnimator } from "./useBrowseRowAnimator";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { useKidsHome } from "./KidsHome";
+import { useKidsResource } from "./useKidsResource";
+import { sessionCache } from "./kidsCache";
+import { useHomeTabFocus } from "./useHomeTabFocus";
 
 // Browse is the kid home (M8 #48). Renders a vertical stack of
 // horizontally-scrolling rows from /api/kids/browse. Each row's
@@ -30,40 +35,8 @@ import { useKidsHome } from "./KidsHome";
 // The Library tab still exists at /library; the tab pill at the
 // top of both pages toggles between them.
 
-type BrowseItem = {
-    Id: string;
-    Name: string;
-    Type: string;
-    ImageTags?: { Primary?: string };
-    UserData?: {
-        PlaybackPositionTicks?: number;
-        PlayedPercentage?: number;
-    };
-};
-
-type BrowseRow = {
-    rowId: number;
-    type: string;
-    title: string;
-    subtitle?: string;
-    // Optional Phosphor icon name set by the server. "Heart" for the
-    // favorites row; the tag's own icon for tag / tag_fanout rows
-    // when configured. Empty/missing = no icon.
-    icon?: string;
-    // True when more items are available beyond what was returned.
-    // Drives the terminal button: "Load more" (true) vs "Loop back
-    // to start" (false). Set by random_unwatched + recently_added;
-    // every other row type stays false.
-    hasMore?: boolean;
-    items: BrowseItem[];
-};
-
-type BrowseResponse = {
-    layoutId: number;
-    layoutName: string;
-    profileId: number;
-    rows: BrowseRow[];
-};
+// BrowseItem / BrowseRow / BrowseResponse: shared with admin's
+// layout-preview consumer + the server wire format.
 
 type Focus = { kind: "tile"; row: number; col: number };
 
@@ -84,58 +57,82 @@ const EXPECT_BACK_KEY = "jellybean.kids.browse.expectBack";
 // remounts Browse, which would otherwise fire a fresh /browse fetch
 // and show a 3-4s "Loading..." while the layout cache + Jellyfin
 // hits resolve. With sessionStorage primed, the initial render uses
-// the cached body and the user sees their previous state instantly;
-// the network fetch still runs in the background and replaces if
-// anything changed (stale-while-revalidate).
+// the cached body and the user sees their previous state instantly.
+// We intentionally skip the background revalidation here because the
+// browse layout includes random_unwatched / tag_fanout rows whose
+// order is server-side cached for ~60min, but the client cache and
+// server cache aren't perfectly in sync - a refetch can shuffle items
+// the kid was already looking at. The menu's "Refresh from server"
+// action clears the cache and reloads when fresh data is wanted.
 const CACHE_KEY_PREFIX = "jellybean.kids.browse.cache.";
 function browseCacheKey(profileId: string | null): string {
     return CACHE_KEY_PREFIX + (profileId ?? "kid");
 }
-function readBrowseCache(profileId: string | null): BrowseResponse | null {
-    try {
-        const raw = sessionStorage.getItem(browseCacheKey(profileId));
-        if (!raw) return null;
-        return JSON.parse(raw) as BrowseResponse;
-    } catch {
-        return null;
-    }
-}
-function writeBrowseCache(profileId: string | null, body: BrowseResponse) {
-    try {
-        sessionStorage.setItem(browseCacheKey(profileId), JSON.stringify(body));
-    } catch {
-        // Quota exceeded or storage disabled - ignore; the page still
-        // renders fine without the cache, just with the loading flash.
-    }
-}
 
-// findItemPosition returns the (row, col) of an item id in a browse
 export default function Browse() {
     const nav = useNavigate();
     const [searchParams] = useSearchParams();
     const [session] = useState<Session | null>(() => getSession());
     const adminProfileId = searchParams.get("profileId");
-    // Synchronously prime data + focus from sessionStorage so back-
-    // navigation lands instantly on the same tile the kid was on,
-    // without a loading flash or post-fetch focus animation.
-    const [data, setData] = useState<BrowseResponse | null>(() =>
-        readBrowseCache(adminProfileId),
+    const cacheKey = browseCacheKey(adminProfileId);
+    const browseURL = useMemo(() => {
+        if (!session && !adminProfileId) return null;
+        const url = new URL("/api/kids/browse", window.location.origin);
+        if (adminProfileId) url.searchParams.set("profileId", adminProfileId);
+        return url.toString();
+    }, [session, adminProfileId]);
+    const cache = useMemo(() => sessionCache<BrowseResponse>(), []);
+    const { data: fetchedData, error } = useKidsResource<BrowseResponse>({
+        url: browseURL,
+        cache,
+        cacheKey,
+        skipFetchWhenCacheHit: true,
+    });
+    // Local copy so item-hidden + load-more can splice rows without
+    // poking through the hook's state. Initial value mirrors the
+    // hook's first emission (cache hit lands synchronously via
+    // sessionStorage).
+    const [data, setData] = useState<BrowseResponse | null>(fetchedData);
+    useEffect(() => {
+        if (fetchedData) setData(fetchedData);
+    }, [fetchedData]);
+    const tileRefs = useRef<Record<string, HTMLElement | null>>({});
+    // Layout context: tab focus + menu opening live in KidsHome.
+    const homeCtx = useKidsHome();
+    // Per-row column memory (forward-declared so the back-handler in
+    // useHomeTabFocus's onTabReset can wipe it). Used by the D-pad
+    // arrow handler below to restore "the column the kid was on" when
+    // they arrow up/down between rows.
+    const lastTileRef = useRef<{ row: number; col: number }>({ row: 0, col: 0 });
+    const rowColMemoryRef = useRef<Map<number, number>>(new Map());
+    const prevFocusRowRef = useRef<number | null>(null);
+    // Forward-declared so getFirstContentSlot / scrollToTop can call
+    // setStackY before its definition further down. Wrapped in a ref
+    // so the hook closes over a stable identity.
+    const setStackYRef = useRef<(y: number, snap?: boolean) => void>(
+        () => undefined,
     );
-    const [error, setError] = useState<string | null>(null);
     // Default focus is (0, 0). The back-from-watch effect below
     // overrides this when EXPECT_BACK_KEY is set; otherwise the
     // kid arrives with focus on the tab nav (tabFocused=true),
     // and pressing Down lands them on row 0 col 0 - a clean
     // entry point regardless of where they last played.
-    const [focus, setFocus] = useState<Focus>({
-        kind: "tile",
-        row: 0,
-        col: 0,
-    });
-    const tileRefs = useRef<Record<string, HTMLElement | null>>({});
-    // Layout context: tab focus + menu opening live in KidsHome.
-    const homeCtx = useKidsHome();
-    const { tabFocused, setTabFocused } = homeCtx;
+    const { focus, setFocus, tabFocused, setTabFocused, handleBack } = useHomeTabFocus<Focus>(
+        {
+            initialFocus: { kind: "tile", row: 0, col: 0 },
+            getFirstContentSlot: () => ({ kind: "tile", row: 0, col: 0 }),
+            onTabReset: () => {
+                // Wipe per-page column memory + the last-tile pointer
+                // so the next Down → tile snaps the stack to the top
+                // without animating from the previous row's position.
+                rowColMemoryRef.current.clear();
+                prevFocusRowRef.current = null;
+                lastTileRef.current = { row: 0, col: 0 };
+            },
+            scrollToTop: () => setStackYRef.current(0, true),
+            tabNav: { tabFocused: homeCtx.tabFocused, setTabFocused: homeCtx.setTabFocused },
+        },
+    );
     // Vertical scroll for Browse is implemented as a transform on
     // .browse-stack rather than a real window scroll. window.scrollTo
     // on this WebView triggered a multi-second freeze per write;
@@ -187,7 +184,7 @@ export default function Browse() {
                     items: row.items.filter((it) => it.Id !== hiddenId),
                 })),
             };
-            writeBrowseCache(adminProfileId, next);
+            cache.write(cacheKey, next);
             return next;
         });
     });
@@ -276,68 +273,6 @@ export default function Browse() {
         return () => clearInterval(id);
     }, [data]);
 
-
-    // Fetch on mount. Gated on having either a kid session or an
-    // admin ?profileId - the auth gate above redirects to /login in
-    // either-missing case, but without this guard we'd briefly
-    // surface the server's 400 ("profileId query param required").
-    const refresh = useCallback(async () => {
-        if (!session && !adminProfileId) return;
-        try {
-            const url = new URL(
-                "/api/kids/browse",
-                window.location.origin,
-            );
-            // Always include adminProfileId when present, regardless
-            // of whether localStorage has a kid session. The server
-            // gives admin cookie auth priority over the bearer token
-            // (resolveKidsAuth), so a stale kid session doesn't help
-            // the admin preview path - it needs the profileId in the
-            // query string to know which profile to load.
-            if (adminProfileId) {
-                url.searchParams.set("profileId", adminProfileId);
-            }
-            // withAuthRetry: a single 401 retries once after 800ms
-            // before we give up + bounce to /login. Hides transient
-            // Jellyfin restarts; real revocation still 401s on retry.
-            const res = await withAuthRetry(() =>
-                fetch(url.toString(), {
-                    credentials: "same-origin",
-                    headers: authHeaders(),
-                }),
-            );
-            if (!res.ok) {
-                if (res.status === 401) {
-                    // Stale bearer token. Wipe local session and bounce
-                    // to login - the only sane recovery.
-                    clearSession();
-                    nav("/login", { replace: true });
-                    return;
-                }
-                throw new Error(`${res.status}: ${await res.text()}`);
-            }
-            const body: BrowseResponse = await res.json();
-            setData(body);
-            writeBrowseCache(adminProfileId, body);
-            setError(null);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "load failed");
-        }
-    }, [session, adminProfileId]);
-
-    useEffect(() => {
-        // Skip refetch when we already have data (from
-        // sessionStorage cache). The browse layout includes
-        // random_unwatched / tag_fanout rows whose order is
-        // server-side-cached for ~60min, but the client cache
-        // and server cache aren't perfectly in sync - a refetch
-        // can shuffle items the kid was already looking at.
-        // Render from cache and don't refetch on remount; the
-        // menu's "Refresh from server" action clears the cache
-        // and reloads when fresh data is actually wanted.
-        if (data) return;
-        void refresh();
-    }, [refresh, data]);
 
     // Tell main.tsx's splash gate we've got real content rendered.
     // Fires once when data first arrives (cache-primed or fresh
@@ -520,60 +455,20 @@ export default function Browse() {
 
     // Progressive Back: anywhere on the page collapses focus up to
     // the Browse pill in the top nav. From there, a second Back
-    // falls through to the WebView and exits the kid app.
-    // Stable ref to setStackY so the tabFocused effect below can
-    // call it without becoming stale across renders. setStackY
-    // closes over refs that mutate, so an old reference still
-    // works correctly.
-    const setStackYRef = useRef(setStackY);
-    setStackYRef.current = setStackY;
+    // falls through to the WebView and exits the kid app. The hook
+    // owns the load-bearing reset (setTabFocused + setFocus +
+    // memory wipe in a single render) and the tabFocused→true
+    // scroll-to-top + blur effect. See web/kids/CLAUDE.md
+    // ("Back-then-Down focus contract") for the contract.
     useProgressiveBack(
         useCallback(() => {
             if (override) {
                 setOverride(null);
                 return true;
             }
-            if (!tabFocused) {
-                setTabFocused(true);
-                // Back resets the page to a "fresh" state: focus
-                // collapses to (row 0, col 0), the per-row column
-                // memory is wiped, and prevFocusRowRef is forgotten
-                // so the next Down→tile snaps the stack to the top
-                // without animating from the previous row's
-                // position. Without this, pressing Down after Back
-                // restored the kid to whatever tile they were on,
-                // which contradicted the contract that Back means
-                // "I'm done with this content area, take me to the
-                // top of the page." See web/kids/CLAUDE.md
-                // ("Back-then-Down focus contract") for the rule.
-                setFocus({ kind: "tile", row: 0, col: 0 });
-                rowColMemoryRef.current.clear();
-                prevFocusRowRef.current = null;
-                lastTileRef.current = { row: 0, col: 0 };
-                return true;
-            }
-            return false;
-        }, [tabFocused, setTabFocused, override]),
+            return handleBack();
+        }, [override, handleBack]),
     );
-    // Whenever tab focus engages (back press, mount, layout
-    // re-route), scroll the stack back to the top and blur any
-    // lingering DOM focus on a tile so its :focus state clears.
-    // Without this, after Back the kid sees the tab pill marked
-    // selected (Right/Left navigates) but the previously-focused
-    // tile keeps its visual highlight, and the page stays at the
-    // scrolled position. Snap (no animation) on Back so the kid
-    // doesn't see the stack glide back when they explicitly
-    // requested an exit.
-    useEffect(() => {
-        if (!tabFocused) return;
-        setStackYRef.current(0, true);
-        if (
-            document.activeElement instanceof HTMLElement &&
-            document.activeElement !== document.body
-        ) {
-            document.activeElement.blur();
-        }
-    }, [tabFocused]);
 
     // D-pad / keyboard model (kept intentionally simple for v1):
     //   - tile + ArrowRight/Left: move within row
@@ -587,12 +482,10 @@ export default function Browse() {
     // even when DOM focus is on body - this happens during route
     // transitions and on cheap WebView builds where imperative
     // .focus() doesn't always take effect on the first try.
-    const lastTileRef = useRef<{ row: number; col: number }>({ row: 0, col: 0 });
-    // Per-row column memory: when the kid arrows down/up between
-    // rows, restore the column they were last on for the destination
-    // row instead of resetting to 0. So row 1 col 3 -> down to row 2
-    // -> right to row 2 col 5 -> up returns to row 1 col 3.
-    const rowColMemoryRef = useRef<Map<number, number>>(new Map());
+    //
+    // (lastTileRef, rowColMemoryRef, and prevFocusRowRef are
+    // declared above next to the useHomeTabFocus call so the hook's
+    // onTabReset can wipe them.)
     // Throttle for held-down arrow repeats. Manual taps go through
     // immediately; OS-synthesized e.repeat events get rate-limited so
     // the renderer + row animator have time to catch each step. At
@@ -835,6 +728,10 @@ export default function Browse() {
         };
         stackRafRef.current = requestAnimationFrame(step);
     }
+    // Mirror setStackY into the ref the useHomeTabFocus hook closes
+    // over. Called on every render; setStackY itself reads refs that
+    // are mutated in place, so an old reference still works correctly.
+    setStackYRef.current = setStackY;
     // Cancel the loop on unmount so we don't leak rAF callbacks.
     useEffect(() => {
         return () => {
@@ -845,7 +742,6 @@ export default function Browse() {
         };
     }, []);
     const didInitialFocusScroll = useRef(false);
-    const prevFocusRowRef = useRef<number | null>(null);
     useEffect(() => {
         if (tabFocused) return;
         const el = tileRefs.current[`${focus.row}:${focus.col}`];

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, HttpError, type Tag } from "./api";
 import IconPicker from "./IconPicker";
-import { isTagIconName, type TagIconName } from "./tagIcons";
+import { isTagIconName, type TagIconName } from "jellybean-shared";
 
 type Props = {
     mode: "create" | "edit";

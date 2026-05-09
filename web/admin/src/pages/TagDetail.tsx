@@ -4,7 +4,7 @@ import { api, HttpError, type Item, type Tag } from "../api";
 import { useActiveProfile } from "../activeProfile";
 import Spinner from "../Spinner";
 import TagModal from "../TagModal";
-import { TAG_ICONS, isTagIconName } from "../tagIcons";
+import { TAG_ICONS, isTagIconName } from "jellybean-shared";
 
 // Tag detail page. Layout top-to-bottom:
 //   1. Back link (anchored above the summary).

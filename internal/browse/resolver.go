@@ -1,4 +1,19 @@
-package server
+// Package browse holds the kid-side browse-row resolver. It walks a
+// layout's rows (continue_watching, favorites, tag, tag_fanout,
+// recently_added, random_unwatched, watch_again) plus a profile + an
+// optional kid id and returns a list of ResolvedRow entries the kid
+// client renders. The resolver is pure data manipulation; HTTP wiring
+// + Jellyfin item-body decoration live in internal/server/kids_browse.go.
+//
+// Each row resolves to an ordered list of jellyfin item ids. The
+// caller fetches every id from Jellyfin in one batch and decorates the
+// rows with full item bodies. This keeps the resolver pure-data + cheap
+// to test, and avoids per-row Jellyfin round trips.
+//
+// Cache: random_unwatched + tag_fanout (when randomized) memoize their
+// orderings in layout_row_cache so refreshes inside a 60-min window
+// stay stable.
+package browse
 
 import (
 	"context"
@@ -13,20 +28,34 @@ import (
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
-// Browse resolver (M8 #47). Walks a layout's rows + a profile + an
-// optional kid id and returns a list of resolved rows ready for the
-// kid client to render.
+// Context carries the long-lived dependencies the resolver needs.
+// Callers construct one per Server (or per request - it's cheap) and
+// pass it to Resolve. Per-call inputs (profile, layout, ids) come
+// through Resolve's arguments instead so a single Context can serve
+// many calls.
 //
-// Each row resolves to an ordered list of jellyfin item ids. The
-// caller then fetches every id from Jellyfin in one batch and
-// decorates the rows with full item bodies. This keeps the resolver
-// pure-data + cheap to test, and avoids per-row Jellyfin round trips.
-//
-// Cache: random_unwatched + tag_fanout (when randomized) memoize their
-// orderings in layout_row_cache so refreshes inside a 60-min window
-// stay stable.
+// Warn is an optional structured-log hook the HTTP layer can populate
+// to surface non-fatal warnings (unknown row type, per-row resolve
+// errors). The resolver still continues past these errors; Warn is
+// purely informational. Nil = silent. Keys/values follow zerolog's
+// chained-call shape but flattened to a slice so this package stays
+// dependency-free.
+type Context struct {
+	Store *curation.Store
+	Jelly *jellyfin.Client
+	Warn  func(msg string, kv ...any)
+}
 
-// ResolvedRow is the resolver's output. Items is the ordered list of
+// warn invokes c.Warn when set, no-op otherwise. kv is alternating
+// key/value pairs the caller flattens however it wants (zerolog,
+// slog, fmt.Sprintf - the resolver doesn't care).
+func (c *Context) warn(msg string, kv ...any) {
+	if c.Warn != nil {
+		c.Warn(msg, kv...)
+	}
+}
+
+// ResolvedRow is the resolver's output. ItemIDs is the ordered list of
 // item ids; the caller swaps to full Item bodies. SubTitle is set on
 // fanned-out rows (e.g. tag_fanout produces one ResolvedRow per tag,
 // each with the tag's name as SubTitle so the UI can label them).
@@ -54,33 +83,33 @@ type ResolvedRow struct {
 	// "recently_added" (Item.DateCreated desc). Empty string =
 	// no post-fetch sort.
 	SortMode string
-	// MaxItems is the post-fetch cap applied AFTER applyPostFetchSort
-	// has run. The resolver overfetches when SortMode needs full Item
-	// bodies to make a correct cap decision (e.g. "name" needs Names
-	// to pick the alphabetically-first N; "recently_added" needs
-	// DateCreated to pick the most-recent N). 0 = no post-fetch cap;
-	// use ItemIDs as-is.
+	// MaxItems is the post-fetch cap applied AFTER the post-fetch
+	// sort has run. The resolver overfetches when SortMode needs
+	// full Item bodies to make a correct cap decision (e.g. "name"
+	// needs Names to pick the alphabetically-first N; "recently_added"
+	// needs DateCreated to pick the most-recent N). 0 = no post-fetch
+	// cap; use ItemIDs as-is.
 	MaxItems int
 	ItemIDs  []string
 }
 
-// browseContext bundles everything the resolver functions need.
-// Avoids passing ten parameters down each helper.
-type browseContext struct {
-	store    *curation.Store
-	jelly    *jellyfin.Client
-	ctx      context.Context
-	profile  curation.Profile
-	layout   curation.Layout
-	kidID    int64           // 0 when there's no kid (admin preview)
-	userID   string          // jellyfin user id; empty in admin preview
-	userTok  string          // jellyfin user token; empty in admin preview
-	visible  map[string]bool // memoized EffectiveItemVisibility for items we've seen
+// resolveCtx bundles per-call state for the per-row helpers. Avoids
+// passing ten parameters down each helper.
+type resolveCtx struct {
+	store   *curation.Store
+	jelly   *jellyfin.Client
+	ctx     context.Context
+	profile curation.Profile
+	layout  curation.Layout
+	kidID   int64           // 0 when there's no kid (admin preview)
+	userID  string          // jellyfin user id; empty in admin preview
+	userTok string          // jellyfin user token; empty in admin preview
+	visible map[string]bool // memoized EffectiveItemVisibility for items we've seen
 }
 
 // rowResolver is the per-row-type implementation. Returns the
 // ordered list of jellyfin item ids capped to maxItems.
-type rowResolver func(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error)
+type rowResolver func(b *resolveCtx, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error)
 
 const (
 	defaultMaxItems = 20
@@ -88,21 +117,21 @@ const (
 	cacheTTL        = 60 * time.Minute
 )
 
-// resolveLayout walks the layout rows in order, returning the
-// flattened ResolvedRow list (a single tag_fanout row produces N
-// resolved rows). Empty rows are filtered out by the caller after
-// item-body decoration so we don't have to re-decide here whether
-// the row is "really empty."
-func (s *Server) resolveLayout(
+// Resolve walks the layout rows in order, returning the flattened
+// ResolvedRow list (a single tag_fanout row produces N resolved rows).
+// Empty rows are filtered out by the caller after item-body decoration
+// so we don't have to re-decide here whether the row is "really empty."
+func Resolve(
 	ctx context.Context,
+	c *Context,
 	profile *curation.Profile,
 	layout *curation.LayoutWithRows,
 	kidID int64,
 	userID, userTok string,
 ) ([]ResolvedRow, error) {
-	bc := &browseContext{
-		store:   s.curation,
-		jelly:   s.jellyfin,
+	bc := &resolveCtx{
+		store:   c.Store,
+		jelly:   c.Jelly,
 		ctx:     ctx,
 		profile: *profile,
 		layout:  layout.Layout,
@@ -111,7 +140,73 @@ func (s *Server) resolveLayout(
 		userTok: userTok,
 		visible: map[string]bool{},
 	}
-	resolvers := map[curation.RowType]rowResolver{
+	resolvers := allResolvers()
+	out := []ResolvedRow{}
+	for _, row := range layout.Rows {
+		fn, ok := resolvers[row.Type]
+		if !ok {
+			c.warn("unknown row type, skipping", "type", string(row.Type))
+			continue
+		}
+		cfg, _ := decodeRowConfig(row.ConfigJSON)
+		resolved, err := fn(bc, row, cfg)
+		if err != nil {
+			c.warn("resolve row", "err", err, "row_type", string(row.Type), "row_id", row.ID)
+			continue
+		}
+		out = append(out, resolved...)
+	}
+	return out, nil
+}
+
+// ResolveRow runs a single row's resolver at the supplied limit. Backs
+// the kid client's "Load more" path (one row id, larger max_items).
+// Returns the resolver's natural output (1 row for most types; up to
+// N rows for tag_fanout - the caller picks rows[0] when load-more is
+// pinned to a single rowId).
+func ResolveRow(
+	ctx context.Context,
+	c *Context,
+	profile *curation.Profile,
+	layout *curation.LayoutWithRows,
+	row curation.LayoutRow,
+	limit int,
+	kidID int64,
+	userID, userTok string,
+) ([]ResolvedRow, error) {
+	bc := &resolveCtx{
+		store:   c.Store,
+		jelly:   c.Jelly,
+		ctx:     ctx,
+		profile: *profile,
+		layout:  layout.Layout,
+		kidID:   kidID,
+		userID:  userID,
+		userTok: userTok,
+		visible: map[string]bool{},
+	}
+	resolvers := allResolvers()
+	fn, ok := resolvers[row.Type]
+	if !ok {
+		return nil, fmt.Errorf("row type not supported: %s", row.Type)
+	}
+	cfg, _ := decodeRowConfig(row.ConfigJSON)
+	if limit > 0 {
+		cfg["max_items"] = limit
+	}
+	return fn(bc, row, cfg)
+}
+
+// IsSupportedRowType reports whether the resolver knows how to handle
+// the given row type. The HTTP layer uses this to short-circuit a 400
+// response on a bogus row type before doing any work.
+func IsSupportedRowType(t curation.RowType) bool {
+	_, ok := allResolvers()[t]
+	return ok
+}
+
+func allResolvers() map[curation.RowType]rowResolver {
+	return map[curation.RowType]rowResolver{
 		curation.RowContinueWatching: resolveContinueWatching,
 		curation.RowFavorites:        resolveFavorites,
 		curation.RowTag:              resolveSingleTag,
@@ -120,22 +215,6 @@ func (s *Server) resolveLayout(
 		curation.RowRandomUnwatched:  resolveRandomUnwatched,
 		curation.RowWatchAgain:       resolveWatchAgain,
 	}
-	out := []ResolvedRow{}
-	for _, row := range layout.Rows {
-		fn, ok := resolvers[row.Type]
-		if !ok {
-			s.logger.Warn().Str("type", string(row.Type)).Msg("unknown row type, skipping")
-			continue
-		}
-		cfg, _ := decodeRowConfig(row.ConfigJSON)
-		resolved, err := fn(bc, row, cfg)
-		if err != nil {
-			s.logger.Warn().Err(err).Str("row_type", string(row.Type)).Int64("row_id", row.ID).Msg("resolve row")
-			continue
-		}
-		out = append(out, resolved...)
-	}
-	return out, nil
 }
 
 // decodeRowConfig parses ConfigJSON into a map for resolver inspection.
@@ -228,7 +307,7 @@ func readIntSliceConfig(cfg map[string]any, key string) []int64 {
 // and returns only those with state=visible. Memoizes per-context so
 // multiple rows in the same browse response don't re-query the same
 // items.
-func (b *browseContext) filterVisible(itemIDs []string) ([]string, error) {
+func (b *resolveCtx) filterVisible(itemIDs []string) ([]string, error) {
 	if len(itemIDs) == 0 {
 		return itemIDs, nil
 	}
@@ -258,7 +337,7 @@ func (b *browseContext) filterVisible(itemIDs []string) ([]string, error) {
 
 // --- per-type resolvers -------------------------------------------------
 
-func resolveContinueWatching(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
+func resolveContinueWatching(b *resolveCtx, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
 	max := readMaxItems(cfg)
 	if b.userID == "" || b.userTok == "" {
 		return []ResolvedRow{newRow(row, "Continue Watching", "", nil)}, nil
@@ -276,7 +355,7 @@ func resolveContinueWatching(b *browseContext, row curation.LayoutRow, cfg map[s
 	// when the kid bounced between episodes;
 	// (c) clicking a tile lands on /watch/{seriesId} where the
 	// accordion auto-selects the in-progress episode.
-	ids := resumeIDsForCuration(res.Items)
+	ids := ResumeIDsForCuration(res.Items)
 	visible, err := b.filterVisible(ids)
 	if err != nil {
 		return nil, err
@@ -284,18 +363,21 @@ func resolveContinueWatching(b *browseContext, row curation.LayoutRow, cfg map[s
 	return []ResolvedRow{newRow(row, "Continue Watching", "", capItems(visible, max))}, nil
 }
 
-// resumeIDsForCuration normalizes a Jellyfin Resume response into the
+// ResumeIDsForCuration normalizes a Jellyfin Resume response into the
 // list of curation-addressable item ids: Episode ids get rewritten to
 // their parent Series id; non-episode items pass through. Order is
 // preserved (Jellyfin returns most-recent-activity-first), and
 // duplicates collapsed so a kid juggling four episodes of one show
 // gets one series tile, not four.
 //
+// Exported because the kid library handler runs the same Episode->Series
+// rewrite on its own resume fetch (separate from the browse pipeline).
+//
 // Edge case: if an Episode lacks SeriesID (Jellyfin should always
 // populate it but we don't trust the network), we fall back to the
 // episode's own id - it'll likely fail visibility, but that's the
 // safe default ("if we can't resolve, hide").
-func resumeIDsForCuration(items []jellyfin.Item) []string {
+func ResumeIDsForCuration(items []jellyfin.Item) []string {
 	out := make([]string, 0, len(items))
 	seen := make(map[string]bool, len(items))
 	for _, it := range items {
@@ -312,7 +394,7 @@ func resumeIDsForCuration(items []jellyfin.Item) []string {
 	return out
 }
 
-func resolveFavorites(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
+func resolveFavorites(b *resolveCtx, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
 	max := readMaxItems(cfg)
 	if b.kidID == 0 {
 		// Admin preview without a kid context - skip favorites since
@@ -334,7 +416,7 @@ func resolveFavorites(b *browseContext, row curation.LayoutRow, cfg map[string]a
 	return []ResolvedRow{newRow(row, "Favorites", "", capItems(visible, max))}, nil
 }
 
-func resolveSingleTag(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
+func resolveSingleTag(b *resolveCtx, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
 	max := readMaxItems(cfg)
 	tagID := int64(readIntConfig(cfg, "tag_id", 0))
 	if tagID <= 0 {
@@ -374,7 +456,7 @@ func resolveSingleTag(b *browseContext, row curation.LayoutRow, cfg map[string]a
 	return []ResolvedRow{rr}, nil
 }
 
-func resolveTagFanout(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
+func resolveTagFanout(b *resolveCtx, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
 	max := readMaxItems(cfg)
 	include := readIntSliceConfig(cfg, "include_tag_ids")
 	exclude := readIntSliceConfig(cfg, "exclude_tag_ids")
@@ -441,7 +523,7 @@ func resolveTagFanout(b *browseContext, row curation.LayoutRow, cfg map[string]a
 	return out, nil
 }
 
-func resolveRecentlyAdded(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
+func resolveRecentlyAdded(b *resolveCtx, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
 	max := readMaxItems(cfg)
 	lookback := readIntConfig(cfg, "lookback_days", 30)
 	// Overfetch a multiple of max so the visibility filter doesn't
@@ -486,7 +568,7 @@ func resolveRecentlyAdded(b *browseContext, row curation.LayoutRow, cfg map[stri
 	return []ResolvedRow{rr}, nil
 }
 
-func resolveRandomUnwatched(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
+func resolveRandomUnwatched(b *resolveCtx, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
 	max := readMaxItems(cfg)
 	// Cache stores the FULL shuffled list (not the capped slice).
 	// Slicing happens at response time so load-more can grow the
@@ -504,10 +586,11 @@ func resolveRandomUnwatched(b *browseContext, row curation.LayoutRow, cfg map[st
 			return []ResolvedRow{newRow(row, "Discover Something New", "", nil)}, nil
 		}
 		// Filter to unplayed via Jellyfin (PlayCount=0). Fetch in
-		// chunks so we don't hit URL-length limits.
+		// chunks so we don't hit URL-length limits. Can't go through
+		// GetItemsByIDsBatched because we need the IsUnplayed filter.
 		unplayed := []string{}
-		for i := 0; i < len(visible); i += jellyfinIDBatchSize {
-			end := i + jellyfinIDBatchSize
+		for i := 0; i < len(visible); i += jellyfin.IDBatchSize {
+			end := i + jellyfin.IDBatchSize
 			if end > len(visible) {
 				end = len(visible)
 			}
@@ -537,7 +620,7 @@ func resolveRandomUnwatched(b *browseContext, row curation.LayoutRow, cfg map[st
 	return []ResolvedRow{rr}, nil
 }
 
-func resolveWatchAgain(b *browseContext, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
+func resolveWatchAgain(b *resolveCtx, row curation.LayoutRow, cfg map[string]any) ([]ResolvedRow, error) {
 	max := readMaxItems(cfg)
 	dormantDays := readIntConfig(cfg, "dormant_days", 30)
 	if b.userID == "" || b.userTok == "" {
@@ -556,35 +639,26 @@ func resolveWatchAgain(b *browseContext, row curation.LayoutRow, cfg map[string]
 	}
 	out := []scored{}
 	cutoff := time.Now().AddDate(0, 0, -dormantDays)
-	for i := 0; i < len(visible); i += jellyfinIDBatchSize {
-		end := i + jellyfinIDBatchSize
-		if end > len(visible) {
-			end = len(visible)
+	items, err := b.jelly.GetItemsByIDsBatched(b.ctx, visible, b.userTok)
+	if err != nil {
+		return nil, err
+	}
+	for _, it := range items {
+		if it.UserData == nil || it.UserData.PlayCount < 1 {
+			continue
 		}
-		batch := visible[i:end]
-		res, err := b.jelly.GetItemsAsUser(b.ctx, jellyfin.ItemsFilter{
-			IDs: batch,
-		}, b.userTok)
+		lp := it.UserData.LastPlayedDate
+		if lp == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, lp)
 		if err != nil {
-			return nil, err
+			continue
 		}
-		for _, it := range res.Items {
-			if it.UserData == nil || it.UserData.PlayCount < 1 {
-				continue
-			}
-			lp := it.UserData.LastPlayedDate
-			if lp == "" {
-				continue
-			}
-			t, err := time.Parse(time.RFC3339Nano, lp)
-			if err != nil {
-				continue
-			}
-			if t.After(cutoff) {
-				continue // played too recently
-			}
-			out = append(out, scored{id: it.ID, when: t})
+		if t.After(cutoff) {
+			continue // played too recently
 		}
+		out = append(out, scored{id: it.ID, when: t})
 	}
 	// Most-recently-watched-but-still-dormant first.
 	sort.Slice(out, func(i, j int) bool { return out[i].when.After(out[j].when) })
@@ -596,8 +670,6 @@ func resolveWatchAgain(b *browseContext, row curation.LayoutRow, cfg map[string]
 }
 
 // --- helpers ------------------------------------------------------------
-
-const jellyfinIDBatchSize = 100
 
 func newRow(row curation.LayoutRow, defaultTitle, subtitle string, ids []string) ResolvedRow {
 	title := row.Title
@@ -645,7 +717,7 @@ func capItems(ids []string, max int) []string {
 //
 // Only "random" actually mutates here; the rest are sentinels for the
 // caller to handle when it has full Item bodies.
-func applyTagSort(b *browseContext, mode string, ids []string, key int64) []string {
+func applyTagSort(b *resolveCtx, mode string, ids []string, key int64) []string {
 	if mode != "random" {
 		return ids
 	}
@@ -666,7 +738,7 @@ func applyTagSort(b *browseContext, mode string, ids []string, key int64) []stri
 
 // stableShuffleTags picks a stable random ordering for fanout row
 // keys. Mirrors applyTagSort but operates on Tag values.
-func stableShuffleTags(b *browseContext, rowID int64, tags []curation.TagWithCount) []curation.TagWithCount {
+func stableShuffleTags(b *resolveCtx, rowID int64, tags []curation.TagWithCount) []curation.TagWithCount {
 	cached, _ := b.store.GetCachedRowOrder(b.ctx, b.profile.ID, b.layout.ID, -rowID, cacheTTL)
 	if cached != nil {
 		var ids []int64

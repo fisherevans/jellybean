@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -49,16 +48,17 @@ func requireProfileID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 // so the UI can render and act on it without a second round trip.
 //
 // Query params:
-//   profileId  - REQUIRED. Which profile's state to surface and filter by.
-//   type       - Jellyfin item type (default Movie)
-//   limit      - 1..200, default 50
-//   startIndex - pagination offset, default 0
-//   search     - substring on name (passed through to Jellyfin's
-//                searchTerm), capped at 200 chars
-//   state      - visible | hidden | unset; if set, only items in that
-//                state for this profile are returned
-//   suggest    - "true" to enrich each item with an auto-categorization
-//                suggestion
+//
+//	profileId  - REQUIRED. Which profile's state to surface and filter by.
+//	type       - Jellyfin item type (default Movie)
+//	limit      - 1..200, default 50
+//	startIndex - pagination offset, default 0
+//	search     - substring on name (passed through to Jellyfin's
+//	             searchTerm), capped at 200 chars
+//	state      - visible | hidden | unset; if set, only items in that
+//	             state for this profile are returned
+//	suggest    - "true" to enrich each item with an auto-categorization
+//	             suggestion
 func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 	profileID, ok := requireProfileID(w, r)
 	if !ok {
@@ -335,44 +335,18 @@ enrich:
 		return
 	}
 
-	enriched := make([]map[string]any, 0, len(items))
+	enriched := make([]adminItemDTO, 0, len(items))
 	for _, it := range items {
-		row := map[string]any{
-			"Id":             it.ID,
-			"Name":           it.Name,
-			"Type":           it.Type,
-			"OfficialRating": it.OfficialRating,
-			"Genres":         it.Genres,
-			"Studios":        it.Studios,
-			"ProductionYear": it.ProductionYear,
-			"DateCreated":    it.DateCreated,
-			"ImageTags":      it.ImageTags,
-			"AudioLanguage":  it.PrimaryAudioLanguage(),
-			"AudioLanguages": it.AudioLanguages(),
-		}
+		var statePtr *curation.State
 		if st, ok := states[it.ID]; ok {
-			row["State"] = string(st)
-		} else {
-			row["State"] = nil
+			statePtr = &st
 		}
-		// Decorate with the item's tag set so the kebab UI on each
-		// tile can render checkboxes without an extra round trip.
-		if tags, ok := tagSets[it.ID]; ok {
-			compact := make([]map[string]any, 0, len(tags))
-			for _, tg := range tags {
-				compact = append(compact, map[string]any{
-					"id":   tg.ID,
-					"name": tg.Name,
-				})
-			}
-			row["Tags"] = compact
-		} else {
-			row["Tags"] = []map[string]any{}
-		}
+		var suggestPtr *curation.Suggestion
 		if withSuggest {
-			row["Suggestion"] = curation.Suggest(it)
+			s := curation.Suggest(it)
+			suggestPtr = &s
 		}
-		enriched = append(enriched, row)
+		enriched = append(enriched, toAdminItemDTO(it, statePtr, tagSets[it.ID], suggestPtr))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -411,31 +385,15 @@ func (s *Server) handleAdminGetItem(w http.ResponseWriter, r *http.Request) {
 	}
 	states, _ := s.curation.GetStatesForItems(r.Context(), profileID, []string{id})
 	tagSets, _ := s.curation.GetTagsForItems(r.Context(), []string{id})
-	row := map[string]any{
-		"Id":             item.ID,
-		"Name":           item.Name,
-		"Type":           item.Type,
-		"OfficialRating": item.OfficialRating,
-		"Genres":         item.Genres,
-		"Studios":        item.Studios,
-		"ProductionYear": item.ProductionYear,
-		"ImageTags":      item.ImageTags,
-		"AudioLanguage":  item.PrimaryAudioLanguage(),
-		"AudioLanguages": item.AudioLanguages(),
-	}
+	var statePtr *curation.State
 	if st, ok := states[id]; ok {
-		row["State"] = string(st)
-	} else {
-		row["State"] = nil
+		statePtr = &st
 	}
-	tagsJSON := make([]map[string]any, 0)
-	if tags, ok := tagSets[id]; ok {
-		for _, tg := range tags {
-			tagsJSON = append(tagsJSON, map[string]any{"id": tg.ID, "name": tg.Name})
-		}
-	}
-	row["Tags"] = tagsJSON
-	writeJSON(w, http.StatusOK, row)
+	dto := toAdminItemDTO(*item, statePtr, tagSets[id], nil)
+	// The single-item endpoint historically omits DateCreated; the
+	// items list endpoint always emits it. Preserve that split.
+	dto.DateCreated = nil
+	writeJSON(w, http.StatusOK, dto)
 }
 
 // pageUnsetForProfile walks Jellyfin's catalog and returns items that have
@@ -500,8 +458,8 @@ func (s *Server) handleAdminSetState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "item id required", http.StatusBadRequest)
 		return
 	}
-	var req setStateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[setStateRequest](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -533,8 +491,8 @@ type bulkStateRequest struct {
 }
 
 func (s *Server) handleAdminBulkState(w http.ResponseWriter, r *http.Request) {
-	var req bulkStateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[bulkStateRequest](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}

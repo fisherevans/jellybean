@@ -29,12 +29,12 @@ const overrideTokenHeader = "X-Override-Token"
 // requireOverride is a small helper that resolves the kid context +
 // validates the override token. Returns the kid id on success;
 // writes the appropriate 401/403 + returns 0 on failure.
+//
+// Auth is already prepared by kidsMiddleware (this helper runs only
+// inside subrouter handlers), so we read kc off the request context
+// rather than re-resolving from scratch.
 func (s *Server) requireOverride(w http.ResponseWriter, r *http.Request) (int64, *kidsContext) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return 0, nil
-	}
+	kc, _ := KidsContextFromRequest(r)
 	kidID, _ := s.lookupKidID(r.Context(), r, kc)
 	if kidID == 0 {
 		http.Error(w, "override requires kid bearer auth", http.StatusForbidden)
@@ -103,11 +103,7 @@ func (s *Server) lookupKidID(ctx context.Context, r *http.Request, kc *kidsConte
 //     carries the seconds-until-unlock so the UI can render a timer)
 //   - 401 incorrect on a wrong PIN that didn't trip the lockout
 func (s *Server) handleKidsOverrideVerifyPIN(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	kidID, _ := s.lookupKidID(r.Context(), r, kc)
 	if kidID == 0 {
 		http.Error(w, "override requires kid bearer auth", http.StatusForbidden)
@@ -131,7 +127,7 @@ func (s *Server) handleKidsOverrideVerifyPIN(w http.ResponseWriter, r *http.Requ
 		st, _ := s.curation.GetOverrideStatus(r.Context())
 		if st != nil && st.LockedFor > 0 {
 			w.Header().Set("Retry-After",
-				intString(int(st.LockedFor.Seconds())+1))
+				strconv.Itoa(int(st.LockedFor.Seconds())+1))
 		}
 		http.Error(w, "locked out", http.StatusLocked)
 		return
@@ -173,11 +169,7 @@ func (s *Server) handleKidsOverrideRefresh(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleKidsOverrideEnd(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	kidID, _ := s.lookupKidID(r.Context(), r, kc)
 	if kidID > 0 {
 		_ = s.curation.EndSession(r.Context(), kidID)
@@ -354,7 +346,7 @@ func (s *Server) handleKidsOverrideMarkSeason(w http.ResponseWriter, r *http.Req
 		return
 	}
 	played := mux.Vars(r)["state"] != "unplayed"
-	ctx, _ := kidsRequestContext(r)
+	ctx := r.Context()
 	res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
 		IncludeItemTypes: []string{"Episode"},
 		Recursive:        true,
@@ -415,24 +407,5 @@ func (s *Server) handleKidsOverrideQR(w http.ResponseWriter, r *http.Request) {
 		"itemId":     itemID,
 		"publicUrl":  publicURL,
 	})
-}
-
-// intString is a tiny strconv.Itoa replacement that avoids the
-// import in this file. itoa-equivalent for small positive ints.
-func intString(n int) string {
-	if n < 0 {
-		n = 0
-	}
-	if n == 0 {
-		return "0"
-	}
-	buf := [20]byte{}
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }
 

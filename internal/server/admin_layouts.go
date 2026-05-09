@@ -5,8 +5,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/gorilla/mux"
-
 	"github.com/fisherevans/jellybean/internal/curation"
 )
 
@@ -75,15 +73,14 @@ func (s *Server) handleAdminListLayouts(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAdminGetLayout(w http.ResponseWriter, r *http.Request) {
-	id, err := parseIDParam(mux.Vars(r)["id"])
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	lw, err := s.curation.GetLayoutWithRows(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, curation.ErrLayoutNotFound) {
-			http.Error(w, "layout not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -105,8 +102,8 @@ type layoutMutation struct {
 }
 
 func (s *Server) handleAdminCreateLayout(w http.ResponseWriter, r *http.Request) {
-	var req layoutMutation
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[layoutMutation](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -115,8 +112,7 @@ func (s *Server) handleAdminCreateLayout(w http.ResponseWriter, r *http.Request)
 		Description: req.Description,
 	})
 	if err != nil {
-		if errors.Is(err, curation.ErrLayoutNameTaken) {
-			http.Error(w, err.Error(), http.StatusConflict)
+		if writeDomainError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -126,13 +122,13 @@ func (s *Server) handleAdminCreateLayout(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleAdminUpdateLayout(w http.ResponseWriter, r *http.Request) {
-	id, err := parseIDParam(mux.Vars(r)["id"])
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	var req layoutMutation
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[layoutMutation](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -141,59 +137,47 @@ func (s *Server) handleAdminUpdateLayout(w http.ResponseWriter, r *http.Request)
 		Description: req.Description,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, curation.ErrLayoutNotFound):
-			http.Error(w, "layout not found", http.StatusNotFound)
-		case errors.Is(err, curation.ErrLayoutNameTaken):
-			http.Error(w, err.Error(), http.StatusConflict)
-		default:
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if writeDomainError(w, err) {
+			return
 		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, http.StatusOK, toLayoutResponse(curation.LayoutWithRows{Layout: *l}))
 }
 
 func (s *Server) handleAdminDeleteLayout(w http.ResponseWriter, r *http.Request) {
-	id, err := parseIDParam(mux.Vars(r)["id"])
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	if err := s.curation.DeleteLayout(r.Context(), id); err != nil {
-		switch {
-		case errors.Is(err, curation.ErrLayoutNotFound):
-			http.Error(w, "layout not found", http.StatusNotFound)
-		case errors.Is(err, curation.ErrLayoutProtected):
-			http.Error(w, err.Error(), http.StatusForbidden)
-		default:
-			// in-use error from the storage layer is a plain Errorf;
-			// surface as 409 Conflict.
-			http.Error(w, err.Error(), http.StatusConflict)
+		if writeDomainError(w, err) {
+			return
 		}
+		// in-use error from the storage layer is a plain Errorf;
+		// surface as 409 Conflict.
+		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleAdminCloneLayout(w http.ResponseWriter, r *http.Request) {
-	id, err := parseIDParam(mux.Vars(r)["id"])
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	var req struct {
+	// Body is optional; an empty / unparseable body just means
+	// "use a generated name."
+	req, _ := decodeJSON[struct {
 		Name string `json:"name"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&req) // body optional
+	}](r, 0)
 	l, err := s.curation.CloneLayout(r.Context(), id, req.Name)
 	if err != nil {
-		if errors.Is(err, curation.ErrLayoutNotFound) {
-			http.Error(w, "layout not found", http.StatusNotFound)
-			return
-		}
-		if errors.Is(err, curation.ErrLayoutNameTaken) {
-			http.Error(w, err.Error(), http.StatusConflict)
+		if writeDomainError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -203,14 +187,13 @@ func (s *Server) handleAdminCloneLayout(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAdminSetDefaultLayout(w http.ResponseWriter, r *http.Request) {
-	id, err := parseIDParam(mux.Vars(r)["id"])
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	if err := s.curation.SetDefaultLayout(r.Context(), id); err != nil {
-		if errors.Is(err, curation.ErrLayoutNotFound) {
-			http.Error(w, "layout not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -228,13 +211,13 @@ type rowMutation struct {
 }
 
 func (s *Server) handleAdminAppendRow(w http.ResponseWriter, r *http.Request) {
-	layoutID, err := parseIDParam(mux.Vars(r)["id"])
+	layoutID, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	var req rowMutation
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[rowMutation](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -244,8 +227,7 @@ func (s *Server) handleAdminAppendRow(w http.ResponseWriter, r *http.Request) {
 		ConfigJSON: string(req.ConfigJSON),
 	})
 	if err != nil {
-		if errors.Is(err, curation.ErrLayoutNotFound) {
-			http.Error(w, "layout not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -263,13 +245,13 @@ func (s *Server) handleAdminAppendRow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminUpdateRow(w http.ResponseWriter, r *http.Request) {
-	rowID, err := parseIDParam(mux.Vars(r)["rowId"])
+	rowID, err := pathID(r, "rowId")
 	if err != nil {
 		http.Error(w, "bad row id", http.StatusBadRequest)
 		return
 	}
-	var req rowMutation
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[rowMutation](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -279,8 +261,7 @@ func (s *Server) handleAdminUpdateRow(w http.ResponseWriter, r *http.Request) {
 		ConfigJSON: string(req.ConfigJSON),
 	})
 	if err != nil {
-		if errors.Is(err, curation.ErrLayoutRowNotFound) {
-			http.Error(w, "row not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -298,14 +279,13 @@ func (s *Server) handleAdminUpdateRow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminDeleteRow(w http.ResponseWriter, r *http.Request) {
-	rowID, err := parseIDParam(mux.Vars(r)["rowId"])
+	rowID, err := pathID(r, "rowId")
 	if err != nil {
 		http.Error(w, "bad row id", http.StatusBadRequest)
 		return
 	}
 	if err := s.curation.DeleteRow(r.Context(), rowID); err != nil {
-		if errors.Is(err, curation.ErrLayoutRowNotFound) {
-			http.Error(w, "row not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -315,15 +295,15 @@ func (s *Server) handleAdminDeleteRow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminReorderRows(w http.ResponseWriter, r *http.Request) {
-	layoutID, err := parseIDParam(mux.Vars(r)["id"])
+	layoutID, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	var req struct {
+	req, err := decodeJSON[struct {
 		RowIDs []int64 `json:"rowIds"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -337,27 +317,29 @@ func (s *Server) handleAdminReorderRows(w http.ResponseWriter, r *http.Request) 
 // --- profile -> layout assignment --------------------------------------
 
 func (s *Server) handleAdminSetProfileLayout(w http.ResponseWriter, r *http.Request) {
-	profileID, err := parseIDParam(mux.Vars(r)["id"])
+	profileID, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad profile id", http.StatusBadRequest)
 		return
 	}
-	var req struct {
+	req, err := decodeJSON[struct {
 		LayoutID int64 `json:"layoutId"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 	if err := s.curation.SetProfileLayout(r.Context(), profileID, req.LayoutID); err != nil {
-		switch {
-		case errors.Is(err, curation.ErrProfileNotFound):
-			http.Error(w, "profile not found", http.StatusNotFound)
-		case errors.Is(err, curation.ErrLayoutNotFound):
+		// ErrLayoutNotFound here describes a bad body field, not a
+		// missing URL resource - keep the legacy 400-not-404 surface.
+		if errors.Is(err, curation.ErrLayoutNotFound) {
 			http.Error(w, "layout not found", http.StatusBadRequest)
-		default:
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
+		if writeDomainError(w, err) {
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -373,7 +355,7 @@ func (s *Server) handleAdminSetProfileLayout(w http.ResponseWriter, r *http.Requ
 // (continue_watching, watch_again) come back empty - the admin
 // preview is a "structural" preview, not a real user view.
 func (s *Server) handleAdminLayoutPreview(w http.ResponseWriter, r *http.Request) {
-	layoutID, err := parseIDParam(mux.Vars(r)["id"])
+	layoutID, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
@@ -399,4 +381,3 @@ func (s *Server) handleAdminRefreshLayoutCache(w http.ResponseWriter, r *http.Re
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-

@@ -1,8 +1,6 @@
 package server
 
 import (
-	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/fisherevans/jellybean/internal/curation"
@@ -35,12 +33,11 @@ func (s *Server) handleAdminOverrideStatus(w http.ResponseWriter, r *http.Reques
 // handleAdminSetOverridePIN writes a new PIN. Empty body or empty
 // PIN clears the configured PIN (override mode disabled).
 func (s *Server) handleAdminSetOverridePIN(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	// Body is optional; ignore decode error so "clear PIN" stays a
+	// supported call.
+	req, _ := decodeJSON[struct {
 		PIN string `json:"pin"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// Body is optional; treat decode failure as "clear PIN."
-	}
+	}](r, 0)
 	if err := s.curation.SetPIN(r.Context(), req.PIN); err != nil {
 		s.logger.Error().Err(err).Msg("set override pin")
 		http.Error(w, "set pin failed", http.StatusInternalServerError)
@@ -70,8 +67,8 @@ func (s *Server) handleAdminClearOverrideLockout(w http.ResponseWriter, r *http.
 func (s *Server) handleAdminListSettings(w http.ResponseWriter, r *http.Request) {
 	// Whitelist of keys the admin UI exposes. Settings the admin
 	// shouldn't be poking from this endpoint (e.g. internal flags)
-	// stay out of this list.
-	keys := []string{"public_url"}
+	// stay out of this list. Source of truth: curation.KnownSettings.
+	keys := curation.KnownSettingKeys()
 	out := map[string]string{}
 	for _, k := range keys {
 		v, err := s.curation.AppSettingGet(r.Context(), k)
@@ -85,11 +82,11 @@ func (s *Server) handleAdminListSettings(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleAdminSetSetting(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		Key   string `json:"key"`
 		Value string `json:"value"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -99,8 +96,7 @@ func (s *Server) handleAdminSetSetting(w http.ResponseWriter, r *http.Request) {
 	}
 	// Same whitelist as ListSettings - admins can only mutate the
 	// settings the UI exposes.
-	allowed := map[string]struct{}{"public_url": {}}
-	if _, ok := allowed[req.Key]; !ok {
+	if !curation.IsKnownSetting(req.Key) {
 		http.Error(w, "unknown setting key", http.StatusBadRequest)
 		return
 	}
@@ -110,8 +106,3 @@ func (s *Server) handleAdminSetSetting(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-// _ used to keep curation visible through this file - other admin
-// endpoints typically import it. No-op now.
-var _ = curation.ErrPINNotSet
-var _ = errors.New

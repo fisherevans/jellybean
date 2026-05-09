@@ -1,13 +1,10 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
-
-	"github.com/gorilla/mux"
 
 	"github.com/fisherevans/jellybean/internal/curation"
 )
@@ -113,8 +110,8 @@ type tagMutation struct {
 }
 
 func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
-	var req tagMutation
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[tagMutation](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -130,25 +127,23 @@ func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
 	}
 	tag, err := s.curation.CreateTag(r.Context(), in)
 	if err != nil {
-		switch {
-		case errors.Is(err, curation.ErrTagNameTaken):
-			http.Error(w, err.Error(), http.StatusConflict)
-		default:
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if writeDomainError(w, err) {
+			return
 		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toBareTagResponse(*tag))
 }
 
 func (s *Server) handleUpdateTag(w http.ResponseWriter, r *http.Request) {
-	id, err := parseIDParam(mux.Vars(r)["id"])
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	var req tagMutation
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[tagMutation](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -157,8 +152,7 @@ func (s *Server) handleUpdateTag(w http.ResponseWriter, r *http.Request) {
 	// field. Mirrors how profileMutation is handled in admin_profiles.go.
 	existing, err := s.curation.GetTag(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, curation.ErrTagNotFound) {
-			http.Error(w, "tag not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -184,28 +178,23 @@ func (s *Server) handleUpdateTag(w http.ResponseWriter, r *http.Request) {
 	}
 	tag, err := s.curation.UpdateTag(r.Context(), id, in)
 	if err != nil {
-		switch {
-		case errors.Is(err, curation.ErrTagNotFound):
-			http.Error(w, "tag not found", http.StatusNotFound)
-		case errors.Is(err, curation.ErrTagNameTaken):
-			http.Error(w, err.Error(), http.StatusConflict)
-		default:
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if writeDomainError(w, err) {
+			return
 		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, http.StatusOK, toBareTagResponse(*tag))
 }
 
 func (s *Server) handleDeleteTag(w http.ResponseWriter, r *http.Request) {
-	id, err := parseIDParam(mux.Vars(r)["id"])
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	if err := s.curation.DeleteTag(r.Context(), id); err != nil {
-		if errors.Is(err, curation.ErrTagNotFound) {
-			http.Error(w, "tag not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		s.logger.Error().Err(err).Msg("delete tag")

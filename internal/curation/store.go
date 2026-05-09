@@ -264,10 +264,7 @@ func (s *Store) ProfileMaxSetAt(ctx context.Context, profileID int64) (int64, er
 	if err != nil {
 		return 0, err
 	}
-	if !v.Valid {
-		return 0, nil
-	}
-	return v.Int64, nil
+	return scanNullableInt64(v), nil
 }
 
 // AllCategorizedIDsForProfile returns every item ID that has ANY state
@@ -342,9 +339,7 @@ func (s *Store) RecentHistory(ctx context.Context, profileID int64, limit int) (
 			s := State(toN.String)
 			e.ToState = &s
 		}
-		if byN.Valid {
-			e.ChangedBy = byN.String
-		}
+		e.ChangedBy = scanNullableString(byN)
 		e.ChangedAt = time.Unix(at, 0)
 		out = append(out, e)
 	}

@@ -1,12 +1,7 @@
 package server
 
 import (
-	"encoding/json"
-	"errors"
 	"net/http"
-	"strconv"
-
-	"github.com/gorilla/mux"
 
 	"github.com/fisherevans/jellybean/internal/curation"
 )
@@ -59,8 +54,8 @@ type profileMutation struct {
 }
 
 func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
-	var req profileMutation
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[profileMutation](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -78,13 +73,13 @@ func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	var req profileMutation
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[profileMutation](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -94,8 +89,7 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		DefaultLanguage: req.DefaultLanguage,
 	})
 	if err != nil {
-		if errors.Is(err, curation.ErrProfileNotFound) {
-			http.Error(w, "profile not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -105,23 +99,17 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteProfile(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	if err := s.curation.DeleteProfile(r.Context(), id); err != nil {
-		switch {
-		case errors.Is(err, curation.ErrProfileNotFound):
-			http.Error(w, "profile not found", http.StatusNotFound)
-		case errors.Is(err, curation.ErrProfileProtected):
-			http.Error(w, err.Error(), http.StatusForbidden)
-		case errors.Is(err, curation.ErrProfileInUse):
-			http.Error(w, err.Error(), http.StatusConflict)
-		default:
-			s.logger.Error().Err(err).Msg("delete profile")
-			http.Error(w, "failed to delete profile", http.StatusInternalServerError)
+		if writeDomainError(w, err) {
+			return
 		}
+		s.logger.Error().Err(err).Msg("delete profile")
+		http.Error(w, "failed to delete profile", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

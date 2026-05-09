@@ -86,7 +86,7 @@ func (s *Store) GetOverrideStatus(ctx context.Context) (*OverrideStatus, error) 
 		return nil, err
 	}
 	out := &OverrideStatus{
-		PINSet:         hash.Valid && hash.String != "",
+		PINSet:         scanNullableString(hash) != "",
 		FailedAttempts: failed,
 		UpdatedAt:      time.Unix(updatedAt, 0),
 	}
@@ -153,7 +153,7 @@ func (s *Store) VerifyPIN(ctx context.Context, plaintext string) error {
 		Scan(&hash, &failed, &lockedUntil); err != nil {
 		return err
 	}
-	if !hash.Valid || hash.String == "" {
+	if scanNullableString(hash) == "" {
 		return ErrPINNotSet
 	}
 	if lockedUntil > 0 && time.Now().Before(time.Unix(lockedUntil, 0)) {

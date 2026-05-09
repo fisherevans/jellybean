@@ -35,22 +35,20 @@ type ViewingState struct {
 
 // GetProfileViewingControls returns the row, falling back to defaults.
 func (s *Store) GetProfileViewingControls(ctx context.Context, profileID int64) (*ProfileViewingControls, error) {
-	row := s.db.QueryRowContext(ctx, `
+	return loadOrDefault(ctx, s.db, `
 		SELECT profile_id, COALESCE(auto_off_clock_time, ''), updated_at
-		FROM profile_viewing_controls WHERE profile_id = ?`, profileID)
-	var (
-		out     ProfileViewingControls
-		updated int64
-	)
-	err := row.Scan(&out.ProfileID, &out.AutoOffClockTime, &updated)
-	if errors.Is(err, sql.ErrNoRows) {
-		return &ProfileViewingControls{ProfileID: profileID}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	out.UpdatedAt = time.Unix(updated, 0).UTC()
-	return &out, nil
+		FROM profile_viewing_controls WHERE profile_id = ?`, profileID,
+		func(row *sql.Row) (*ProfileViewingControls, error) {
+			var (
+				out     ProfileViewingControls
+				updated int64
+			)
+			if err := row.Scan(&out.ProfileID, &out.AutoOffClockTime, &updated); err != nil {
+				return nil, err
+			}
+			out.UpdatedAt = unixToTime(updated)
+			return &out, nil
+		}, &ProfileViewingControls{ProfileID: profileID})
 }
 
 func (s *Store) UpsertProfileViewingControls(ctx context.Context, p ProfileViewingControls) error {
@@ -186,7 +184,7 @@ func (s *Store) GetViewingState(ctx context.Context, kidID, profileID int64, now
 			return
 		}
 		if until.Valid {
-			t := time.Unix(until.Int64, 0).UTC()
+			t := unixToTime(until.Int64)
 			if now.After(t) {
 				return
 			}
@@ -208,7 +206,7 @@ func (s *Store) GetViewingState(ctx context.Context, kidID, profileID int64, now
 
 	// Maybe fire from sleep timer.
 	if sleepTimer.Valid {
-		t := time.Unix(sleepTimer.Int64, 0).UTC()
+		t := unixToTime(sleepTimer.Int64)
 		out.SleepTimerAt = t
 		if now.After(t) && !out.AutoOffActive {
 			_, _ = s.db.ExecContext(ctx, `

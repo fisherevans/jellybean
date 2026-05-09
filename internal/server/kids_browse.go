@@ -10,12 +10,13 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/fisherevans/jellybean/internal/browse"
 	"github.com/fisherevans/jellybean/internal/curation"
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
 // Kids browse endpoint (M8 #47). Routes through the resolver in
-// browse_resolver.go, then decorates each row's item ids with full
+// internal/browse, then decorates each row's item ids with full
 // Jellyfin item bodies so the kid client can render tiles directly.
 
 type browseRowResponse struct {
@@ -87,19 +88,47 @@ type browseResponse struct {
 	Rows       []browseRowResponse `json:"rows"`
 }
 
+// browseContext bundles the persistent dependencies the resolver needs.
+// Cheap enough to construct per request; we're not memoizing on Server
+// because the curation store + jellyfin client are already stable
+// references on Server itself.
+//
+// Warn forwards the resolver's non-fatal warnings (unknown row type,
+// per-row resolve errors that get swallowed) into our zerolog logger
+// without making internal/browse import zerolog.
+func (s *Server) browseContext() *browse.Context {
+	return &browse.Context{
+		Store: s.curation,
+		Jelly: s.jellyfin,
+		Warn: func(msg string, kv ...any) {
+			ev := s.logger.Warn()
+			for i := 0; i+1 < len(kv); i += 2 {
+				key, ok := kv[i].(string)
+				if !ok {
+					continue
+				}
+				switch v := kv[i+1].(type) {
+				case error:
+					ev = ev.Err(v)
+				case string:
+					ev = ev.Str(key, v)
+				case int:
+					ev = ev.Int(key, v)
+				case int64:
+					ev = ev.Int64(key, v)
+				default:
+					ev = ev.Interface(key, v)
+				}
+			}
+			ev.Msg(msg)
+		},
+	}
+}
+
 // handleKidsBrowse resolves the kid's layout into renderable rows.
 // Auth: kid bearer (preferred) or admin cookie + ?profileId=.
 func (s *Server) handleKidsBrowse(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	profileID, msg := s.resolveKidsProfileID(r, kc)
-	if msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
-		return
-	}
+	kc, profileID := KidsContextFromRequest(r)
 	s.respondBrowse(w, r, profileID, 0, kc.kidIDForBrowse(), kc.JellyfinUserID, kc.JellyfinToken)
 }
 
@@ -110,16 +139,7 @@ func (s *Server) handleKidsBrowse(w http.ResponseWriter, r *http.Request) {
 //
 // GET /api/kids/browse/row/:rowId?limit=N
 func (s *Server) handleKidsBrowseRow(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	profileID, msg := s.resolveKidsProfileID(r, kc)
-	if msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
-		return
-	}
+	kc, profileID := KidsContextFromRequest(r)
 	rowID, err := strconv.ParseInt(mux.Vars(r)["rowId"], 10, 64)
 	if err != nil || rowID <= 0 {
 		http.Error(w, "bad rowId", http.StatusBadRequest)
@@ -190,34 +210,11 @@ func (s *Server) respondBrowseRow(
 		http.Error(w, "row not found", http.StatusNotFound)
 		return
 	}
-	bc := &browseContext{
-		store:   s.curation,
-		jelly:   s.jellyfin,
-		ctx:     ctx,
-		profile: *profile,
-		layout:  layout.Layout,
-		kidID:   kidID,
-		userID:  userID,
-		userTok: userTok,
-		visible: map[string]bool{},
-	}
-	resolvers := map[curation.RowType]rowResolver{
-		curation.RowContinueWatching: resolveContinueWatching,
-		curation.RowFavorites:        resolveFavorites,
-		curation.RowTag:              resolveSingleTag,
-		curation.RowTagFanout:        resolveTagFanout,
-		curation.RowRecentlyAdded:    resolveRecentlyAdded,
-		curation.RowRandomUnwatched:  resolveRandomUnwatched,
-		curation.RowWatchAgain:       resolveWatchAgain,
-	}
-	fn, ok := resolvers[target.Type]
-	if !ok {
+	if !browse.IsSupportedRowType(target.Type) {
 		http.Error(w, "row type not supported", http.StatusBadRequest)
 		return
 	}
-	cfg, _ := decodeRowConfig(target.ConfigJSON)
-	cfg["max_items"] = limit
-	resolved, err := fn(bc, *target, cfg)
+	resolved, err := browse.ResolveRow(ctx, s.browseContext(), profile, layout, *target, limit, kidID, userID, userTok)
 	if err != nil {
 		s.logger.Error().Err(err).Int64("row_id", rowID).Msg("browse row resolve")
 		writeUpstreamError(w, err, "failed to load row")
@@ -243,23 +240,14 @@ func (s *Server) respondBrowseRow(
 	}
 	itemsByID := map[string]jellyfin.Item{}
 	if len(ids) > 0 {
-		const batch = 100
-		for i := 0; i < len(ids); i += batch {
-			end := i + batch
-			if end > len(ids) {
-				end = len(ids)
-			}
-			res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
-				IDs: ids[i:end],
-			}, userTok)
-			if err != nil {
-				s.logger.Error().Err(err).Msg("browse row decorate")
-				writeUpstreamError(w, err, "failed to load items")
-				return
-			}
-			for _, it := range res.Items {
-				itemsByID[it.ID] = it
-			}
+		batched, err := s.jellyfin.GetItemsByIDsBatched(ctx, ids, userTok)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("browse row decorate")
+			writeUpstreamError(w, err, "failed to load items")
+			return
+		}
+		for _, it := range batched {
+			itemsByID[it.ID] = it
 		}
 	}
 	items := make([]jellyfin.Item, 0, len(rr.ItemIDs))
@@ -357,7 +345,7 @@ func (s *Server) respondBrowse(
 		}
 	}
 
-	resolved, err := s.resolveLayout(ctx, profile, layout, kidID, userID, userTok)
+	resolved, err := browse.Resolve(ctx, s.browseContext(), profile, layout, kidID, userID, userTok)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("resolve layout")
 		http.Error(w, "failed to resolve layout", http.StatusInternalServerError)
@@ -377,45 +365,14 @@ func (s *Server) respondBrowse(
 	}
 	itemsByID := map[string]jellyfin.Item{}
 	if len(ids) > 0 {
-		// Batch the IDs query. Jellyfin's URL-length limits cap at a
-		// few thousand bytes; chunking at 100 keeps us safe.
-		// Run the batches concurrently - they're independent reads
-		// against Jellyfin and previously dominated wall-time
-		// (3-4 sequential round trips over the tunnel).
-		const batch = 100
-		type batchResult struct {
-			items []jellyfin.Item
-			err   error
+		batched, err := s.jellyfin.GetItemsByIDsBatched(ctx, ids, userTok)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("browse decorate")
+			writeUpstreamError(w, err, "failed to load items")
+			return
 		}
-		chunkCount := (len(ids) + batch - 1) / batch
-		results := make(chan batchResult, chunkCount)
-		for i := 0; i < len(ids); i += batch {
-			end := i + batch
-			if end > len(ids) {
-				end = len(ids)
-			}
-			chunk := ids[i:end]
-			go func() {
-				res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
-					IDs: chunk,
-				}, userTok)
-				if err != nil {
-					results <- batchResult{err: err}
-					return
-				}
-				results <- batchResult{items: res.Items}
-			}()
-		}
-		for i := 0; i < chunkCount; i++ {
-			r := <-results
-			if r.err != nil {
-				s.logger.Error().Err(r.err).Msg("browse decorate")
-				writeUpstreamError(w, r.err, "failed to load items")
-				return
-			}
-			for _, it := range r.items {
-				itemsByID[it.ID] = it
-			}
+		for _, it := range batched {
+			itemsByID[it.ID] = it
 		}
 	}
 
@@ -476,15 +433,15 @@ func (s *Server) respondBrowse(
 //   - "name"           -> alphabetical by Item.Name
 //   - "random"         -> no-op; trust the resolver's shuffled order
 //   - "recently_added" -> Item.DateCreated desc; items with empty /
-//                         unparseable DateCreated sink to the bottom
-//                         while preserving relative order
+//     unparseable DateCreated sink to the bottom
+//     while preserving relative order
 //   - "" / unknown     -> no-op (covers non-tag rows + any future
-//                         resolver that hasn't set SortMode yet)
+//     resolver that hasn't set SortMode yet)
 //
 // Other row types (continue_watching, recently_added, random_unwatched,
 // favorites, watch_again) leave SortMode empty - their resolver owns
 // the order and we don't touch it here.
-func applyPostFetchSort(items []jellyfin.Item, row ResolvedRow) {
+func applyPostFetchSort(items []jellyfin.Item, row browse.ResolvedRow) {
 	if len(items) <= 1 {
 		return
 	}

@@ -2,23 +2,24 @@ import {
     useCallback,
     useEffect,
     useLayoutEffect,
+    useMemo,
     useRef,
     useState,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-    authHeaders,
-    clearSession,
     getSession,
     imageAuthSuffix,
-    withAuthRetry,
     type Session,
 } from "./auth";
 import { useKidsHome } from "./KidsHome";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { useStackScroll } from "./useStackScroll";
-import { TAG_ICONS, isTagIconName } from "./tagIcons";
+import { TAG_ICONS, isTagIconName } from "jellybean-shared";
+import { useHomeTabFocus } from "./useHomeTabFocus";
 import { useItemHiddenEvent } from "./itemHidden";
+import { useKidsResource } from "./useKidsResource";
+import { sessionCache } from "./kidsCache";
 
 // Tags is the kid's tag-browse landing page. Fetches /api/kids/tags
 // and renders one large landscape card per tag - title, description,
@@ -65,29 +66,61 @@ export default function Tags() {
     // sessionStorage + reloads).
     const cacheKey = `jellybean.kids.tags.cache.${adminProfileId ?? "kid"}`;
     const focusIdxKey = `jellybean.kids.tags.focusIdx.${adminProfileId ?? "kid"}`;
-    const [data, setData] = useState<TagsResponse | null>(() => {
-        try {
-            const raw = sessionStorage.getItem(cacheKey);
-            if (!raw) return null;
-            return JSON.parse(raw) as TagsResponse;
-        } catch {
-            return null;
-        }
+    const tagsURL = useMemo(() => {
+        if (!session && !adminProfileId) return null;
+        const url = new URL("/api/kids/tags", window.location.origin);
+        if (adminProfileId) url.searchParams.set("profileId", adminProfileId);
+        return url.toString();
+    }, [session, adminProfileId]);
+    const cache = useMemo(() => sessionCache<TagsResponse>(), []);
+    const { data: fetchedData, error } = useKidsResource<TagsResponse>({
+        url: tagsURL,
+        cache,
+        cacheKey,
+        skipFetchWhenCacheHit: true,
     });
-    const [error, setError] = useState<string | null>(null);
+    const [data, setData] = useState<TagsResponse | null>(fetchedData);
+    useEffect(() => {
+        if (fetchedData) setData(fetchedData);
+    }, [fetchedData]);
+    // Transform-based scroll - same rationale as Library. The
+    // stack ref attaches to the .kids-stack wrapper; the hook
+    // animates translate3d on it instead of writing window.scrollTo
+    // (which retriggered a multi-second repaint on the kid TV).
+    const stack = useStackScroll();
+    const homeCtx = useKidsHome();
+
     // Restore the focused tag index from sessionStorage so the kid
     // returning from /tags/:id lands back on the tag they entered.
-    const [focusIdx, setFocusIdx] = useState<number>(() => {
-        try {
-            const v = sessionStorage.getItem(focusIdxKey);
-            if (v !== null) {
-                const n = Number(v);
-                if (Number.isFinite(n) && n >= 0) return n;
+    // useHomeTabFocus owns the back-then-down reset (focusIdx → 0,
+    // tab nav re-engages) and the tabFocused → true scroll-to-top +
+    // blur effect; here we just hand it the persisted starting
+    // value and the "first card" reset target.
+    const {
+        focus: focusIdx,
+        setFocus: setFocusIdx,
+        tabFocused,
+        setTabFocused,
+        handleBack,
+    } = useHomeTabFocus<number>({
+        initialFocus: (() => {
+            try {
+                const v = sessionStorage.getItem(focusIdxKey);
+                if (v !== null) {
+                    const n = Number(v);
+                    if (Number.isFinite(n) && n >= 0) return n;
+                }
+            } catch {
+                /* ignore */
             }
-        } catch {
-            /* ignore */
-        }
-        return 0;
+            return 0;
+        })(),
+        getFirstContentSlot: () => 0,
+        scrollToTop: () => stack.setStackY(0, true),
+        tabNav: {
+            tabFocused: homeCtx.tabFocused,
+            setTabFocused: homeCtx.setTabFocused,
+        },
     });
     // Persist focusIdx so it survives a remount.
     useEffect(() => {
@@ -123,11 +156,7 @@ export default function Tags() {
                     };
                 }),
             };
-            try {
-                sessionStorage.setItem(cacheKey, JSON.stringify(next));
-            } catch {
-                /* ignore */
-            }
+            cache.write(cacheKey, next);
             return next;
         });
     });
@@ -152,12 +181,6 @@ export default function Tags() {
         },
         [nav, playSuffix],
     );
-
-    // Transform-based scroll - same rationale as Library. The
-    // stack ref attaches to the .kids-stack wrapper; the hook
-    // animates translate3d on it instead of writing window.scrollTo
-    // (which retriggered a multi-second repaint on the kid TV).
-    const stack = useStackScroll();
 
     // Snap to top on mount so a stale animator left behind by a
     // previous page can't keep scrolling here.
@@ -194,67 +217,11 @@ export default function Tags() {
     const cardRefs = useRef<(HTMLButtonElement | null)[]>([]);
     const listRef = useRef<HTMLDivElement | null>(null);
 
-    const { tabFocused, setTabFocused } = useKidsHome();
-
     useEffect(() => {
         if (!session && !adminProfileId) {
             nav("/login", { replace: true });
         }
     }, [session, adminProfileId, nav]);
-
-    useEffect(() => {
-        // If we already have data (from sessionStorage cache or a
-        // previous fetch in this mount), skip the fetch. Tags are
-        // mostly static and the kid backing out of a detail view
-        // expects to see the same preview poster strip - refetching
-        // would re-randomize the previews and visually swap them.
-        // Menu's "Refresh from server" clears the cache + reloads
-        // when the kid (or parent) wants a fresh pull.
-        if (data) return;
-        let cancelled = false;
-        async function run() {
-            try {
-                const url = new URL(
-                    "/api/kids/tags",
-                    window.location.origin,
-                );
-                if (adminProfileId) {
-                    url.searchParams.set("profileId", adminProfileId);
-                }
-                const res = await withAuthRetry(() =>
-                    fetch(url.toString(), {
-                        credentials: "same-origin",
-                        headers: authHeaders(),
-                    }),
-                );
-                if (!res.ok) {
-                    if (res.status === 401) {
-                        clearSession();
-                        nav("/login", { replace: true });
-                        return;
-                    }
-                    throw new Error(`${res.status}`);
-                }
-                const body = (await res.json()) as TagsResponse;
-                if (!cancelled) {
-                    setData(body);
-                    try {
-                        sessionStorage.setItem(cacheKey, JSON.stringify(body));
-                    } catch {
-                        /* quota / disabled - cache miss next time, no UX impact */
-                    }
-                }
-            } catch (err) {
-                if (!cancelled) {
-                    setError(err instanceof Error ? err.message : "load failed");
-                }
-            }
-        }
-        void run();
-        return () => {
-            cancelled = true;
-        };
-    }, [adminProfileId, nav]);
 
     // Tell the splash gate we have content rendered.
     useEffect(() => {
@@ -281,38 +248,13 @@ export default function Tags() {
         }
     }, [focusIdx, tabFocused, stack]);
 
-    useProgressiveBack(() => {
-        if (!tabFocused) {
-            setTabFocused(true);
-            // Back resets focus to the first card so the next Down
-            // lands on a fresh entry point - not on the last
-            // highlighted tag the kid was on. The expectBackFromDetail
-            // path uses its own restore (setTabFocused(false) on
-            // mount with persisted focusIdx) and isn't affected: the
-            // detail page navigates to /tags directly, never invokes
-            // this Back handler. See web/kids/CLAUDE.md
-            // ("Back-then-Down focus contract").
-            setFocusIdx(0);
-            return true;
-        }
-        return false;
-    });
-
-    // Scroll-to-top + blur on tabFocused engage (mirror of Browse /
-    // Library so back-press cleanly returns to the tab nav). The
-    // snap path on setStackY drains any in-flight rAF animator,
-    // so a mid-flight scrollToCenter from the previous focus change
-    // can't write a stale target after our reset.
-    useEffect(() => {
-        if (!tabFocused) return;
-        stack.setStackY(0, true);
-        if (
-            document.activeElement instanceof HTMLElement &&
-            document.activeElement !== document.body
-        ) {
-            document.activeElement.blur();
-        }
-    }, [tabFocused, stack]);
+    // useHomeTabFocus owns the back-then-down reset (focusIdx → 0
+    // + tab nav re-engages) and the tabFocused → true scroll-to-top
+    // + blur effect. The expectBackFromDetail path (setTabFocused(false)
+    // on mount with persisted focusIdx) isn't affected: TagDetail
+    // navigates to /tags directly and never invokes this back handler.
+    // See web/kids/CLAUDE.md ("Back-then-Down focus contract").
+    useProgressiveBack(handleBack);
 
     // Clamp focusIdx in case the persisted value is out of range
     // for the current data (e.g. tags removed on the server while

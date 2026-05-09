@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { useProgressiveBack } from "./useProgressiveBack";
+import { useEffect, useMemo, useRef } from "react";
+import KidModalShell from "./KidModalShell";
+import { useDpadCursor } from "./useDpadCursor";
 
 // AlphaPickerModal is the kid-facing replacement for the old vertical
 // A-Z strip. Pressing the A-Z icon button on the library controls row
@@ -22,6 +22,13 @@ import { useProgressiveBack } from "./useProgressiveBack";
 // over the FULL library). Computing it on the client from the
 // already-loaded items only would dim letters that are valid in the
 // library but happen to be past the first paginated page.
+//
+// Portal + Escape + repeat-Enter swallow + pre-arm-Enter swallow +
+// focus trap live in KidModalShell. The grid math (Up/Down with row
+// stride, Left/Right with column edge clamps) doesn't fit
+// useDpadCursor's vertical-list model, so we wire the hook with
+// `enabled: false` and only borrow its cursor / refs / focus-on-armed
+// plumbing. The grid-shaped keyboard listener stays inline below.
 
 const ALPHA_GRID_COLS = 7;
 const ALPHA_KEYS = [
@@ -50,38 +57,30 @@ export default function AlphaPickerModal({
         }
         return 0;
     }, [indexMap]);
-    const [cursor, setCursor] = useState(initialFocus);
-    const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-    // Push DOM focus to match the cursor so screen readers + cheap
-    // WebViews track the highlight ring.
-    useEffect(() => {
-        buttonRefs.current[cursor]?.focus({ preventScroll: true });
-    }, [cursor]);
-
-    // Window-level capture-phase keyboard listener. See
-    // OptionPickerModal for the rationale - keys must reach the
-    // modal even when DOM focus is still on the underlying page,
-    // and underlying listeners (TabPill, page-level) must not see
-    // the keys at all while the modal is open.
-    const onPickRef = useRef(onPick);
-    const onCloseRef = useRef(onClose);
-    onPickRef.current = onPick;
-    onCloseRef.current = onClose;
-
-    // Hardware Back on the TV remote routes through the Kotlin
-    // shell -> __jellybeanBack stack, not Backspace keydown. Push
-    // our own handler so the modal closes without relying on the
-    // page's parent handler.
-    useProgressiveBack(() => {
-        onCloseRef.current();
-        return true;
+    // Borrow useDpadCursor for cursor state + ref array + the
+    // focus-on-armed effect. `enabled: false` skips its vertical-list
+    // keyboard listener; we install our own grid-shaped one below.
+    // onActivate is unreachable while disabled but the prop is
+    // required.
+    const dpad = useDpadCursor({
+        count: ALPHA_KEYS.length,
+        initial: initialFocus,
+        enabled: false,
+        onActivate: () => {},
     });
+    const { cursor, setCursor } = dpad;
+
+    const onPickRef = useRef(onPick);
+    onPickRef.current = onPick;
     const cursorRef = useRef(cursor);
     cursorRef.current = cursor;
     const indexMapRef = useRef(indexMap);
     indexMapRef.current = indexMap;
 
+    // Grid-shaped keyboard handler. KidModalShell already consumed
+    // Escape / Backspace -> close, repeat keydowns, and pre-arm
+    // Enter / Space, so we only see clean nav + activation events.
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             const k = e.key;
@@ -91,19 +90,12 @@ export default function AlphaPickerModal({
                 k === "ArrowLeft" ||
                 k === "ArrowRight" ||
                 k === "Enter" ||
-                k === " " ||
-                k === "Escape" ||
-                k === "Backspace";
+                k === " ";
             if (!handles) return;
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
-            if (e.repeat) return;
             switch (k) {
-                case "Escape":
-                case "Backspace":
-                    onCloseRef.current();
-                    return;
                 case "ArrowLeft":
                     setCursor((c) => (c % ALPHA_GRID_COLS === 0 ? c : c - 1));
                     return;
@@ -149,57 +141,51 @@ export default function AlphaPickerModal({
         onPick(target);
     }
 
-    return createPortal(
-        <div
-            className="alpha-picker-backdrop"
-            role="dialog"
-            aria-modal
-            aria-label="Jump to letter"
-            onClick={onClose}
+    return (
+        <KidModalShell
+            onClose={onClose}
+            ariaLabel="Jump to letter"
+            backdropClassName="alpha-picker-backdrop"
+            cardClassName="alpha-picker-card"
         >
+            <h2 className="alpha-picker-title">Jump to letter</h2>
             <div
-                className="alpha-picker-card"
-                onClick={(e) => e.stopPropagation()}
-                role="document"
+                className="alpha-picker-grid"
+                style={
+                    {
+                        "--cols": String(ALPHA_GRID_COLS),
+                    } as React.CSSProperties
+                }
             >
-                <h2 className="alpha-picker-title">Jump to letter</h2>
-                <div
-                    className="alpha-picker-grid"
-                    style={
-                        {
-                            "--cols": String(ALPHA_GRID_COLS),
-                        } as React.CSSProperties
-                    }
-                >
-                    {ALPHA_KEYS.map((key, i) => {
-                        const enabled = indexMap[key] !== undefined;
-                        const focused = cursor === i;
-                        return (
-                            <button
-                                key={key}
-                                ref={(el) => (buttonRefs.current[i] = el)}
-                                type="button"
-                                className={`alpha-picker-cell ${
-                                    enabled ? "" : "disabled"
-                                } ${focused ? "focused" : ""}`}
-                                onClick={() => activate(i)}
-                                onFocus={() => setCursor(i)}
-                                tabIndex={focused ? 0 : -1}
-                                aria-disabled={!enabled}
-                                aria-label={
-                                    key === "#" ? "Other (numbers / symbols)" : key
-                                }
-                            >
-                                {key}
-                            </button>
-                        );
-                    })}
-                </div>
-                <p className="alpha-picker-hint" aria-hidden>
-                    Back to close
-                </p>
+                {ALPHA_KEYS.map((key, i) => {
+                    const enabled = indexMap[key] !== undefined;
+                    const focused = cursor === i;
+                    return (
+                        <button
+                            key={key}
+                            ref={dpad.register(i) as (
+                                el: HTMLButtonElement | null,
+                            ) => void}
+                            type="button"
+                            className={`alpha-picker-cell ${
+                                enabled ? "" : "disabled"
+                            } ${focused ? "focused" : ""}`}
+                            onClick={() => activate(i)}
+                            onFocus={() => setCursor(i)}
+                            tabIndex={focused ? 0 : -1}
+                            aria-disabled={!enabled}
+                            aria-label={
+                                key === "#" ? "Other (numbers / symbols)" : key
+                            }
+                        >
+                            {key}
+                        </button>
+                    );
+                })}
             </div>
-        </div>,
-        document.body,
+            <p className="alpha-picker-hint" aria-hidden>
+                Back to close
+            </p>
+        </KidModalShell>
     );
 }

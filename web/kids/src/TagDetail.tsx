@@ -8,29 +8,28 @@ import {
 } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ArrowBendRightDown } from "@phosphor-icons/react";
-import {
-    authHeaders,
-    clearSession,
-    getSession,
-    withAuthRetry,
-    type Session,
-} from "./auth";
+import { getSession, type Session } from "./auth";
+import { useKidsResource } from "./useKidsResource";
+import { sessionCache } from "./kidsCache";
 import Tile, { type TileItem } from "./Tile";
+import TileGrid, { type GridFocus, type GridSection } from "./TileGrid";
 import AlphaPickerModal from "./AlphaPickerModal";
 import OptionPickerModal from "./OptionPickerModal";
 import OverrideModal, { useLongPressEnter } from "./OverrideModal";
 import { useItemHiddenEvent } from "./itemHidden";
 import { useStackScroll } from "./useStackScroll";
 import { useProgressiveBack } from "./useProgressiveBack";
-import { TAG_ICONS, isTagIconName } from "./tagIcons";
+import { useHomeTabFocus } from "./useHomeTabFocus";
 import {
+    TAG_ICONS,
+    isTagIconName,
     bucketByAdded,
     bucketByWatched,
     ADDED_ORDER,
     WATCHED_ORDER,
     type AddedBucket,
     type WatchedBucket,
-} from "./dateBuckets";
+} from "jellybean-shared";
 
 // TagDetail renders all visible items inside a single tag, in the
 // kid's chosen filter + sort order. Reached from the Tags list page
@@ -42,8 +41,15 @@ import {
 //
 // Filter (all / movies / shows) and Sort (a-z / recently watched /
 // recently added) live in the same OptionPickerModal-driven dropdown
-// pattern as Library, so the two pages feel consistent.
+// pattern as Library, so the two pages feel consistent. The sectioned
+// grid + arrow nav inside it lives in <TileGrid>; this page owns the
+// header chrome (back / filter / sort / jump) and the empty-state
+// recovery button.
 
+// TODO(types): TagDetail still uses lowercase keys; normalize
+// server-side to the canonical Item PascalCase shape (see
+// jellybean-shared `Item`) and switch this to a Pick<Item, ...> like
+// the other kid pages.
 type TagItem = {
     id: string;
     name: string;
@@ -113,12 +119,6 @@ function labelFor<T extends { id: string; label: string }>(
     return list.find((o) => o.id === id)?.label ?? "";
 }
 
-type Section = {
-    id: string;
-    title?: string;
-    items: TagItem[];
-};
-
 const ADDED_TITLES: Record<AddedBucket, string> = {
     today: "Added today",
     week: "Added this week",
@@ -137,7 +137,10 @@ const WATCHED_TITLES: Record<WatchedBucket, string> = {
     never: "Never watched",
 };
 
-function buildSections(items: TagItem[], sort: SortId): Section[] {
+function buildSections(
+    items: TagItem[],
+    sort: SortId,
+): GridSection<TagItem>[] {
     if (items.length === 0) return [];
     if (sort === "name") {
         return [{ id: "all", items }];
@@ -147,7 +150,7 @@ function buildSections(items: TagItem[], sort: SortId): Section[] {
         const buckets = bucketByAdded(adapted);
         return ADDED_ORDER.filter((b) => buckets[b].length > 0).map((b) => ({
             id: `added:${b}`,
-            title: ADDED_TITLES[b],
+            label: ADDED_TITLES[b],
             items: buckets[b].map((x) => x.it),
         }));
     }
@@ -160,7 +163,7 @@ function buildSections(items: TagItem[], sort: SortId): Section[] {
     const buckets = bucketByWatched(adapted);
     return WATCHED_ORDER.filter((b) => buckets[b].length > 0).map((b) => ({
         id: `watched:${b}`,
-        title: WATCHED_TITLES[b],
+        label: WATCHED_TITLES[b],
         items: buckets[b].map((x) => x.it),
     }));
 }
@@ -216,17 +219,43 @@ export default function TagDetail() {
     const playSuffix = searchParams.toString()
         ? `?${searchParams.toString()}`
         : "";
-    const [data, setData] = useState<TagDetailResponse | null>(null);
-    const [error, setError] = useState<string | null>(null);
     const [sort, setSort] = useState<SortId>(() => readSort());
     const [filter, setFilter] = useState<FilterId>(() => readFilter());
+    const detailURL = useMemo(() => {
+        if (!tagId) return null;
+        if (!session && !adminProfileId) return null;
+        const url = new URL(
+            `/api/kids/tags/${encodeURIComponent(tagId)}`,
+            window.location.origin,
+        );
+        url.searchParams.set("sort", sort);
+        url.searchParams.set("filter", filter);
+        if (adminProfileId) url.searchParams.set("profileId", adminProfileId);
+        return url.toString();
+    }, [tagId, sort, filter, adminProfileId, session]);
+    const cache = useMemo(() => sessionCache<TagDetailResponse>(), []);
+    const detailCacheKey = `jellybean.kids.tagDetail.cache.${tagId ?? "x"}.${adminProfileId ?? "kid"}.${filter}.${sort}`;
+    const { data: fetchedData, error } = useKidsResource<TagDetailResponse>({
+        url: detailURL,
+        cache,
+        cacheKey: detailCacheKey,
+    });
+    const [data, setData] = useState<TagDetailResponse | null>(fetchedData);
+    useEffect(() => {
+        if (fetchedData) setData(fetchedData);
+    }, [fetchedData]);
     const [filterOpen, setFilterOpen] = useState(false);
     const [sortOpen, setSortOpen] = useState(false);
     const [jumpOpen, setJumpOpen] = useState(false);
-    const [focus, setFocus] = useState<Focus>({
-        kind: "tile",
-        section: 0,
-        item: 0,
+    // TagDetail lives outside KidsHome (no tab nav), so useHomeTabFocus
+    // is invoked without `tabNav`: the hook just manages the focus
+    // state machine. The back-then-down contract doesn't apply here -
+    // Back navigates straight to /tags - so handleBack is unused; we
+    // call the hook for symmetry with the home tabs and to keep
+    // "first content slot" defined in one place.
+    const { focus, setFocus } = useHomeTabFocus<Focus>({
+        initialFocus: { kind: "tile", section: 0, item: 0 },
+        getFirstContentSlot: () => ({ kind: "tile", section: 0, item: 0 }),
     });
     const [override, setOverride] = useState<
         {
@@ -258,8 +287,6 @@ export default function TagDetail() {
     const sortBtnRef = useRef<HTMLButtonElement | null>(null);
     const jumpBtnRef = useRef<HTMLButtonElement | null>(null);
     const emptyActionRef = useRef<HTMLButtonElement | null>(null);
-    const tileRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-    const sectionGridRefs = useRef<(HTMLDivElement | null)[]>([]);
 
     useEffect(() => {
         if (!session && !adminProfileId) {
@@ -307,48 +334,6 @@ export default function TagDetail() {
             /* ignore */
         }
     }, [filter]);
-
-    useEffect(() => {
-        if (!tagId) return;
-        let cancelled = false;
-        async function run() {
-            try {
-                const url = new URL(
-                    `/api/kids/tags/${encodeURIComponent(tagId!)}`,
-                    window.location.origin,
-                );
-                url.searchParams.set("sort", sort);
-                url.searchParams.set("filter", filter);
-                if (adminProfileId) {
-                    url.searchParams.set("profileId", adminProfileId);
-                }
-                const res = await withAuthRetry(() =>
-                    fetch(url.toString(), {
-                        credentials: "same-origin",
-                        headers: authHeaders(),
-                    }),
-                );
-                if (!res.ok) {
-                    if (res.status === 401) {
-                        clearSession();
-                        nav("/login", { replace: true });
-                        return;
-                    }
-                    throw new Error(`${res.status}`);
-                }
-                const body = (await res.json()) as TagDetailResponse;
-                if (!cancelled) setData(body);
-            } catch (err) {
-                if (!cancelled) {
-                    setError(err instanceof Error ? err.message : "load failed");
-                }
-            }
-        }
-        void run();
-        return () => {
-            cancelled = true;
-        };
-    }, [tagId, sort, filter, adminProfileId, nav]);
 
     useEffect(() => {
         if (data) {
@@ -410,39 +395,23 @@ export default function TagDetail() {
         setFocus({ kind: "tile", section: 0, item: 0 });
     }, [data, sections, focus, showEmptyAction]);
 
-    const columns = useGridColumns(sectionGridRefs, sections);
-
+    // Focus DOM management for chrome focus. TileGrid handles the
+    // tile case (focus + scroll on cell change) on its own.
     useEffect(() => {
+        if (focus.kind === "tile") return;
         if (focus.kind === "back") {
             backRef.current?.focus({ preventScroll: true });
-            stack.scrollToTop();
         } else if (focus.kind === "filter") {
             filterBtnRef.current?.focus({ preventScroll: true });
-            stack.scrollToTop();
         } else if (focus.kind === "sort") {
             sortBtnRef.current?.focus({ preventScroll: true });
-            stack.scrollToTop();
         } else if (focus.kind === "jump") {
             jumpBtnRef.current?.focus({ preventScroll: true });
-            stack.scrollToTop();
         } else if (focus.kind === "emptyAction") {
             emptyActionRef.current?.focus({ preventScroll: true });
-            stack.scrollToTop();
-        } else if (focus.kind === "tile") {
-            const key = `tile:${focus.section}:${focus.item}`;
-            const el = tileRefs.current[key];
-            if (el) {
-                el.focus({ preventScroll: true });
-                const onFirstRow =
-                    focus.section === 0 && focus.item < Math.max(1, columns);
-                if (onFirstRow) {
-                    stack.scrollToTop();
-                } else {
-                    stack.scrollToCenter(el);
-                }
-            }
         }
-    }, [focus, data, columns, stack]);
+        stack.scrollToTop();
+    }, [focus, stack]);
 
     useProgressiveBack(
         useCallback(() => {
@@ -498,9 +467,27 @@ export default function TagDetail() {
         onLongPress: handleLongPress,
     });
 
+    // Bridge TagDetail's Focus union to TileGrid's GridFocus shape.
+    // null means a chrome control is focused and TileGrid should idle.
+    const gridFocus: GridFocus | null =
+        focus.kind === "tile"
+            ? { sectionIdx: focus.section, itemIdx: focus.item }
+            : null;
+    const onGridFocusChange = useCallback((g: GridFocus) => {
+        setFocus({ kind: "tile", section: g.sectionIdx, item: g.itemIdx });
+    }, []);
+    const onGridExitTop = useCallback(() => {
+        // Up off section 0 row 0 hands focus back to the back button.
+        setFocus({ kind: "back" });
+    }, []);
+
+    // Page keydown for chrome (back / filter / sort / jump /
+    // emptyAction). TileGrid runs its own listener for tile arrow
+    // nav when tile focus is active.
     useEffect(() => {
         if (override) return;
         if (filterOpen || sortOpen || jumpOpen) return;
+        if (focus.kind === "tile") return; // TileGrid owns the keys here
         const onKey = (e: KeyboardEvent) => {
             const k = e.key;
             if (
@@ -515,10 +502,9 @@ export default function TagDetail() {
             }
             e.preventDefault();
             const totalSections = sections.length;
-            // When the kid is on a chrome control (back / filter /
-            // sort / jump) and there's no content, ArrowDown lands
-            // on the empty-state recovery button if it's shown,
-            // else stays on the chrome row.
+            // ArrowDown from any chrome control lands on the first
+            // tile if there is one, else on the empty-state recovery
+            // button (when shown), else stays put.
             const downToContent = (): Focus | null => {
                 if (totalSections > 0) {
                     return { kind: "tile", section: 0, item: 0 };
@@ -599,18 +585,20 @@ export default function TagDetail() {
                 }
                 return;
             }
-            if (focus.kind === "tile") {
-                setFocus((f) =>
-                    f.kind === "tile"
-                        ? moveTile(f, k, sections, columns)
-                        : f,
-                );
-                return;
-            }
         };
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [focus, sections, columns, nav, playSuffix, override, filterOpen, sortOpen, jumpOpen, showEmptyAction]);
+    }, [
+        focus,
+        sections,
+        nav,
+        playSuffix,
+        override,
+        filterOpen,
+        sortOpen,
+        jumpOpen,
+        showEmptyAction,
+    ]);
 
     const goBack = () => nav(`/tags${playSuffix}`);
 
@@ -768,65 +756,49 @@ export default function TagDetail() {
                     </p>
                 )
             ) : (
-                <>
-                    {sections.map((s, sIdx) => (
-                        <section
-                            key={s.id}
-                            className="kids-section"
-                            aria-label={s.title ?? data.name}
-                        >
-                            {s.title && (
-                                <h2 className="kids-section-title">
-                                    {s.title}
-                                </h2>
-                            )}
-                            <div
-                                className="grid kids-tag-detail-grid"
-                                ref={(el) =>
-                                    (sectionGridRefs.current[sIdx] = el)
-                                }
-                            >
-                                {s.items.map((it, i) => {
-                                    const key = `tile:${sIdx}:${i}`;
-                                    const isFoc =
-                                        focus.kind === "tile" &&
-                                        focus.section === sIdx &&
-                                        focus.item === i;
-                                    return (
-                                        <Tile
-                                            key={`${s.id}:${it.id}`}
-                                            item={adaptItem(it)}
-                                            size="library"
-                                            focused={isFoc}
-                                            showProgress
-                                            priority
-                                            onClick={() => {
-                                                setFocus({
-                                                    kind: "tile",
-                                                    section: sIdx,
-                                                    item: i,
-                                                });
-                                                nav(
-                                                    `/watch/${encodeURIComponent(it.id)}${playSuffix}`,
-                                                );
-                                            }}
-                                            onFocus={() =>
-                                                setFocus({
-                                                    kind: "tile",
-                                                    section: sIdx,
-                                                    item: i,
-                                                })
-                                            }
-                                            refCallback={(el) => {
-                                                tileRefs.current[key] = el;
-                                            }}
-                                        />
-                                    );
-                                })}
-                            </div>
-                        </section>
-                    ))}
-                </>
+                <TileGrid<TagItem>
+                    items={data.items}
+                    sections={sections}
+                    focus={gridFocus}
+                    onFocusChange={onGridFocusChange}
+                    onExitTop={onGridExitTop}
+                    enabled={
+                        !override && !filterOpen && !sortOpen && !jumpOpen
+                    }
+                    scrollToTop={stack.scrollToTop}
+                    scrollToCenter={stack.scrollToCenter}
+                    gridClassName="kids-tag-detail-grid"
+                    renderCell={(it, isFoc, refCallback, ctx) => (
+                        <Tile
+                            key={`${sections[ctx.sectionIdx].id}:${it.id}`}
+                            item={adaptItem(it)}
+                            size="library"
+                            focused={isFoc}
+                            showProgress
+                            priority
+                            onClick={() => {
+                                setFocus({
+                                    kind: "tile",
+                                    section: ctx.sectionIdx,
+                                    item: ctx.itemIdx,
+                                });
+                                nav(
+                                    `/watch/${encodeURIComponent(it.id)}${playSuffix}`,
+                                );
+                            }}
+                            onFocus={() =>
+                                setFocus({
+                                    kind: "tile",
+                                    section: ctx.sectionIdx,
+                                    item: ctx.itemIdx,
+                                })
+                            }
+                            refCallback={(el) =>
+                                refCallback(el as HTMLElement | null)
+                            }
+                        />
+                    )}
+                />
             )}
             </div>
             {override && (
@@ -888,7 +860,7 @@ export default function TagDetail() {
                         title="Jump to"
                         options={sections.map((s) => ({
                             id: s.id,
-                            label: s.title ?? "All",
+                            label: s.label ?? "All",
                         }))}
                         currentId=""
                         onSelect={(id) => {
@@ -914,125 +886,6 @@ export default function TagDetail() {
                 ))}
         </div>
     );
-}
-
-function moveTile(
-    f: { kind: "tile"; section: number; item: number },
-    key: string,
-    sections: Section[],
-    columns: number,
-): Focus {
-    const cols = Math.max(1, columns);
-    const sec = sections[f.section];
-    if (!sec) return f;
-    const len = sec.items.length;
-    const i = f.item;
-    const col = i % cols;
-    const rowInSec = Math.floor(i / cols);
-    if (key === "ArrowLeft") {
-        if (col === 0) return f;
-        return { kind: "tile", section: f.section, item: i - 1 };
-    }
-    if (key === "ArrowRight") {
-        if (col + 1 >= cols || i + 1 >= len) return f;
-        return { kind: "tile", section: f.section, item: i + 1 };
-    }
-    if (key === "ArrowDown") {
-        const nextRowStart = (rowInSec + 1) * cols;
-        if (nextRowStart < len) {
-            const nextRowItems = Math.min(cols, len - nextRowStart);
-            const target = Math.min(col, nextRowItems - 1);
-            return {
-                kind: "tile",
-                section: f.section,
-                item: nextRowStart + target,
-            };
-        }
-        const nextSec = sections[f.section + 1];
-        if (nextSec) {
-            const firstRowItems = Math.min(cols, nextSec.items.length);
-            const target = Math.min(col, firstRowItems - 1);
-            return {
-                kind: "tile",
-                section: f.section + 1,
-                item: Math.max(0, target),
-            };
-        }
-        return f;
-    }
-    if (key === "ArrowUp") {
-        if (rowInSec > 0) {
-            const prevRowStart = (rowInSec - 1) * cols;
-            return {
-                kind: "tile",
-                section: f.section,
-                item: prevRowStart + col,
-            };
-        }
-        if (f.section > 0) {
-            const prev = sections[f.section - 1];
-            const prevLen = prev.items.length;
-            const lastRowStart = Math.floor((prevLen - 1) / cols) * cols;
-            const lastRowItems = prevLen - lastRowStart;
-            const target = Math.min(col, lastRowItems - 1);
-            return {
-                kind: "tile",
-                section: f.section - 1,
-                item: lastRowStart + Math.max(0, target),
-            };
-        }
-        return { kind: "back" };
-    }
-    return f;
-}
-
-// See Library's useGridColumns for the rationale: read
-// gridTemplateColumns from computed style so a section with a single
-// item (e.g. "Added today" with 1 entry) doesn't collapse the
-// reported column count to 1.
-function useGridColumns(
-    refs: React.MutableRefObject<(HTMLDivElement | null)[]>,
-    sections: Section[],
-): number {
-    const [cols, setCols] = useState(4);
-    useEffect(() => {
-        const update = () => {
-            const grid = refs.current.find((g) => g && g.children.length > 0);
-            if (!grid) return;
-            const tpl = window
-                .getComputedStyle(grid)
-                .gridTemplateColumns.trim();
-            if (tpl && tpl !== "none") {
-                const tracks = tpl.split(/\s+/).filter(Boolean).length;
-                if (tracks > 0) {
-                    setCols(tracks);
-                    return;
-                }
-            }
-            let best: HTMLDivElement | null = null;
-            let bestLen = 0;
-            for (const g of refs.current) {
-                if (g && g.children.length > bestLen) {
-                    best = g;
-                    bestLen = g.children.length;
-                }
-            }
-            if (!best) return;
-            const first = best.children[0] as HTMLElement;
-            const firstTop = first.offsetTop;
-            let count = 0;
-            for (let i = 0; i < best.children.length; i++) {
-                const c = best.children[i] as HTMLElement;
-                if (Math.abs(c.offsetTop - firstTop) > 1) break;
-                count++;
-            }
-            if (count > 0) setCols(count);
-        };
-        update();
-        window.addEventListener("resize", update);
-        return () => window.removeEventListener("resize", update);
-    }, [refs, sections]);
-    return cols;
 }
 
 function TagIcon({ name }: { name?: string }) {
