@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/fisherevans/jellybean/internal/auth"
+	"github.com/fisherevans/jellybean/internal/browse"
 	"github.com/fisherevans/jellybean/internal/curation"
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
@@ -346,12 +347,11 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 			writeUpstreamError(w, err, "failed to load continue watching")
 			return
 		}
-		// Episode→series rewrite (see resumeIDsForCuration in
-		// browse_resolver.go for rationale): episodes have no
-		// per-episode curation state; we surface their parent series
-		// instead so categorization filters work and the kid sees
-		// one tile per show.
-		ids := resumeIDsForCuration(res.Items)
+		// Episode→series rewrite (see browse.ResumeIDsForCuration for
+		// rationale): episodes have no per-episode curation state; we
+		// surface their parent series instead so categorization filters
+		// work and the kid sees one tile per show.
+		ids := browse.ResumeIDsForCuration(res.Items)
 		visible, err := s.curation.EffectiveItemVisibilityBulk(ctx, profileID, ids)
 		if err != nil {
 			s.logger.Error().Err(err).Msg("resume visibility lookup")
@@ -1007,18 +1007,18 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		Msg("kids stream resolved")
 
 	resp := kidsStreamResponse{
-		StreamURL:           resolution.StreamURL,
-		ItemID:              id,
-		ItemName:            item.Name,
-		ItemType:            item.Type,
-		SeriesID:            item.SeriesID,
-		SeriesName:          item.SeriesName,
-		ParentIndexNumber:   item.ParentIndexNumber,
-		IndexNumber:    item.IndexNumber,
-		ProductionYear: item.ProductionYear,
-		RunTimeTicks:   item.RunTimeTicks,
-		MediaSourceID:  resolution.MediaSourceID,
-		PlaybackPath:   string(resolution.Path),
+		StreamURL:         resolution.StreamURL,
+		ItemID:            id,
+		ItemName:          item.Name,
+		ItemType:          item.Type,
+		SeriesID:          item.SeriesID,
+		SeriesName:        item.SeriesName,
+		ParentIndexNumber: item.ParentIndexNumber,
+		IndexNumber:       item.IndexNumber,
+		ProductionYear:    item.ProductionYear,
+		RunTimeTicks:      item.RunTimeTicks,
+		MediaSourceID:     resolution.MediaSourceID,
+		PlaybackPath:      string(resolution.Path),
 	}
 	if item.UserData != nil {
 		resp.UserData = item.UserData
@@ -1038,7 +1038,6 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
-
 
 // kidsItemResponse is the lightweight metadata payload for the M7
 // watch menu. Distinct from kidsStreamResponse: this endpoint does NOT
@@ -1348,14 +1347,14 @@ func (s *Server) kidsPreferredAudioStreamIndex(ctx context.Context, item *jellyf
 // Episode items, used by the kid player to display "S1E2" alongside
 // the episode title.
 type kidsStreamResponse struct {
-	StreamURL         string                 `json:"streamUrl"`
-	ItemID            string                 `json:"itemId"`
-	ItemName          string                 `json:"itemName"`
-	ItemType          string                 `json:"itemType,omitempty"`
-	SeriesID          string                 `json:"seriesId,omitempty"`
-	SeriesName        string                 `json:"seriesName,omitempty"`
-	ParentIndexNumber *int                   `json:"parentIndexNumber,omitempty"`
-	IndexNumber       *int                   `json:"indexNumber,omitempty"`
+	StreamURL         string `json:"streamUrl"`
+	ItemID            string `json:"itemId"`
+	ItemName          string `json:"itemName"`
+	ItemType          string `json:"itemType,omitempty"`
+	SeriesID          string `json:"seriesId,omitempty"`
+	SeriesName        string `json:"seriesName,omitempty"`
+	ParentIndexNumber *int   `json:"parentIndexNumber,omitempty"`
+	IndexNumber       *int   `json:"indexNumber,omitempty"`
 	// FavoriteItemID is the id the heart-toggle on the player
 	// header should target. For movies that's the item itself; for
 	// episodes it's the parent series, since favorites surface as
@@ -1449,10 +1448,10 @@ func (s *Server) handleKidsNextUp(w http.ResponseWriter, r *http.Request) {
 }
 
 type kidsNextUpResponse struct {
-	EpisodeID         string                 `json:"episodeId"`
-	Name              string                 `json:"name"`
-	SeriesID          string                 `json:"seriesId,omitempty"`
-	SeriesName        string                 `json:"seriesName,omitempty"`
+	EpisodeID  string `json:"episodeId"`
+	Name       string `json:"name"`
+	SeriesID   string `json:"seriesId,omitempty"`
+	SeriesName string `json:"seriesName,omitempty"`
 	// Episode-within-season number; the kid's "Up Next" overlay
 	// reads these to render an "S2E04" badge alongside the title.
 	IndexNumber       *int                   `json:"indexNumber,omitempty"`
