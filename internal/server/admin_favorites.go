@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -23,15 +22,14 @@ import (
 // "now hidden" indicator and lets the admin decide whether to drop
 // the favorite (per the design - we do NOT auto-prune).
 func (s *Server) handleAdminListKidFavorites(w http.ResponseWriter, r *http.Request) {
-	id, err := parseIDParam(mux.Vars(r)["id"])
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad kid id", http.StatusBadRequest)
 		return
 	}
 	kid, err := s.curation.GetKid(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, curation.ErrKidNotFound) {
-			http.Error(w, "kid not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		s.logger.Error().Err(err).Msg("get kid")
@@ -101,7 +99,7 @@ func (s *Server) handleAdminListKidFavorites(w http.ResponseWriter, r *http.Requ
 // handleAdminAddKidFavorite is idempotent (the underlying storage
 // uses ON CONFLICT DO NOTHING). Returns 204 either way.
 func (s *Server) handleAdminAddKidFavorite(w http.ResponseWriter, r *http.Request) {
-	kidID, err := parseIDParam(mux.Vars(r)["id"])
+	kidID, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad kid id", http.StatusBadRequest)
 		return
@@ -113,8 +111,7 @@ func (s *Server) handleAdminAddKidFavorite(w http.ResponseWriter, r *http.Reques
 	}
 	// Confirm the kid exists so a typo'd id doesn't silently no-op.
 	if _, err := s.curation.GetKid(r.Context(), kidID); err != nil {
-		if errors.Is(err, curation.ErrKidNotFound) {
-			http.Error(w, "kid not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		s.logger.Error().Err(err).Msg("get kid")
@@ -133,7 +130,7 @@ func (s *Server) handleAdminAddKidFavorite(w http.ResponseWriter, r *http.Reques
 // whether or not the row existed - removing a non-favorite is a no-op
 // for the UI.
 func (s *Server) handleAdminRemoveKidFavorite(w http.ResponseWriter, r *http.Request) {
-	kidID, err := parseIDParam(mux.Vars(r)["id"])
+	kidID, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad kid id", http.StatusBadRequest)
 		return

@@ -1,14 +1,9 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
-	"strconv"
 	"time"
 
-	"github.com/gorilla/mux"
-
-	"github.com/fisherevans/jellybean/internal/auth"
 	"github.com/fisherevans/jellybean/internal/curation"
 )
 
@@ -44,13 +39,8 @@ func (s *Server) handleKidsViewingState(w http.ResponseWriter, r *http.Request) 
 // admin tools that may want to write them later.
 
 func (s *Server) handleAdminProfileViewingControls(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
@@ -63,20 +53,15 @@ func (s *Server) handleAdminProfileViewingControls(w http.ResponseWriter, r *htt
 }
 
 func (s *Server) handleAdminUpdateProfileViewingControls(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
-	var body struct {
+	body, err := decodeJSON[struct {
 		AutoOffClockTime string `json:"autoOffClockTime"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	}](r, 0)
+	if err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}

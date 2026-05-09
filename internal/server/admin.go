@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -49,16 +48,17 @@ func requireProfileID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 // so the UI can render and act on it without a second round trip.
 //
 // Query params:
-//   profileId  - REQUIRED. Which profile's state to surface and filter by.
-//   type       - Jellyfin item type (default Movie)
-//   limit      - 1..200, default 50
-//   startIndex - pagination offset, default 0
-//   search     - substring on name (passed through to Jellyfin's
-//                searchTerm), capped at 200 chars
-//   state      - visible | hidden | unset; if set, only items in that
-//                state for this profile are returned
-//   suggest    - "true" to enrich each item with an auto-categorization
-//                suggestion
+//
+//	profileId  - REQUIRED. Which profile's state to surface and filter by.
+//	type       - Jellyfin item type (default Movie)
+//	limit      - 1..200, default 50
+//	startIndex - pagination offset, default 0
+//	search     - substring on name (passed through to Jellyfin's
+//	             searchTerm), capped at 200 chars
+//	state      - visible | hidden | unset; if set, only items in that
+//	             state for this profile are returned
+//	suggest    - "true" to enrich each item with an auto-categorization
+//	             suggestion
 func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 	profileID, ok := requireProfileID(w, r)
 	if !ok {
@@ -458,8 +458,8 @@ func (s *Server) handleAdminSetState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "item id required", http.StatusBadRequest)
 		return
 	}
-	var req setStateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[setStateRequest](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -491,8 +491,8 @@ type bulkStateRequest struct {
 }
 
 func (s *Server) handleAdminBulkState(w http.ResponseWriter, r *http.Request) {
-	var req bulkStateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[bulkStateRequest](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}

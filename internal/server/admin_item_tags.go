@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -59,8 +58,8 @@ func (s *Server) handleAdminSetItemTags(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var req setItemTagsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, err := decodeJSON[setItemTagsRequest](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -125,4 +124,3 @@ func (s *Server) handleAdminSetItemTags(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tags": out})
 }
-
