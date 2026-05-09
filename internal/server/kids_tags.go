@@ -54,16 +54,7 @@ type kidsTagsResponse struct {
 //
 // GET /api/kids/tags
 func (s *Server) handleKidsListTags(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	profileID, msg := s.resolveKidsProfileID(r, kc)
-	if msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
-		return
-	}
+	kc, profileID := KidsContextFromRequest(r)
 	ctx := r.Context()
 
 	tags, err := s.curation.ListTags(ctx, curation.TagSortName)
@@ -229,16 +220,7 @@ type kidsTagDetailResponse struct {
 //
 // GET /api/kids/tags/{id}
 func (s *Server) handleKidsTagDetail(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	profileID, msg := s.resolveKidsProfileID(r, kc)
-	if msg != "" {
-		http.Error(w, msg, http.StatusBadRequest)
-		return
-	}
+	kc, profileID := KidsContextFromRequest(r)
 	tagID, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
 	if err != nil || tagID <= 0 {
 		http.Error(w, "bad tag id", http.StatusBadRequest)

@@ -106,11 +106,7 @@ func (s *Server) handleAdminDeleteMode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleKidsActiveMode(w http.ResponseWriter, r *http.Request) {
-	kc := s.resolveKidsAuth(r)
-	if kc == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
+	kc, _ := KidsContextFromRequest(r)
 	if kc.KidID == 0 {
 		writeJSON(w, http.StatusOK, &curation.ActiveMode{Source: "none"})
 		return
