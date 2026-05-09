@@ -18,7 +18,6 @@ import {
 import type { Item as SharedItem, ItemUserData } from "jellybean-shared";
 import {
     authHeaders,
-    clearSession,
     getSession,
     imageAuthSuffix,
     withAuthRetry,
@@ -28,6 +27,7 @@ import { getHomeTab } from "./kidNav";
 import OverrideModal, { useLongPressEnter } from "./OverrideModal";
 import { scrollWindowToCenter, scrollWindowToTop } from "./smoothScroll";
 import { useProgressiveBack } from "./useProgressiveBack";
+import { useKidsResource } from "./useKidsResource";
 
 // Watch menu (M7). Pre-playback interstitial that surfaces a hero
 // (poster + title + Play / Resume / Restart) over a blurred backdrop.
@@ -84,8 +84,77 @@ export default function Watch() {
     const [session] = useState<Session | null>(() => getSession());
 
     const [item, setItem] = useState<Item | null>(null);
-    const [episodes, setEpisodes] = useState<EpisodesResponse | null>(null);
-    const [error, setError] = useState<string | null>(null);
+
+    // Item + episodes fetch via the shared hook. Both are
+    // mount-/itemId-scoped reads; auth handling, 401-bounce, and
+    // cancelled-flag bookkeeping live in useKidsResource. The hook's
+    // `error` is surfaced for the item path (it's the load-bearing
+    // page render); the episodes-list error stays silent (the hero
+    // button shows "Loading episodes…" until the response lands and
+    // the kid notices nothing if it never does, since the resume
+    // target is what matters).
+    type ItemBody = {
+        itemId: string;
+        itemName: string;
+        itemType?: string;
+        productionYear?: number;
+        runtimeTicks?: number;
+        userData?: ItemUserData;
+        seriesId?: string;
+        isFavorite?: boolean;
+    };
+    const adminProfileId = searchParams.get("profileId");
+    const itemURL = useMemo(() => {
+        if (!itemId) return null;
+        if (!session && !adminProfileId) return null;
+        // /items/{id} returns metadata only (no PostPlaybackInfo, no
+        // transcode session). We deliberately don't hit /stream
+        // until the user actually picks Play / Resume, since opening
+        // the watch menu shouldn't kick off a transcode for content
+        // the kid hasn't decided to play.
+        const url = new URL(
+            `/api/kids/items/${encodeURIComponent(itemId)}`,
+            window.location.origin,
+        );
+        // Always send adminProfileId when present. The server
+        // prefers admin cookie auth over the bearer token, so a
+        // stale kid session in localStorage doesn't help the admin
+        // preview path - the query param is what tells the server
+        // which profile to scope to.
+        if (adminProfileId) {
+            url.searchParams.set("profileId", adminProfileId);
+        }
+        return url.toString();
+    }, [itemId, session, adminProfileId]);
+    const { data: itemBody, error } = useKidsResource<ItemBody>({
+        url: itemURL,
+    });
+    useEffect(() => {
+        if (!itemBody) return;
+        setItem({
+            Id: itemBody.itemId,
+            Name: itemBody.itemName,
+            Type: itemBody.itemType ?? "Movie",
+            ProductionYear: itemBody.productionYear,
+            RunTimeTicks: itemBody.runtimeTicks,
+            UserData: itemBody.userData,
+            ImageTags: {},
+            IsFavorite: itemBody.isFavorite ?? false,
+        });
+    }, [itemBody]);
+
+    // Episode list (series only). The hook returns null while item
+    // is loading or the page is for a movie because of the URL gate
+    // - both keep episodes null and the hero defaults to a loading
+    // spinner button.
+    const episodesURL = useMemo(() => {
+        if (!item || item.Type !== "Series" || !itemId) return null;
+        return `/api/kids/series/${encodeURIComponent(itemId)}/episodes`;
+    }, [item, itemId]);
+    const { data: episodes } = useKidsResource<EpisodesResponse>({
+        url: episodesURL,
+    });
+
     // Adult override gesture (M9): long-press Enter (D-pad center)
     // on /watch targets the watched item itself - the kid is
     // reading its details so that's clearly what they'd want to
@@ -132,7 +201,6 @@ export default function Watch() {
         },
     });
 
-    const adminProfileId = searchParams.get("profileId");
     // Where Back should land: the home tab the kid was last on
     // (browse or library), tracked in sessionStorage by kidNav.ts.
     // Independent of browser history so this works for refresh,
@@ -292,73 +360,6 @@ export default function Watch() {
         return () => cancelAnimationFrame(id);
     }, [item?.Id, episodes]);
 
-    const fetchItem = useCallback(async () => {
-        if (!itemId) return;
-        // Skip when neither auth path is present - the auth gate
-        // above redirects to /login; firing the fetch anyway would
-        // briefly surface a 400 from the server.
-        if (!session && !adminProfileId) return;
-        try {
-            // /items/{id} returns metadata only (no PostPlaybackInfo,
-            // no transcode session). We deliberately don't hit
-            // /stream until the user actually picks Play / Resume,
-            // since opening the watch menu shouldn't kick off a
-            // transcode for content the kid hasn't decided to play.
-            const url = new URL(
-                `/api/kids/items/${encodeURIComponent(itemId)}`,
-                window.location.origin,
-            );
-            // Always send adminProfileId when present. The server
-            // prefers admin cookie auth over the bearer token, so
-            // a stale kid session in localStorage doesn't help the
-            // admin preview path - the query param is what tells
-            // the server which profile to scope to.
-            if (adminProfileId) {
-                url.searchParams.set("profileId", adminProfileId);
-            }
-            const res = await withAuthRetry(() =>
-                fetch(url.toString(), {
-                    credentials: "same-origin",
-                    headers: authHeaders(),
-                }),
-            );
-            if (!res.ok) {
-                if (res.status === 401) {
-                    clearSession();
-                    nav("/login", { replace: true });
-                    return;
-                }
-                throw new Error(`${res.status}: ${await res.text()}`);
-            }
-            const body = (await res.json()) as {
-                itemId: string;
-                itemName: string;
-                itemType?: string;
-                productionYear?: number;
-                runtimeTicks?: number;
-                userData?: ItemUserData;
-                seriesId?: string;
-                isFavorite?: boolean;
-            };
-            setItem({
-                Id: body.itemId,
-                Name: body.itemName,
-                Type: body.itemType ?? "Movie",
-                ProductionYear: body.productionYear,
-                RunTimeTicks: body.runtimeTicks,
-                UserData: body.userData,
-                ImageTags: {},
-                IsFavorite: body.isFavorite ?? false,
-            });
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "load failed");
-        }
-    }, [itemId, session, adminProfileId]);
-
-    useEffect(() => {
-        fetchItem();
-    }, [fetchItem]);
-
     // No auto-skip: /watch always renders the menu. Earlier we tried
     // to keep the "tile click -> play immediately" UX for fresh
     // movies by auto-pushing /play, but every approach to "remember
@@ -369,43 +370,6 @@ export default function Watch() {
     // path costs the kid one extra tap on fresh movies but makes
     // navigation predictable: Back always lands on /watch with the
     // menu, Back again lands on Browse.
-
-    // For series, also pull the episode list.
-    useEffect(() => {
-        if (!item || item.Type !== "Series" || !itemId) return;
-        let cancelled = false;
-        void (async () => {
-            try {
-                const res = await withAuthRetry(() =>
-                    fetch(
-                        `/api/kids/series/${encodeURIComponent(itemId)}/episodes`,
-                        {
-                            credentials: "same-origin",
-                            headers: authHeaders(),
-                        },
-                    ),
-                );
-                if (!res.ok) {
-                    if (res.status === 401) {
-                        clearSession();
-                        nav("/login", { replace: true });
-                        return;
-                    }
-                    throw new Error(`${res.status}`);
-                }
-                const body = (await res.json()) as EpisodesResponse;
-                if (!cancelled) setEpisodes(body);
-            } catch (err) {
-                if (!cancelled) {
-                    // eslint-disable-next-line no-console
-                    console.warn("episode list fetch failed", err);
-                }
-            }
-        })();
-        return () => {
-            cancelled = true;
-        };
-    }, [item, itemId]);
 
     if (error) {
         return (

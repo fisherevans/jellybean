@@ -8,13 +8,9 @@ import {
 } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ArrowBendRightDown } from "@phosphor-icons/react";
-import {
-    authHeaders,
-    clearSession,
-    getSession,
-    withAuthRetry,
-    type Session,
-} from "./auth";
+import { getSession, type Session } from "./auth";
+import { useKidsResource } from "./useKidsResource";
+import { sessionCache } from "./kidsCache";
 import Tile, { type TileItem } from "./Tile";
 import AlphaPickerModal from "./AlphaPickerModal";
 import OptionPickerModal from "./OptionPickerModal";
@@ -221,10 +217,31 @@ export default function TagDetail() {
     const playSuffix = searchParams.toString()
         ? `?${searchParams.toString()}`
         : "";
-    const [data, setData] = useState<TagDetailResponse | null>(null);
-    const [error, setError] = useState<string | null>(null);
     const [sort, setSort] = useState<SortId>(() => readSort());
     const [filter, setFilter] = useState<FilterId>(() => readFilter());
+    const detailURL = useMemo(() => {
+        if (!tagId) return null;
+        if (!session && !adminProfileId) return null;
+        const url = new URL(
+            `/api/kids/tags/${encodeURIComponent(tagId)}`,
+            window.location.origin,
+        );
+        url.searchParams.set("sort", sort);
+        url.searchParams.set("filter", filter);
+        if (adminProfileId) url.searchParams.set("profileId", adminProfileId);
+        return url.toString();
+    }, [tagId, sort, filter, adminProfileId, session]);
+    const cache = useMemo(() => sessionCache<TagDetailResponse>(), []);
+    const detailCacheKey = `jellybean.kids.tagDetail.cache.${tagId ?? "x"}.${adminProfileId ?? "kid"}.${filter}.${sort}`;
+    const { data: fetchedData, error } = useKidsResource<TagDetailResponse>({
+        url: detailURL,
+        cache,
+        cacheKey: detailCacheKey,
+    });
+    const [data, setData] = useState<TagDetailResponse | null>(fetchedData);
+    useEffect(() => {
+        if (fetchedData) setData(fetchedData);
+    }, [fetchedData]);
     const [filterOpen, setFilterOpen] = useState(false);
     const [sortOpen, setSortOpen] = useState(false);
     const [jumpOpen, setJumpOpen] = useState(false);
@@ -312,48 +329,6 @@ export default function TagDetail() {
             /* ignore */
         }
     }, [filter]);
-
-    useEffect(() => {
-        if (!tagId) return;
-        let cancelled = false;
-        async function run() {
-            try {
-                const url = new URL(
-                    `/api/kids/tags/${encodeURIComponent(tagId!)}`,
-                    window.location.origin,
-                );
-                url.searchParams.set("sort", sort);
-                url.searchParams.set("filter", filter);
-                if (adminProfileId) {
-                    url.searchParams.set("profileId", adminProfileId);
-                }
-                const res = await withAuthRetry(() =>
-                    fetch(url.toString(), {
-                        credentials: "same-origin",
-                        headers: authHeaders(),
-                    }),
-                );
-                if (!res.ok) {
-                    if (res.status === 401) {
-                        clearSession();
-                        nav("/login", { replace: true });
-                        return;
-                    }
-                    throw new Error(`${res.status}`);
-                }
-                const body = (await res.json()) as TagDetailResponse;
-                if (!cancelled) setData(body);
-            } catch (err) {
-                if (!cancelled) {
-                    setError(err instanceof Error ? err.message : "load failed");
-                }
-            }
-        }
-        void run();
-        return () => {
-            cancelled = true;
-        };
-    }, [tagId, sort, filter, adminProfileId, nav]);
 
     useEffect(() => {
         if (data) {

@@ -1,6 +1,7 @@
 import {
     useCallback,
     useEffect,
+    useMemo,
     useRef,
     useState,
     type ReactNode,
@@ -22,6 +23,8 @@ import Tile from "./Tile";
 import { useBrowseRowAnimator } from "./useBrowseRowAnimator";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { useKidsHome } from "./KidsHome";
+import { useKidsResource } from "./useKidsResource";
+import { sessionCache } from "./kidsCache";
 
 // Browse is the kid home (M8 #48). Renders a vertical stack of
 // horizontally-scrolling rows from /api/kids/browse. Each row's
@@ -53,44 +56,45 @@ const EXPECT_BACK_KEY = "jellybean.kids.browse.expectBack";
 // remounts Browse, which would otherwise fire a fresh /browse fetch
 // and show a 3-4s "Loading..." while the layout cache + Jellyfin
 // hits resolve. With sessionStorage primed, the initial render uses
-// the cached body and the user sees their previous state instantly;
-// the network fetch still runs in the background and replaces if
-// anything changed (stale-while-revalidate).
+// the cached body and the user sees their previous state instantly.
+// We intentionally skip the background revalidation here because the
+// browse layout includes random_unwatched / tag_fanout rows whose
+// order is server-side cached for ~60min, but the client cache and
+// server cache aren't perfectly in sync - a refetch can shuffle items
+// the kid was already looking at. The menu's "Refresh from server"
+// action clears the cache and reloads when fresh data is wanted.
 const CACHE_KEY_PREFIX = "jellybean.kids.browse.cache.";
 function browseCacheKey(profileId: string | null): string {
     return CACHE_KEY_PREFIX + (profileId ?? "kid");
 }
-function readBrowseCache(profileId: string | null): BrowseResponse | null {
-    try {
-        const raw = sessionStorage.getItem(browseCacheKey(profileId));
-        if (!raw) return null;
-        return JSON.parse(raw) as BrowseResponse;
-    } catch {
-        return null;
-    }
-}
-function writeBrowseCache(profileId: string | null, body: BrowseResponse) {
-    try {
-        sessionStorage.setItem(browseCacheKey(profileId), JSON.stringify(body));
-    } catch {
-        // Quota exceeded or storage disabled - ignore; the page still
-        // renders fine without the cache, just with the loading flash.
-    }
-}
 
-// findItemPosition returns the (row, col) of an item id in a browse
 export default function Browse() {
     const nav = useNavigate();
     const [searchParams] = useSearchParams();
     const [session] = useState<Session | null>(() => getSession());
     const adminProfileId = searchParams.get("profileId");
-    // Synchronously prime data + focus from sessionStorage so back-
-    // navigation lands instantly on the same tile the kid was on,
-    // without a loading flash or post-fetch focus animation.
-    const [data, setData] = useState<BrowseResponse | null>(() =>
-        readBrowseCache(adminProfileId),
-    );
-    const [error, setError] = useState<string | null>(null);
+    const cacheKey = browseCacheKey(adminProfileId);
+    const browseURL = useMemo(() => {
+        if (!session && !adminProfileId) return null;
+        const url = new URL("/api/kids/browse", window.location.origin);
+        if (adminProfileId) url.searchParams.set("profileId", adminProfileId);
+        return url.toString();
+    }, [session, adminProfileId]);
+    const cache = useMemo(() => sessionCache<BrowseResponse>(), []);
+    const { data: fetchedData, error } = useKidsResource<BrowseResponse>({
+        url: browseURL,
+        cache,
+        cacheKey,
+        skipFetchWhenCacheHit: true,
+    });
+    // Local copy so item-hidden + load-more can splice rows without
+    // poking through the hook's state. Initial value mirrors the
+    // hook's first emission (cache hit lands synchronously via
+    // sessionStorage).
+    const [data, setData] = useState<BrowseResponse | null>(fetchedData);
+    useEffect(() => {
+        if (fetchedData) setData(fetchedData);
+    }, [fetchedData]);
     // Default focus is (0, 0). The back-from-watch effect below
     // overrides this when EXPECT_BACK_KEY is set; otherwise the
     // kid arrives with focus on the tab nav (tabFocused=true),
@@ -156,7 +160,7 @@ export default function Browse() {
                     items: row.items.filter((it) => it.Id !== hiddenId),
                 })),
             };
-            writeBrowseCache(adminProfileId, next);
+            cache.write(cacheKey, next);
             return next;
         });
     });
@@ -245,68 +249,6 @@ export default function Browse() {
         return () => clearInterval(id);
     }, [data]);
 
-
-    // Fetch on mount. Gated on having either a kid session or an
-    // admin ?profileId - the auth gate above redirects to /login in
-    // either-missing case, but without this guard we'd briefly
-    // surface the server's 400 ("profileId query param required").
-    const refresh = useCallback(async () => {
-        if (!session && !adminProfileId) return;
-        try {
-            const url = new URL(
-                "/api/kids/browse",
-                window.location.origin,
-            );
-            // Always include adminProfileId when present, regardless
-            // of whether localStorage has a kid session. The server
-            // gives admin cookie auth priority over the bearer token
-            // (resolveKidsAuth), so a stale kid session doesn't help
-            // the admin preview path - it needs the profileId in the
-            // query string to know which profile to load.
-            if (adminProfileId) {
-                url.searchParams.set("profileId", adminProfileId);
-            }
-            // withAuthRetry: a single 401 retries once after 800ms
-            // before we give up + bounce to /login. Hides transient
-            // Jellyfin restarts; real revocation still 401s on retry.
-            const res = await withAuthRetry(() =>
-                fetch(url.toString(), {
-                    credentials: "same-origin",
-                    headers: authHeaders(),
-                }),
-            );
-            if (!res.ok) {
-                if (res.status === 401) {
-                    // Stale bearer token. Wipe local session and bounce
-                    // to login - the only sane recovery.
-                    clearSession();
-                    nav("/login", { replace: true });
-                    return;
-                }
-                throw new Error(`${res.status}: ${await res.text()}`);
-            }
-            const body: BrowseResponse = await res.json();
-            setData(body);
-            writeBrowseCache(adminProfileId, body);
-            setError(null);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "load failed");
-        }
-    }, [session, adminProfileId]);
-
-    useEffect(() => {
-        // Skip refetch when we already have data (from
-        // sessionStorage cache). The browse layout includes
-        // random_unwatched / tag_fanout rows whose order is
-        // server-side-cached for ~60min, but the client cache
-        // and server cache aren't perfectly in sync - a refetch
-        // can shuffle items the kid was already looking at.
-        // Render from cache and don't refetch on remount; the
-        // menu's "Refresh from server" action clears the cache
-        // and reloads when fresh data is actually wanted.
-        if (data) return;
-        void refresh();
-    }, [refresh, data]);
 
     // Tell main.tsx's splash gate we've got real content rendered.
     // Fires once when data first arrives (cache-primed or fresh
