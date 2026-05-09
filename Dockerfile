@@ -12,15 +12,16 @@ ARG NODE_VERSION=20
 FROM node:${NODE_VERSION}-alpine AS web
 
 WORKDIR /web
-COPY web/admin/package.json web/admin/package-lock.json admin/
-COPY web/kids/package.json web/kids/package-lock.json kids/
-RUN cd admin && npm ci --no-audit --no-fund
-RUN cd kids && npm ci --no-audit --no-fund
+# Workspace install: root package.json + lockfile + each workspace's package.json,
+# then a single npm ci. Hoisted node_modules sits at the repo root.
+COPY package.json package-lock.json ./
+COPY web/admin/package.json web/admin/package.json
+COPY web/kids/package.json web/kids/package.json
+RUN npm ci --no-audit --no-fund
 
-COPY web/admin/ admin/
-COPY web/kids/ kids/
-RUN cd admin && npm run build
-RUN cd kids && npm run build
+COPY web/admin/ web/admin/
+COPY web/kids/ web/kids/
+RUN npm run build --workspaces
 
 # -- Stage 2: go -----------------------------------------------------------
 FROM golang:${GO_VERSION}-alpine AS gobuild
@@ -30,8 +31,8 @@ COPY go.mod go.sum ./
 RUN GOWORK=off go mod download
 
 COPY . .
-COPY --from=web /web/admin/dist ./web/admin/dist
-COPY --from=web /web/kids/dist ./web/kids/dist
+COPY --from=web /web/web/admin/dist ./web/admin/dist
+COPY --from=web /web/web/kids/dist ./web/kids/dist
 
 ARG TARGETOS=linux
 ARG TARGETARCH
