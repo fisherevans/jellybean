@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { api, HttpError, type User } from "../api";
+import {
+    QuickConnectError,
+    useQuickConnect,
+    type QCStartResponse,
+} from "../useQuickConnect";
 
 // Admin login. Two paths:
 //
@@ -11,174 +16,97 @@ import { api, HttpError, type User } from "../api";
 //
 // 2. Username/password (always available): same form as before.
 
-const POLL_INTERVAL_MS = 3000;
-
-type Mode = "loading" | "qc" | "password";
-
 type Props = {
     onSuccess: (u: User) => void;
 };
 
-export default function Login({ onSuccess }: Props) {
-    const [mode, setMode] = useState<Mode>("loading");
-    const [error, setError] = useState<string | null>(null);
+type AdminQCPollResponse = {
+    status: "pending" | "authorized" | "expired";
+    user?: User;
+};
 
-    // Probe whether QC is enabled. Defaults to QC when the server
-    // says yes - parents typing on a phone is one less password.
-    useEffect(() => {
-        let cancelled = false;
-        (async () => {
-            try {
-                const res = await api.quickConnectEnabled();
-                if (cancelled) return;
-                setMode(res.enabled ? "qc" : "password");
-            } catch {
-                if (!cancelled) setMode("password");
+// Fetchers normalize the admin app's HttpError surface into the
+// QuickConnectError vocabulary the shared hook speaks.
+const qcFetchers = {
+    enabled: () => api.quickConnectEnabled(),
+    start: async (): Promise<QCStartResponse> => api.quickConnectStart(),
+    poll: async (id: string): Promise<AdminQCPollResponse> => {
+        try {
+            return await api.quickConnectPoll(id);
+        } catch (err) {
+            if (err instanceof HttpError) {
+                if (err.status === 410 || err.status === 404) {
+                    throw new QuickConnectError("expired");
+                }
+                if (err.status === 403) {
+                    throw new QuickConnectError("forbidden");
+                }
             }
-        })();
-        return () => {
-            cancelled = true;
-        };
-    }, []);
+            throw new QuickConnectError("transient", String(err));
+        }
+    },
+};
+
+export default function Login({ onSuccess }: Props) {
+    const qc = useQuickConnect<AdminQCPollResponse, User>({
+        fetchers: qcFetchers,
+        onAuthorized: onSuccess,
+        pickResult: (poll) =>
+            poll.status === "authorized" && poll.user ? poll.user : null,
+        terminalFromPoll: (poll) =>
+            poll.status === "expired" ? "expired" : null,
+        forbiddenMessage: "Admin role required.",
+        unavailableMessage: (err) =>
+            err instanceof HttpError
+                ? `Quick Connect unavailable (${err.status}).`
+                : "Couldn't reach the server.",
+    });
 
     return (
         <div className="login-wrap">
             <div className="login-card">
                 <h1>Jellybean</h1>
-                {mode === "loading" && (
+                {qc.mode === "loading" && (
                     <p className="muted">Getting things ready…</p>
                 )}
-                {mode === "qc" && (
+                {qc.mode === "qc" && (
                     <QuickConnectView
-                        onSuccess={onSuccess}
+                        code={qc.code}
+                        expired={qc.expired}
+                        onRetry={qc.restart}
                         onSwitchToPassword={() => {
-                            setError(null);
-                            setMode("password");
+                            qc.setError(null);
+                            qc.setMode("password");
                         }}
-                        onError={setError}
                     />
                 )}
-                {mode === "password" && (
+                {qc.mode === "password" && (
                     <PasswordView
                         onSuccess={onSuccess}
                         onSwitchToQC={() => {
-                            setError(null);
-                            setMode("qc");
+                            qc.setError(null);
+                            qc.setMode("qc");
                         }}
-                        onError={setError}
+                        onError={qc.setError}
                     />
                 )}
-                {error && <div className="error">{error}</div>}
+                {qc.error && <div className="error">{qc.error}</div>}
             </div>
         </div>
     );
 }
 
 function QuickConnectView({
-    onSuccess,
+    code,
+    expired,
+    onRetry,
     onSwitchToPassword,
-    onError,
 }: {
-    onSuccess: (u: User) => void;
+    code: string | null;
+    expired: boolean;
+    onRetry: () => void;
     onSwitchToPassword: () => void;
-    onError: (msg: string | null) => void;
 }) {
-    const [start, setStart] = useState<{
-        id: string;
-        code: string;
-    } | null>(null);
-    const [expired, setExpired] = useState(false);
-    const startedRef = useRef(false);
-
-    // Tracks the most recent /start call. Set true when a pairing
-    // is in-flight or already minted; flipped back to false on
-    // error so the user can retry. The "Get a new code" handler
-    // also resets it.
-    //
-    // unmountedRef gates the /start fetch's late callbacks: when
-    // the user flips to password mid-fetch, the QC view unmounts
-    // and we must not call onError or setStart afterward (the
-    // password card will already be mounted by then). This is the
-    // analog of the cancelled-flag pattern used in the poll effect
-    // below, scoped to the component's lifetime instead of one
-    // useEffect run.
-    const unmountedRef = useRef(false);
-    useEffect(() => {
-        return () => {
-            unmountedRef.current = true;
-        };
-    }, []);
-
-    async function startPairing() {
-        setExpired(false);
-        onError(null);
-        try {
-            const res = await api.quickConnectStart();
-            if (unmountedRef.current) return;
-            setStart({ id: res.id, code: res.code });
-        } catch (err) {
-            if (unmountedRef.current) return;
-            startedRef.current = false;
-            onError(
-                err instanceof HttpError
-                    ? `Quick Connect unavailable (${err.status}).`
-                    : "Couldn't reach the server.",
-            );
-        }
-    }
-
-    // First-mount: kick a single pairing. The synchronous flip of
-    // startedRef BEFORE the await is what makes this StrictMode-safe;
-    // the second invocation of this effect sees true and bails. If
-    // you flip the order, dev will mint two codes per page load.
-    useEffect(() => {
-        if (startedRef.current || start) return;
-        startedRef.current = true;
-        void startPairing();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    useEffect(() => {
-        if (!start) return;
-        let cancelled = false;
-        const tick = async () => {
-            try {
-                const res = await api.quickConnectPoll(start.id);
-                if (cancelled) return;
-                if (res.status === "expired") {
-                    setExpired(true);
-                    setStart(null);
-                    startedRef.current = false;
-                    return;
-                }
-                if (res.status === "authorized" && res.user) {
-                    onSuccess(res.user);
-                }
-            } catch (err) {
-                if (cancelled) return;
-                if (err instanceof HttpError && err.status === 410) {
-                    setExpired(true);
-                    setStart(null);
-                    startedRef.current = false;
-                    return;
-                }
-                if (err instanceof HttpError && err.status === 403) {
-                    onError("Admin role required.");
-                    setStart(null);
-                    startedRef.current = false;
-                    return;
-                }
-                // Transient: next tick will retry.
-            }
-        };
-        const id = window.setInterval(tick, POLL_INTERVAL_MS);
-        void tick();
-        return () => {
-            cancelled = true;
-            window.clearInterval(id);
-        };
-    }, [start, onError, onSuccess]);
-
     if (expired) {
         return (
             <>
@@ -188,7 +116,7 @@ function QuickConnectView({
                 <button
                     type="button"
                     className="primary"
-                    onClick={() => void startPairing()}
+                    onClick={onRetry}
                 >
                     Get a new code
                 </button>
@@ -202,7 +130,7 @@ function QuickConnectView({
             </>
         );
     }
-    if (!start) {
+    if (!code) {
         return <p className="muted">Starting Quick Connect…</p>;
     }
     return (
@@ -213,7 +141,7 @@ function QuickConnectView({
                 code below.
             </p>
             <div className="qc-code" aria-live="polite">
-                {start.code.split("").map((d, i) => (
+                {code.split("").map((d, i) => (
                     <span key={i} className="qc-digit">
                         {d}
                     </span>
@@ -247,30 +175,33 @@ function PasswordView({
     const [password, setPassword] = useState("");
     const [submitting, setSubmitting] = useState(false);
 
-    async function handleSubmit(e: React.FormEvent) {
-        e.preventDefault();
-        onError(null);
-        setSubmitting(true);
-        try {
-            const user = await api.login(username, password);
-            onSuccess(user);
-        } catch (err) {
-            if (err instanceof HttpError) {
-                if (err.status === 401) onError("Invalid credentials.");
-                else if (err.status === 403)
-                    onError("Admin role required.");
-                else if (err.status === 429)
-                    onError(
-                        "Too many attempts. Try again in a few minutes.",
-                    );
-                else onError(err.message || "Login failed.");
-            } else {
-                onError("Network error.");
+    const handleSubmit = useCallback(
+        async (e: React.FormEvent) => {
+            e.preventDefault();
+            onError(null);
+            setSubmitting(true);
+            try {
+                const user = await api.login(username, password);
+                onSuccess(user);
+            } catch (err) {
+                if (err instanceof HttpError) {
+                    if (err.status === 401) onError("Invalid credentials.");
+                    else if (err.status === 403)
+                        onError("Admin role required.");
+                    else if (err.status === 429)
+                        onError(
+                            "Too many attempts. Try again in a few minutes.",
+                        );
+                    else onError(err.message || "Login failed.");
+                } else {
+                    onError("Network error.");
+                }
+            } finally {
+                setSubmitting(false);
             }
-        } finally {
-            setSubmitting(false);
-        }
-    }
+        },
+        [username, password, onSuccess, onError],
+    );
 
     return (
         <form onSubmit={handleSubmit}>

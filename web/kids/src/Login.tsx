@@ -9,6 +9,11 @@ import { useNavigate } from "react-router-dom";
 import { ArrowLeft, DeviceMobile, KeyReturn } from "@phosphor-icons/react";
 import { clearSession, getSession, setSession, type Session } from "./auth";
 import { prefetchLibrary } from "./prefetch";
+import {
+    QuickConnectError,
+    useQuickConnect,
+    type QCStartResponse,
+} from "./useQuickConnect";
 
 // consumeDevCreds reads dev_user / dev_pass from window.location.hash
 // when the activity was launched with the DEV_LOGIN intent
@@ -51,8 +56,6 @@ function consumeDevCreds(): { user: string; pass: string } | null {
 // Both paths converge on the same /api/kids/auth/login response
 // shape, so the post-login hydration is identical.
 
-const POLL_INTERVAL_MS = 3000;
-
 type LoginResponse = {
     token: string;
     userId: string;
@@ -63,18 +66,56 @@ type LoginResponse = {
     profileName?: string;
 };
 
-type QCStartResponse = {
-    id: string;
-    code: string;
-    expiresAt: string;
-};
-
 type QCPollResponse = {
     status: "pending" | "authorized" | "expired";
     kid?: LoginResponse;
 };
 
-type Mode = "loading" | "qc" | "password";
+// Fetchers normalize the kid app's /api/kids/auth/quickconnect/* shapes
+// into the QuickConnectError vocabulary the shared hook speaks.
+const qcFetchers = {
+    enabled: async () => {
+        const res = await fetch("/api/kids/auth/quickconnect/enabled", {
+            credentials: "same-origin",
+        });
+        if (!res.ok) {
+            throw new QuickConnectError(
+                "unavailable",
+                `enabled probe ${res.status}`,
+            );
+        }
+        return (await res.json()) as { enabled: boolean };
+    },
+    start: async (): Promise<QCStartResponse> => {
+        const res = await fetch("/api/kids/auth/quickconnect/start", {
+            method: "POST",
+            credentials: "same-origin",
+        });
+        if (!res.ok) {
+            throw new QuickConnectError(
+                "unavailable",
+                `start ${res.status}`,
+            );
+        }
+        return (await res.json()) as QCStartResponse;
+    },
+    poll: async (id: string): Promise<QCPollResponse> => {
+        const res = await fetch(
+            `/api/kids/auth/quickconnect/poll?id=${encodeURIComponent(id)}`,
+            { credentials: "same-origin" },
+        );
+        if (res.status === 410 || res.status === 404) {
+            throw new QuickConnectError("expired");
+        }
+        if (res.status === 403) {
+            throw new QuickConnectError("forbidden");
+        }
+        if (!res.ok) {
+            throw new QuickConnectError("transient", `poll ${res.status}`);
+        }
+        return (await res.json()) as QCPollResponse;
+    },
+};
 
 export default function Login() {
     const nav = useNavigate();
@@ -88,149 +129,70 @@ export default function Login() {
     const [devCreds, setDevCreds] = useState(consumeDevCreds);
     const [username, setUsername] = useState(devCreds?.user ?? "");
     const [password, setPassword] = useState(devCreds?.pass ?? "");
-    const [error, setError] = useState<string | null>(null);
+    const [submitError, setSubmitError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
-
-    // Mode: which card the kid TV currently shows. Starts "loading"
-    // while we probe whether QC is enabled on the upstream Jellyfin;
-    // settles to "qc" or "password" within ~one round trip.
-    const [mode, setMode] = useState<Mode>("loading");
-    const [qcStart, setQCStart] = useState<QCStartResponse | null>(null);
-    const [qcExpired, setQCExpired] = useState(false);
 
     useEffect(() => {
         if (getSession()) nav("/browse", { replace: true });
     }, [nav]);
 
-    // Probe QC support. We default to QC when the server advertises
-    // it (saves password typing on a TV remote). Failures fall to
-    // password automatically; nothing to surface to the user.
-    useEffect(() => {
-        if (devCreds) return; // dev path skips both modes
-        let cancelled = false;
-        (async () => {
-            try {
-                const res = await fetch(
-                    "/api/kids/auth/quickconnect/enabled",
-                    { credentials: "same-origin" },
-                );
-                if (cancelled) return;
-                if (res.ok) {
-                    const body = (await res.json()) as { enabled: boolean };
-                    setMode(body.enabled ? "qc" : "password");
-                    return;
-                }
-            } catch {
-                /* fall through */
-            }
-            if (!cancelled) setMode("password");
-        })();
-        return () => {
-            cancelled = true;
-        };
-    }, [devCreds]);
+    // completeLogin mints the local session from a /login or /poll
+    // success payload and bounces to /browse. Shared by the password
+    // submit + the QC poll's authorized branch so both paths land
+    // identically.
+    const completeLogin = useCallback(
+        (kid: LoginResponse) => {
+            const session: Session = {
+                token: kid.token,
+                userId: kid.userId,
+                userName: kid.userName,
+                profileId: kid.profileId,
+                profileName: kid.profileName,
+                kidName: kid.kidName,
+                kidId: kid.kidId,
+            };
+            setSession(session);
+            prefetchLibrary();
+            nav("/browse", { replace: true });
+        },
+        [nav],
+    );
 
-    // Start a QC pairing whenever we enter qc mode and don't already
-    // have one. handles "code expired" by re-running with reset.
-    const startQC = useCallback(async () => {
-        setError(null);
-        setQCExpired(false);
-        try {
-            const res = await fetch("/api/kids/auth/quickconnect/start", {
-                method: "POST",
-                credentials: "same-origin",
-            });
-            if (!res.ok) {
-                setError("Couldn't start Quick Connect. Use password instead.");
-                setMode("password");
-                return;
-            }
-            const body = (await res.json()) as QCStartResponse;
-            setQCStart(body);
-        } catch {
-            setError("Couldn't reach the server.");
-            setMode("password");
+    const qc = useQuickConnect<QCPollResponse, LoginResponse>({
+        fetchers: qcFetchers,
+        onAuthorized: completeLogin,
+        pickResult: (poll) =>
+            poll.status === "authorized" && poll.kid ? poll.kid : null,
+        terminalFromPoll: (poll) =>
+            poll.status === "expired" ? "expired" : null,
+        forbiddenMessage:
+            "This Jellyfin user isn't set up as a kid in Jellybean. Ask a parent to add you in the admin app.",
+        unavailableMessage: () =>
+            "Couldn't start Quick Connect. Use password instead.",
+        skip: !!devCreds,
+    });
+
+    // Original kid behavior dropped to password mode on /start failure
+    // so the user could still sign in. Preserve that by watching the
+    // hook's error and flipping mode when an unavailable fires; the
+    // hook leaves the error visible (setMode does NOT clear it), so
+    // the kid sees the explanation on the password card.
+    useEffect(() => {
+        if (qc.error && qc.mode === "qc") {
+            qc.setMode("password");
         }
-    }, []);
-
-    useEffect(() => {
-        if (mode !== "qc" || qcStart || qcExpired) return;
-        void startQC();
-    }, [mode, qcStart, qcExpired, startQC]);
-
-    // Poll the QC pairing. Stops on terminal state. POLL_INTERVAL_MS
-    // matches Jellyfin web's own cadence; the backend caches the
-    // exchange result so a duplicate poll between approval and
-    // navigation is safe.
-    useEffect(() => {
-        if (mode !== "qc" || !qcStart) return;
-        let cancelled = false;
-        const tick = async () => {
-            try {
-                const res = await fetch(
-                    `/api/kids/auth/quickconnect/poll?id=${encodeURIComponent(qcStart.id)}`,
-                    { credentials: "same-origin" },
-                );
-                if (cancelled) return;
-                if (res.status === 410 || res.status === 404) {
-                    setQCExpired(true);
-                    setQCStart(null);
-                    return;
-                }
-                if (res.status === 403) {
-                    setError(
-                        "This Jellyfin user isn't set up as a kid in Jellybean. Ask a parent to add you in the admin app.",
-                    );
-                    setQCExpired(true);
-                    setQCStart(null);
-                    return;
-                }
-                if (!res.ok) return; // transient; next tick retries
-                const body = (await res.json()) as QCPollResponse;
-                if (body.status === "expired") {
-                    setQCExpired(true);
-                    setQCStart(null);
-                    return;
-                }
-                if (body.status === "authorized" && body.kid) {
-                    const session: Session = {
-                        token: body.kid.token,
-                        userId: body.kid.userId,
-                        userName: body.kid.userName,
-                        profileId: body.kid.profileId,
-                        profileName: body.kid.profileName,
-                        kidName: body.kid.kidName,
-                        kidId: body.kid.kidId,
-                    };
-                    setSession(session);
-                    prefetchLibrary();
-                    nav("/browse", { replace: true });
-                }
-            } catch {
-                /* transient; next tick retries */
-            }
-        };
-        const id = window.setInterval(tick, POLL_INTERVAL_MS);
-        // Fire one immediately so a user who happened to approve
-        // before the poll loop kicked in doesn't sit through a
-        // full interval of "Waiting..."
-        void tick();
-        return () => {
-            cancelled = true;
-            window.clearInterval(id);
-        };
-    }, [mode, qcStart, nav]);
+    }, [qc.error, qc.mode, qc]);
 
     const performLogin = useCallback(
         async (rawUser: string, rawPass: string) => {
             const u = rawUser.trim();
             const p = rawPass;
             if (!u || !p) {
-                setError("Username and password are required.");
+                setSubmitError("Username and password are required.");
                 return;
             }
             setSubmitting(true);
-            setError(null);
+            setSubmitError(null);
             try {
                 const res = await fetch("/api/kids/auth/login", {
                     method: "POST",
@@ -239,43 +201,31 @@ export default function Login() {
                     body: JSON.stringify({ username: u, password: p }),
                 });
                 if (res.status === 401) {
-                    setError("Wrong username or password.");
+                    setSubmitError("Wrong username or password.");
                     return;
                 }
                 if (res.status === 403) {
-                    setError(
+                    setSubmitError(
                         "This Jellyfin user isn't set up as a kid in Jellybean. Ask a parent to add you in the admin app.",
                     );
                     return;
                 }
                 if (res.status === 502) {
-                    setError("Couldn't reach Jellyfin. Try again.");
+                    setSubmitError("Couldn't reach Jellyfin. Try again.");
                     return;
                 }
                 if (!res.ok) {
-                    setError(`Sign-in failed (${res.status}).`);
+                    setSubmitError(`Sign-in failed (${res.status}).`);
                     return;
                 }
-                const data = (await res.json()) as LoginResponse;
-                const session: Session = {
-                    token: data.token,
-                    userId: data.userId,
-                    userName: data.userName,
-                    profileId: data.profileId,
-                    profileName: data.profileName,
-                    kidName: data.kidName,
-                    kidId: data.kidId,
-                };
-                setSession(session);
-                prefetchLibrary();
-                nav("/browse", { replace: true });
+                completeLogin((await res.json()) as LoginResponse);
             } catch {
-                setError("Couldn't reach the server. Try again.");
+                setSubmitError("Couldn't reach the server. Try again.");
             } finally {
                 setSubmitting(false);
             }
         },
-        [nav],
+        [completeLogin],
     );
 
     // DEV_LOGIN auto-submit fires once the form is mounted.
@@ -305,6 +255,8 @@ export default function Login() {
         await performLogin(username, password);
     }
 
+    const error = submitError ?? qc.error;
+
     return (
         <div className="kid-login">
             <img
@@ -315,18 +267,22 @@ export default function Login() {
                 height={96}
             />
             <h1>Sign in</h1>
-            {mode === "loading" && (
+            {qc.mode === "loading" && (
                 <p className="kid-login-blurb">Getting things ready…</p>
             )}
-            {mode === "qc" && (
+            {qc.mode === "qc" && (
                 <QCCard
-                    code={qcStart?.code ?? null}
-                    expired={qcExpired}
-                    onRetry={() => void startQC()}
-                    onSwitchToPassword={() => setMode("password")}
+                    code={qc.code}
+                    expired={qc.expired}
+                    onRetry={qc.restart}
+                    onSwitchToPassword={() => {
+                        setSubmitError(null);
+                        qc.setError(null);
+                        qc.setMode("password");
+                    }}
                 />
             )}
-            {mode === "password" && (
+            {qc.mode === "password" && (
                 <PasswordCard
                     username={username}
                     password={password}
@@ -334,10 +290,11 @@ export default function Login() {
                     onUsername={setUsername}
                     onPassword={setPassword}
                     onSubmit={onSubmit}
-                    showQCBack={qcStart !== null || !qcExpired}
+                    showQCBack={!qc.error}
                     onSwitchToQC={() => {
-                        setError(null);
-                        setMode("qc");
+                        setSubmitError(null);
+                        qc.setError(null);
+                        qc.setMode("qc");
                     }}
                 />
             )}
