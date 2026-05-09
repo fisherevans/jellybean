@@ -17,6 +17,7 @@ import {
 import { useKidsHome } from "./KidsHome";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { useStackScroll } from "./useStackScroll";
+import { useHomeTabFocus } from "./useHomeTabFocus";
 import { TAG_ICONS, isTagIconName } from "./tagIcons";
 import { useItemHiddenEvent } from "./itemHidden";
 
@@ -75,19 +76,44 @@ export default function Tags() {
         }
     });
     const [error, setError] = useState<string | null>(null);
+    // Transform-based scroll - same rationale as Library. The
+    // stack ref attaches to the .kids-stack wrapper; the hook
+    // animates translate3d on it instead of writing window.scrollTo
+    // (which retriggered a multi-second repaint on the kid TV).
+    const stack = useStackScroll();
+    const homeCtx = useKidsHome();
+
     // Restore the focused tag index from sessionStorage so the kid
     // returning from /tags/:id lands back on the tag they entered.
-    const [focusIdx, setFocusIdx] = useState<number>(() => {
-        try {
-            const v = sessionStorage.getItem(focusIdxKey);
-            if (v !== null) {
-                const n = Number(v);
-                if (Number.isFinite(n) && n >= 0) return n;
+    // useHomeTabFocus owns the back-then-down reset (focusIdx → 0,
+    // tab nav re-engages) and the tabFocused → true scroll-to-top +
+    // blur effect; here we just hand it the persisted starting
+    // value and the "first card" reset target.
+    const {
+        focus: focusIdx,
+        setFocus: setFocusIdx,
+        tabFocused,
+        setTabFocused,
+        handleBack,
+    } = useHomeTabFocus<number>({
+        initialFocus: (() => {
+            try {
+                const v = sessionStorage.getItem(focusIdxKey);
+                if (v !== null) {
+                    const n = Number(v);
+                    if (Number.isFinite(n) && n >= 0) return n;
+                }
+            } catch {
+                /* ignore */
             }
-        } catch {
-            /* ignore */
-        }
-        return 0;
+            return 0;
+        })(),
+        getFirstContentSlot: () => 0,
+        scrollToTop: () => stack.setStackY(0, true),
+        tabNav: {
+            tabFocused: homeCtx.tabFocused,
+            setTabFocused: homeCtx.setTabFocused,
+        },
     });
     // Persist focusIdx so it survives a remount.
     useEffect(() => {
@@ -153,12 +179,6 @@ export default function Tags() {
         [nav, playSuffix],
     );
 
-    // Transform-based scroll - same rationale as Library. The
-    // stack ref attaches to the .kids-stack wrapper; the hook
-    // animates translate3d on it instead of writing window.scrollTo
-    // (which retriggered a multi-second repaint on the kid TV).
-    const stack = useStackScroll();
-
     // Snap to top on mount so a stale animator left behind by a
     // previous page can't keep scrolling here.
     useLayoutEffect(() => {
@@ -193,8 +213,6 @@ export default function Tags() {
     const [columns, setColumns] = useState(1);
     const cardRefs = useRef<(HTMLButtonElement | null)[]>([]);
     const listRef = useRef<HTMLDivElement | null>(null);
-
-    const { tabFocused, setTabFocused } = useKidsHome();
 
     useEffect(() => {
         if (!session && !adminProfileId) {
@@ -281,38 +299,13 @@ export default function Tags() {
         }
     }, [focusIdx, tabFocused, stack]);
 
-    useProgressiveBack(() => {
-        if (!tabFocused) {
-            setTabFocused(true);
-            // Back resets focus to the first card so the next Down
-            // lands on a fresh entry point - not on the last
-            // highlighted tag the kid was on. The expectBackFromDetail
-            // path uses its own restore (setTabFocused(false) on
-            // mount with persisted focusIdx) and isn't affected: the
-            // detail page navigates to /tags directly, never invokes
-            // this Back handler. See web/kids/CLAUDE.md
-            // ("Back-then-Down focus contract").
-            setFocusIdx(0);
-            return true;
-        }
-        return false;
-    });
-
-    // Scroll-to-top + blur on tabFocused engage (mirror of Browse /
-    // Library so back-press cleanly returns to the tab nav). The
-    // snap path on setStackY drains any in-flight rAF animator,
-    // so a mid-flight scrollToCenter from the previous focus change
-    // can't write a stale target after our reset.
-    useEffect(() => {
-        if (!tabFocused) return;
-        stack.setStackY(0, true);
-        if (
-            document.activeElement instanceof HTMLElement &&
-            document.activeElement !== document.body
-        ) {
-            document.activeElement.blur();
-        }
-    }, [tabFocused, stack]);
+    // useHomeTabFocus owns the back-then-down reset (focusIdx → 0
+    // + tab nav re-engages) and the tabFocused → true scroll-to-top
+    // + blur effect. The expectBackFromDetail path (setTabFocused(false)
+    // on mount with persisted focusIdx) isn't affected: TagDetail
+    // navigates to /tags directly and never invokes this back handler.
+    // See web/kids/CLAUDE.md ("Back-then-Down focus contract").
+    useProgressiveBack(handleBack);
 
     // Clamp focusIdx in case the persisted value is out of range
     // for the current data (e.g. tags removed on the server while
