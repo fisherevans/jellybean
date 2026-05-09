@@ -22,15 +22,16 @@ import OverrideModal, { useLongPressEnter } from "./OverrideModal";
 import { useItemHiddenEvent } from "./itemHidden";
 import { useStackScroll } from "./useStackScroll";
 import { useProgressiveBack } from "./useProgressiveBack";
-import { TAG_ICONS, isTagIconName } from "./tagIcons";
 import {
+    TAG_ICONS,
+    isTagIconName,
     bucketByAdded,
     bucketByWatched,
     ADDED_ORDER,
     WATCHED_ORDER,
     type AddedBucket,
     type WatchedBucket,
-} from "./dateBuckets";
+} from "jellybean-shared";
 
 // TagDetail renders all visible items inside a single tag, in the
 // kid's chosen filter + sort order. Reached from the Tags list page

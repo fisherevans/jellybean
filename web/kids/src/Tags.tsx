@@ -17,7 +17,7 @@ import {
 import { useKidsHome } from "./KidsHome";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { useStackScroll } from "./useStackScroll";
-import { TAG_ICONS, isTagIconName } from "./tagIcons";
+import { TAG_ICONS, isTagIconName } from "jellybean-shared";
 import { useItemHiddenEvent } from "./itemHidden";
 
 // Tags is the kid's tag-browse landing page. Fetches /api/kids/tags

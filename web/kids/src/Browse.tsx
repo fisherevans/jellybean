@@ -15,7 +15,7 @@ import {
     withAuthRetry,
     type Session,
 } from "./auth";
-import { TAG_ICONS, isTagIconName } from "./tagIcons";
+import { TAG_ICONS, isTagIconName } from "jellybean-shared";
 import OverrideModal, { useLongPressEnter } from "./OverrideModal";
 import { useItemHiddenEvent } from "./itemHidden";
 import Tile from "./Tile";

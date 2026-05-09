@@ -8,7 +8,15 @@ import {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowBendRightDown } from "@phosphor-icons/react";
-import type { Item } from "jellybean-shared";
+import {
+    bucketByAdded,
+    bucketByWatched,
+    ADDED_ORDER,
+    WATCHED_ORDER,
+    type AddedBucket,
+    type Item,
+    type WatchedBucket,
+} from "jellybean-shared";
 import {
     authHeaders,
     clearSession,
@@ -34,14 +42,6 @@ import { useKidsHome } from "./KidsHome";
 import { setHomeTab } from "./kidNav";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { useStackScroll } from "./useStackScroll";
-import {
-    bucketByAdded,
-    bucketByWatched,
-    ADDED_ORDER,
-    WATCHED_ORDER,
-    type AddedBucket,
-    type WatchedBucket,
-} from "./dateBuckets";
 
 // Library is the kid's main browsing screen. Top-to-bottom:
 //

@@ -14,5 +14,5 @@
         "noUnusedParameters": true,
         "noFallthroughCasesInSwitch": true
     },
-    "include": ["index.ts", "types"]
+    "include": ["index.ts", "types", "tagIcons.ts", "dateBuckets.ts"]
 }
