@@ -70,8 +70,8 @@ func (s *Server) handleAdminClearOverrideLockout(w http.ResponseWriter, r *http.
 func (s *Server) handleAdminListSettings(w http.ResponseWriter, r *http.Request) {
 	// Whitelist of keys the admin UI exposes. Settings the admin
 	// shouldn't be poking from this endpoint (e.g. internal flags)
-	// stay out of this list.
-	keys := []string{"public_url"}
+	// stay out of this list. Source of truth: curation.KnownSettings.
+	keys := curation.KnownSettingKeys()
 	out := map[string]string{}
 	for _, k := range keys {
 		v, err := s.curation.AppSettingGet(r.Context(), k)
@@ -99,8 +99,7 @@ func (s *Server) handleAdminSetSetting(w http.ResponseWriter, r *http.Request) {
 	}
 	// Same whitelist as ListSettings - admins can only mutate the
 	// settings the UI exposes.
-	allowed := map[string]struct{}{"public_url": {}}
-	if _, ok := allowed[req.Key]; !ok {
+	if !curation.IsKnownSetting(req.Key) {
 		http.Error(w, "unknown setting key", http.StatusBadRequest)
 		return
 	}
