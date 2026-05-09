@@ -876,10 +876,22 @@ function isNetworkError(err: unknown): boolean {
 }
 
 async function fetchStream(itemId: string): Promise<StreamResponse> {
-    const res = await fetch(
+    // Carry along any admin-preview params (?profileId=N&kidId=M)
+    // from the page URL. The kids middleware requires profileId on
+    // the admin path; bearer-auth kids carry it implicitly.
+    const url = new URL(
         `/api/kids/items/${encodeURIComponent(itemId)}/stream`,
-        { credentials: "same-origin", headers: authHeaders() },
+        window.location.origin,
     );
+    const passthrough = new URLSearchParams(window.location.search);
+    for (const k of ["profileId", "kidId"]) {
+        const v = passthrough.get(k);
+        if (v) url.searchParams.set(k, v);
+    }
+    const res = await fetch(url.toString(), {
+        credentials: "same-origin",
+        headers: authHeaders(),
+    });
     if (!res.ok) {
         if (res.status === 401) {
             throw new Error(
