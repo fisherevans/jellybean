@@ -243,23 +243,14 @@ func (s *Server) respondBrowseRow(
 	}
 	itemsByID := map[string]jellyfin.Item{}
 	if len(ids) > 0 {
-		const batch = 100
-		for i := 0; i < len(ids); i += batch {
-			end := i + batch
-			if end > len(ids) {
-				end = len(ids)
-			}
-			res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
-				IDs: ids[i:end],
-			}, userTok)
-			if err != nil {
-				s.logger.Error().Err(err).Msg("browse row decorate")
-				writeUpstreamError(w, err, "failed to load items")
-				return
-			}
-			for _, it := range res.Items {
-				itemsByID[it.ID] = it
-			}
+		batched, err := s.jellyfin.GetItemsByIDsBatched(ctx, ids, userTok)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("browse row decorate")
+			writeUpstreamError(w, err, "failed to load items")
+			return
+		}
+		for _, it := range batched {
+			itemsByID[it.ID] = it
 		}
 	}
 	items := make([]jellyfin.Item, 0, len(rr.ItemIDs))
@@ -377,45 +368,14 @@ func (s *Server) respondBrowse(
 	}
 	itemsByID := map[string]jellyfin.Item{}
 	if len(ids) > 0 {
-		// Batch the IDs query. Jellyfin's URL-length limits cap at a
-		// few thousand bytes; chunking at 100 keeps us safe.
-		// Run the batches concurrently - they're independent reads
-		// against Jellyfin and previously dominated wall-time
-		// (3-4 sequential round trips over the tunnel).
-		const batch = 100
-		type batchResult struct {
-			items []jellyfin.Item
-			err   error
+		batched, err := s.jellyfin.GetItemsByIDsBatched(ctx, ids, userTok)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("browse decorate")
+			writeUpstreamError(w, err, "failed to load items")
+			return
 		}
-		chunkCount := (len(ids) + batch - 1) / batch
-		results := make(chan batchResult, chunkCount)
-		for i := 0; i < len(ids); i += batch {
-			end := i + batch
-			if end > len(ids) {
-				end = len(ids)
-			}
-			chunk := ids[i:end]
-			go func() {
-				res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
-					IDs: chunk,
-				}, userTok)
-				if err != nil {
-					results <- batchResult{err: err}
-					return
-				}
-				results <- batchResult{items: res.Items}
-			}()
-		}
-		for i := 0; i < chunkCount; i++ {
-			r := <-results
-			if r.err != nil {
-				s.logger.Error().Err(r.err).Msg("browse decorate")
-				writeUpstreamError(w, r.err, "failed to load items")
-				return
-			}
-			for _, it := range r.items {
-				itemsByID[it.ID] = it
-			}
+		for _, it := range batched {
+			itemsByID[it.ID] = it
 		}
 	}
 
