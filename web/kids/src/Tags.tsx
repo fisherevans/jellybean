@@ -2,16 +2,14 @@ import {
     useCallback,
     useEffect,
     useLayoutEffect,
+    useMemo,
     useRef,
     useState,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-    authHeaders,
-    clearSession,
     getSession,
     imageAuthSuffix,
-    withAuthRetry,
     type Session,
 } from "./auth";
 import { useKidsHome } from "./KidsHome";
@@ -19,6 +17,8 @@ import { useProgressiveBack } from "./useProgressiveBack";
 import { useStackScroll } from "./useStackScroll";
 import { TAG_ICONS, isTagIconName } from "./tagIcons";
 import { useItemHiddenEvent } from "./itemHidden";
+import { useKidsResource } from "./useKidsResource";
+import { sessionCache } from "./kidsCache";
 
 // Tags is the kid's tag-browse landing page. Fetches /api/kids/tags
 // and renders one large landscape card per tag - title, description,
@@ -65,16 +65,23 @@ export default function Tags() {
     // sessionStorage + reloads).
     const cacheKey = `jellybean.kids.tags.cache.${adminProfileId ?? "kid"}`;
     const focusIdxKey = `jellybean.kids.tags.focusIdx.${adminProfileId ?? "kid"}`;
-    const [data, setData] = useState<TagsResponse | null>(() => {
-        try {
-            const raw = sessionStorage.getItem(cacheKey);
-            if (!raw) return null;
-            return JSON.parse(raw) as TagsResponse;
-        } catch {
-            return null;
-        }
+    const tagsURL = useMemo(() => {
+        if (!session && !adminProfileId) return null;
+        const url = new URL("/api/kids/tags", window.location.origin);
+        if (adminProfileId) url.searchParams.set("profileId", adminProfileId);
+        return url.toString();
+    }, [session, adminProfileId]);
+    const cache = useMemo(() => sessionCache<TagsResponse>(), []);
+    const { data: fetchedData, error } = useKidsResource<TagsResponse>({
+        url: tagsURL,
+        cache,
+        cacheKey,
+        skipFetchWhenCacheHit: true,
     });
-    const [error, setError] = useState<string | null>(null);
+    const [data, setData] = useState<TagsResponse | null>(fetchedData);
+    useEffect(() => {
+        if (fetchedData) setData(fetchedData);
+    }, [fetchedData]);
     // Restore the focused tag index from sessionStorage so the kid
     // returning from /tags/:id lands back on the tag they entered.
     const [focusIdx, setFocusIdx] = useState<number>(() => {
@@ -123,11 +130,7 @@ export default function Tags() {
                     };
                 }),
             };
-            try {
-                sessionStorage.setItem(cacheKey, JSON.stringify(next));
-            } catch {
-                /* ignore */
-            }
+            cache.write(cacheKey, next);
             return next;
         });
     });
@@ -201,60 +204,6 @@ export default function Tags() {
             nav("/login", { replace: true });
         }
     }, [session, adminProfileId, nav]);
-
-    useEffect(() => {
-        // If we already have data (from sessionStorage cache or a
-        // previous fetch in this mount), skip the fetch. Tags are
-        // mostly static and the kid backing out of a detail view
-        // expects to see the same preview poster strip - refetching
-        // would re-randomize the previews and visually swap them.
-        // Menu's "Refresh from server" clears the cache + reloads
-        // when the kid (or parent) wants a fresh pull.
-        if (data) return;
-        let cancelled = false;
-        async function run() {
-            try {
-                const url = new URL(
-                    "/api/kids/tags",
-                    window.location.origin,
-                );
-                if (adminProfileId) {
-                    url.searchParams.set("profileId", adminProfileId);
-                }
-                const res = await withAuthRetry(() =>
-                    fetch(url.toString(), {
-                        credentials: "same-origin",
-                        headers: authHeaders(),
-                    }),
-                );
-                if (!res.ok) {
-                    if (res.status === 401) {
-                        clearSession();
-                        nav("/login", { replace: true });
-                        return;
-                    }
-                    throw new Error(`${res.status}`);
-                }
-                const body = (await res.json()) as TagsResponse;
-                if (!cancelled) {
-                    setData(body);
-                    try {
-                        sessionStorage.setItem(cacheKey, JSON.stringify(body));
-                    } catch {
-                        /* quota / disabled - cache miss next time, no UX impact */
-                    }
-                }
-            } catch (err) {
-                if (!cancelled) {
-                    setError(err instanceof Error ? err.message : "load failed");
-                }
-            }
-        }
-        void run();
-        return () => {
-            cancelled = true;
-        };
-    }, [adminProfileId, nav]);
 
     // Tell the splash gate we have content rendered.
     useEffect(() => {

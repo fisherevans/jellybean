@@ -10,7 +10,6 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowBendRightDown } from "@phosphor-icons/react";
 import {
     authHeaders,
-    clearSession,
     getSession,
     probeAdmin,
     withAuthRetry,
@@ -18,12 +17,13 @@ import {
     type Session,
 } from "./auth";
 import Tile from "./Tile";
+import { clear as clearLibraryCache } from "./libraryCache";
 import {
-    cacheKey as buildCacheKey,
-    get as cacheGet,
-    set as cacheSet,
-    clear as clearLibraryCache,
-} from "./libraryCache";
+    buildLibraryKey,
+    idbLibraryCache,
+    idbLibraryEtags,
+} from "./kidsCache";
+import { useKidsResource } from "./useKidsResource";
 import { useItemHiddenEvent } from "./itemHidden";
 import { useOnlineStatus } from "./onlineStatus";
 import AlphaPickerModal from "./AlphaPickerModal";
@@ -257,16 +257,8 @@ export default function Library() {
     const [alphaModalOpen, setAlphaModalOpen] = useState(false);
     const [hasMore, setHasMore] = useState(false);
     const [nextStart, setNextStart] = useState(0);
-    const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [refreshError, setRefreshError] = useState<string | null>(null);
-    const [cacheHit, setCacheHit] = useState(false);
-    useEffect(() => {
-        if (!loading) {
-            window.dispatchEvent(new Event("jellybean:ready"));
-        }
-    }, [loading]);
+    const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
     const [retryNonce, setRetryNonce] = useState(0);
     const online = useOnlineStatus();
 
@@ -314,6 +306,11 @@ export default function Library() {
         wasOnline.current = online;
     }, [online]);
 
+    // buildURL is shared between the first-page hook and the
+    // load-more callback. The hook calls it with startIndex=0; load
+    // more with the running cursor. searchDebounced disables both
+    // the cache (server response varies per query) and the
+    // background refetch on cache hit (no cache to revalidate).
     const buildURL = useCallback(
         (startIndex: number) => {
             const url = new URL("/api/kids/library", window.location.origin);
@@ -334,139 +331,104 @@ export default function Library() {
         [filter, sort, adminProfileId, searchDebounced],
     );
 
-    const fetchPage = useCallback(
-        async (
-            startIndex: number,
-            ifNoneMatch?: string,
-        ): Promise<
-            | { status: "modified"; page: LibraryResponse; etag: string }
-            | { status: "not-modified"; etag: string }
-        > => {
-            const headers: Record<string, string> = { ...authHeaders() };
-            if (ifNoneMatch) headers["If-None-Match"] = ifNoneMatch;
-            const res = await withAuthRetry(() =>
-                fetch(buildURL(startIndex), {
-                    credentials: "same-origin",
-                    headers,
-                }),
-            );
-            const etag = res.headers.get("ETag") ?? "";
-            if (res.status === 304) {
-                return { status: "not-modified", etag };
-            }
-            if (!res.ok) {
-                if (res.status === 401) {
-                    const e = new Error("unauthorized");
-                    (e as Error & { code?: string }).code = "UNAUTHORIZED";
-                    throw e;
-                }
-                throw new Error(`${res.status}: ${await res.text()}`);
-            }
-            const page = (await res.json()) as LibraryResponse;
-            return { status: "modified", page, etag };
-        },
-        [buildURL],
-    );
-
     const useCache = !!session && !adminProfileId && !searchDebounced;
     const userId = session?.userId ?? "";
     const typeStr = filterToType(filter);
-    const allKey = useCache
-        ? buildCacheKey(userId, "all", typeStr, PAGE_SIZE, 0, "", sort)
-        : null;
+    const cacheKey = useCache
+        ? buildLibraryKey(userId, "all", typeStr, PAGE_SIZE, 0, "", sort)
+        : "";
 
+    const cache = useMemo(() => idbLibraryCache<LibraryResponse>(), []);
+    const etagBackend = useMemo(() => idbLibraryEtags(), []);
+    const firstPageURL = useMemo(() => {
+        if (admin === undefined) return null;
+        if (!session && !adminProfileId) return null;
+        return buildURL(0);
+    }, [admin, session, adminProfileId, buildURL]);
+
+    const {
+        data: firstPage,
+        error: hookError,
+        loading,
+        isStale: cacheHit,
+        refreshError: hookRefreshError,
+    } = useKidsResource<LibraryResponse>({
+        url: firstPageURL,
+        cache: useCache ? cache : undefined,
+        cacheKey: useCache ? cacheKey : undefined,
+        etag: useCache ? etagBackend : undefined,
+        // Refetch when filter/sort/search/retry change. cacheKey
+        // covers filter+sort+searchDebounced indirectly but isn't a
+        // dep on its own (it's "" when useCache is false).
+        deps: [firstPageURL, retryNonce],
+    });
+
+    // Drive the page-state from the hook's data. When the hook
+    // delivers a cache hit synchronously, this fires immediately
+    // and the kid sees tiles. When the network revalidation lands
+    // and is a 200 (modified), the hook re-fires with the fresh
+    // data and we re-derive. 304s don't refire data so we don't
+    // re-derive (correct - the cached values are still current).
+    useEffect(() => {
+        if (!firstPage) return;
+        setItems(firstPage.Items ?? []);
+        setHasMore(!!firstPage.HasMore);
+        setNextStart(firstPage.NextStartIndex ?? (firstPage.Items?.length ?? 0));
+        setLettersByName(firstPage.LettersByName ?? {});
+    }, [firstPage]);
+
+    // Reset paging state when the URL changes (filter/sort/search
+    // swap). Otherwise the IntersectionObserver-driven load-more
+    // would fire against the previous filter's nextStart.
+    useEffect(() => {
+        setNextStart(0);
+        setHasMore(false);
+        setLoadMoreError(null);
+    }, [firstPageURL]);
+
+    // Map the hook's refreshError to Library's banner text. The
+    // dedicated "unauthorized" sentinel surfaces a friendlier "Sign-in
+    // expired" rather than the literal status code.
+    const refreshError =
+        hookRefreshError === "unauthorized"
+            ? "Sign-in expired"
+            : hookRefreshError !== null
+              ? "Couldn't refresh"
+              : null;
+    const error = hookError;
+
+    useEffect(() => {
+        if (!loading) {
+            window.dispatchEvent(new Event("jellybean:ready"));
+        }
+    }, [loading]);
+
+    // Auth gate (mirrors Browse). Runs once admin probe completes.
     useEffect(() => {
         if (admin === undefined) return;
         if (!session && !adminProfileId) {
             nav("/login", { replace: true });
-            return;
         }
-        let cancelled = false;
-        setError(null);
-        setRefreshError(null);
-        setCacheHit(false);
-        setNextStart(0);
-        setHasMore(false);
-
-        const allK = allKey;
-        let allEtag: string | undefined;
-
-        const cacheReads = (async () => {
-            if (!allK) {
-                setLoading(true);
-                setItems([]);
-                return;
-            }
-            const allHit = await cacheGet(allK);
-            if (cancelled) return;
-            if (allHit) {
-                const cached = allHit.page as LibraryResponse;
-                setItems(cached.Items ?? []);
-                setHasMore(!!cached.HasMore);
-                setNextStart(
-                    cached.NextStartIndex ?? (cached.Items?.length ?? 0),
-                );
-                setLettersByName(cached.LettersByName ?? {});
-                allEtag = allHit.etag;
-                setLoading(false);
-                setCacheHit(true);
-            } else {
-                setItems([]);
-                setLoading(true);
-            }
-        })();
-
-        cacheReads
-            .then(() => fetchPage(0, allEtag))
-            .then((all) => {
-                if (cancelled) return;
-                if (all.status === "modified") {
-                    setItems(all.page.Items ?? []);
-                    setHasMore(!!all.page.HasMore);
-                    setNextStart(
-                        all.page.NextStartIndex ??
-                            (all.page.Items?.length ?? 0),
-                    );
-                    setLettersByName(all.page.LettersByName ?? {});
-                    if (allK && all.etag) {
-                        cacheSet(allK, all.page, all.etag).catch(() => {});
-                    }
-                }
-                setLoading(false);
-                setRefreshError(null);
-                setCacheHit(false);
-            })
-            .catch((err) => {
-                if (cancelled) return;
-                const isUnauthorized =
-                    err &&
-                    typeof err === "object" &&
-                    (err as { code?: string }).code === "UNAUTHORIZED";
-                const haveCache = allEtag !== undefined;
-                if (isUnauthorized && !haveCache) {
-                    clearSession();
-                    nav("/login", { replace: true });
-                    return;
-                }
-                if (haveCache) {
-                    setRefreshError(
-                        isUnauthorized
-                            ? "Sign-in expired"
-                            : "Couldn't refresh",
-                    );
-                } else {
-                    setError(String(err.message ?? err));
-                }
-                setLoading(false);
-            });
-        return () => {
-            cancelled = true;
-        };
-    }, [admin, session, adminProfileId, fetchPage, nav, allKey, retryNonce]);
+    }, [admin, session, adminProfileId, nav]);
 
     // Infinite scroll only applies when sort=name (recency sorts
     // return the entire visible set in one response, so there's no
-    // sentinel to observe).
+    // sentinel to observe). Load-more stays a manual fetch (no
+    // useKidsResource) - the hook is shaped for "page-level data
+    // that flips on URL change," not for appending to a list.
+    const loadMorePage = useCallback(async () => {
+        const url = buildURL(nextStart);
+        const res = await withAuthRetry(() =>
+            fetch(url, {
+                credentials: "same-origin",
+                headers: authHeaders(),
+            }),
+        );
+        if (!res.ok) {
+            throw new Error(`${res.status}: ${await res.text()}`);
+        }
+        return (await res.json()) as LibraryResponse;
+    }, [buildURL, nextStart]);
     useEffect(() => {
         if (sort !== "name") return;
         if (!sentinelRef.current || !hasMore || loadingMore || loading) return;
@@ -476,22 +438,22 @@ export default function Library() {
                 const visible = entries[0]?.isIntersecting ?? false;
                 if (!visible) return;
                 setLoadingMore(true);
-                fetchPage(nextStart)
-                    .then((res) => {
-                        if (res.status !== "modified") return;
-                        const page = res.page;
+                loadMorePage()
+                    .then((page) => {
                         setItems((cur) => [...cur, ...(page.Items ?? [])]);
                         setNextStart(page.NextStartIndex ?? nextStart);
                         setHasMore(!!page.HasMore);
                     })
-                    .catch((err) => setError(String(err.message ?? err)))
+                    .catch((err) =>
+                        setLoadMoreError(String(err.message ?? err)),
+                    )
                     .finally(() => setLoadingMore(false));
             },
             { rootMargin: "400px" },
         );
         obs.observe(el);
         return () => obs.disconnect();
-    }, [sort, hasMore, loadingMore, loading, nextStart, fetchPage]);
+    }, [sort, hasMore, loadingMore, loading, nextStart, loadMorePage]);
 
     // Parent hid an item from the modal: drop it from the in-memory
     // list and nuke the library cache so a remount refetches a clean
@@ -845,7 +807,9 @@ export default function Library() {
                 </button>
             </div>
 
-            {error && <p className="error">{error}</p>}
+            {(error || loadMoreError) && (
+                <p className="error">{error ?? loadMoreError}</p>
+            )}
             {!online && cacheHit && (
                 <p className="kids-offline-pill" role="status">
                     Offline - showing cached library
