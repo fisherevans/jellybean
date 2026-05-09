@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -79,11 +80,11 @@ func CheckVersion(version string) error {
 }
 
 func parseMajorMinor(v string) (int, int, error) {
-	maj, rest, ok := splitOnce(v, ".")
+	maj, rest, ok := strings.Cut(v, ".")
 	if !ok {
 		return 0, 0, errors.New("expected major.minor.patch")
 	}
-	min, _, _ := splitOnce(rest, ".")
+	min, _, _ := strings.Cut(rest, ".")
 	majN, err := strconv.Atoi(maj)
 	if err != nil {
 		return 0, 0, err
@@ -93,15 +94,6 @@ func parseMajorMinor(v string) (int, int, error) {
 		return 0, 0, err
 	}
 	return majN, minN, nil
-}
-
-func splitOnce(s, sep string) (string, string, bool) {
-	for i := 0; i+len(sep) <= len(s); i++ {
-		if s[i:i+len(sep)] == sep {
-			return s[:i], s[i+len(sep):], true
-		}
-	}
-	return s, "", false
 }
 
 func (c *Client) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {

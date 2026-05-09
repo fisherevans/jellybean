@@ -131,7 +131,7 @@ func (s *Server) handleKidsOverrideVerifyPIN(w http.ResponseWriter, r *http.Requ
 		st, _ := s.curation.GetOverrideStatus(r.Context())
 		if st != nil && st.LockedFor > 0 {
 			w.Header().Set("Retry-After",
-				intString(int(st.LockedFor.Seconds())+1))
+				strconv.Itoa(int(st.LockedFor.Seconds())+1))
 		}
 		http.Error(w, "locked out", http.StatusLocked)
 		return
@@ -415,24 +415,5 @@ func (s *Server) handleKidsOverrideQR(w http.ResponseWriter, r *http.Request) {
 		"itemId":     itemID,
 		"publicUrl":  publicURL,
 	})
-}
-
-// intString is a tiny strconv.Itoa replacement that avoids the
-// import in this file. itoa-equivalent for small positive ints.
-func intString(n int) string {
-	if n < 0 {
-		n = 0
-	}
-	if n == 0 {
-		return "0"
-	}
-	buf := [20]byte{}
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }
 
