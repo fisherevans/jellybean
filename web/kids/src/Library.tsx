@@ -18,6 +18,7 @@ import {
     type Session,
 } from "./auth";
 import Tile from "./Tile";
+import TileGrid, { type GridFocus, type GridSection } from "./TileGrid";
 import {
     cacheKey as buildCacheKey,
     get as cacheGet,
@@ -52,6 +53,10 @@ import {
 // sections (Added today / Watched this week / Never watched / etc.)
 // and hides the A-Z jump - alpha quick-jump doesn't apply when
 // content isn't alphabetized.
+//
+// The sectioned grid + arrow nav inside it lives in <TileGrid>; this
+// page owns the controls row, the focus state machine, and the
+// load-more sentinel.
 //
 // Continue Watching lives only on Browse; Library is curation +
 // browse, not "what was I in the middle of."
@@ -125,14 +130,6 @@ function labelFor<T extends { id: string; label: string }>(
     return list.find((o) => o.id === id)?.label ?? "";
 }
 
-// Section identity: visible sections only, with a stable id so React
-// keys don't churn between sort changes.
-type Section = {
-    id: string;
-    title?: string;
-    items: LibraryItem[];
-};
-
 const ADDED_TITLES: Record<AddedBucket, string> = {
     today: "Added today",
     week: "Added this week",
@@ -151,7 +148,10 @@ const WATCHED_TITLES: Record<WatchedBucket, string> = {
     never: "Never watched",
 };
 
-function buildSections(items: LibraryItem[], sort: SortId): Section[] {
+function buildSections(
+    items: LibraryItem[],
+    sort: SortId,
+): GridSection<LibraryItem>[] {
     if (items.length === 0) return [];
     if (sort === "name") {
         return [{ id: "all", items }];
@@ -164,7 +164,7 @@ function buildSections(items: LibraryItem[], sort: SortId): Section[] {
         const buckets = bucketByAdded(adapted);
         return ADDED_ORDER.filter((b) => buckets[b].length > 0).map((b) => ({
             id: `added:${b}`,
-            title: ADDED_TITLES[b],
+            label: ADDED_TITLES[b],
             items: buckets[b].map((x) => x.it),
         }));
     }
@@ -177,7 +177,7 @@ function buildSections(items: LibraryItem[], sort: SortId): Section[] {
     const buckets = bucketByWatched(adapted);
     return WATCHED_ORDER.filter((b) => buckets[b].length > 0).map((b) => ({
         id: `watched:${b}`,
-        title: WATCHED_TITLES[b],
+        label: WATCHED_TITLES[b],
         items: buckets[b].map((x) => x.it),
     }));
 }
@@ -271,13 +271,12 @@ export default function Library() {
     const online = useOnlineStatus();
 
     const [focus, setFocus] = useState<Focus>({ kind: "search" });
-    const tileRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+    const chromeRefs = useRef<Record<string, HTMLButtonElement | null>>({});
     const homeCtx = useKidsHome();
     const { tabFocused, setTabFocused } = homeCtx;
     const searchWrapRef = useRef<HTMLDivElement | null>(null);
     const searchInputRef = useRef<HTMLInputElement | null>(null);
     const sentinelRef = useRef<HTMLDivElement | null>(null);
-    const sectionGridRefs = useRef<(HTMLDivElement | null)[]>([]);
     const [override, setOverride] = useState<{
         itemId: string;
         itemName: string;
@@ -510,8 +509,8 @@ export default function Library() {
 
     // After a sort change, any "grid" focus that pointed into the
     // previous section layout may now point past the new sections /
-    // out of bounds. Clamp it so the focus DOM-management effect
-    // doesn't try to focus a missing ref. Controls focus is fine as-is.
+    // out of bounds. Clamp it so TileGrid doesn't try to focus a
+    // missing ref. Controls focus is fine as-is.
     useEffect(() => {
         if (focus.kind !== "grid") return;
         const sec = sections[focus.section];
@@ -556,38 +555,35 @@ export default function Library() {
         });
     }, [loading, totalItems, stack]);
 
-    const columns = useGridColumns(sectionGridRefs, sections);
+    // Bridge Library's Focus union to TileGrid's GridFocus shape.
+    // null means a chrome control or the tab nav is focused and
+    // TileGrid should idle.
+    const gridFocus: GridFocus | null =
+        focus.kind === "grid" && !tabFocused
+            ? { sectionIdx: focus.section, itemIdx: focus.item }
+            : null;
+    const onGridFocusChange = useCallback((g: GridFocus) => {
+        setFocus({ kind: "grid", section: g.sectionIdx, item: g.itemIdx });
+    }, []);
+    const onGridExitTop = useCallback(() => {
+        // Up off section 0 row 0 hands focus back to the controls row.
+        setFocus({ kind: "search" });
+    }, []);
 
-    // Focus DOM management.
+    // Focus DOM management for chrome focus. TileGrid handles the
+    // grid case (focus + scroll on cell change) on its own.
     useEffect(() => {
         if (tabFocused) return;
+        if (focus.kind === "grid") return;
         if (focus.kind === "search") {
             searchWrapRef.current?.focus({ preventScroll: true });
             stack.scrollToTop();
             return;
         }
-        if (
-            focus.kind === "alphaBtn" ||
-            focus.kind === "filter" ||
-            focus.kind === "sort"
-        ) {
-            const el = tileRefs.current[focusKey(focus)];
-            if (el) el.focus({ preventScroll: true });
-            stack.scrollToTop();
-            return;
-        }
-        // grid
-        const el = tileRefs.current[focusKey(focus)];
-        if (!el) return;
-        el.focus({ preventScroll: true });
-        const onFirstRow =
-            focus.section === 0 && focus.item < Math.max(1, columns);
-        if (onFirstRow) {
-            stack.scrollToTop();
-        } else {
-            stack.scrollToCenter(el);
-        }
-    }, [focus, columns, tabFocused, stack]);
+        const el = chromeRefs.current[focus.kind];
+        if (el) el.focus({ preventScroll: true });
+        stack.scrollToTop();
+    }, [focus, tabFocused, stack]);
 
     const wasTabFocused = useRef(true);
     useEffect(() => {
@@ -614,11 +610,15 @@ export default function Library() {
         }
     }, [tabFocused, stack]);
 
+    // Page keydown for the controls row. TileGrid runs its own
+    // listener for grid arrow nav when grid focus is active; the two
+    // listeners coexist because they target disjoint focus regions.
     const lastMoveRef = useRef(0);
     const REPEAT_MIN_MS = 90;
     useEffect(() => {
         if (override || tabFocused) return;
         if (filterOpen || sortOpen || alphaModalOpen) return;
+        if (focus.kind === "grid") return; // TileGrid owns the keys here
         const handler = (e: KeyboardEvent) => {
             const k = e.key;
             if (
@@ -650,28 +650,16 @@ export default function Library() {
                 lastMoveRef.current = performance.now();
             }
             // Up off the controls row hands focus back to the tab nav.
-            if (
-                k === "ArrowUp" &&
-                (focus.kind === "search" ||
-                    focus.kind === "filter" ||
-                    focus.kind === "sort" ||
-                    focus.kind === "alphaBtn")
-            ) {
+            if (k === "ArrowUp") {
                 setTabFocused(true);
                 return;
             }
             setFocus((f) =>
-                moveFocus(f, k, {
-                    sections,
-                    columns,
-                    onActivate: () =>
-                        activate(f, {
-                            setFilterOpen,
-                            setSortOpen,
-                            setAlphaModalOpen,
-                            openSearch: () =>
-                                searchInputRef.current?.focus(),
-                        }),
+                moveControls(f, k, sections, {
+                    setFilterOpen,
+                    setSortOpen,
+                    setAlphaModalOpen,
+                    openSearch: () => searchInputRef.current?.focus(),
                 }),
             );
         };
@@ -680,7 +668,6 @@ export default function Library() {
     }, [
         focus,
         sections,
-        columns,
         override,
         tabFocused,
         setTabFocused,
@@ -796,7 +783,7 @@ export default function Library() {
                 </div>
                 <button
                     type="button"
-                    ref={(el) => (tileRefs.current["filter"] = el)}
+                    ref={(el) => (chromeRefs.current["filter"] = el)}
                     className={`library-dropdown-btn ${
                         !tabFocused && focus.kind === "filter" ? "focused" : ""
                     }`}
@@ -811,7 +798,7 @@ export default function Library() {
                 </button>
                 <button
                     type="button"
-                    ref={(el) => (tileRefs.current["sort"] = el)}
+                    ref={(el) => (chromeRefs.current["sort"] = el)}
                     className={`library-dropdown-btn ${
                         !tabFocused && focus.kind === "sort" ? "focused" : ""
                     }`}
@@ -826,7 +813,7 @@ export default function Library() {
                 </button>
                 <button
                     type="button"
-                    ref={(el) => (tileRefs.current["alphaBtn"] = el)}
+                    ref={(el) => (chromeRefs.current["alphaBtn"] = el)}
                     className={`library-alpha-btn library-jump-btn ${
                         !tabFocused && focus.kind === "alphaBtn"
                             ? "focused"
@@ -864,68 +851,57 @@ export default function Library() {
                     Nothing here yet. Ask a parent to mark titles visible.
                 </p>
             ) : (
-                <>
-                    {sections.map((s, sIdx) => (
-                        <section
-                            key={s.id}
-                            className="kids-section"
-                            aria-label={s.title ?? "Library"}
-                        >
-                            {s.title && (
-                                <h2 className="kids-section-title">
-                                    {s.title}
-                                </h2>
+                <TileGrid<LibraryItem>
+                    items={items}
+                    sections={sections}
+                    focus={gridFocus}
+                    onFocusChange={onGridFocusChange}
+                    onExitTop={onGridExitTop}
+                    enabled={
+                        !override && !filterOpen && !sortOpen && !alphaModalOpen
+                    }
+                    scrollToTop={stack.scrollToTop}
+                    scrollToCenter={stack.scrollToCenter}
+                    footer={
+                        <>
+                            {sort === "name" && (
+                                <div ref={sentinelRef} className="sentinel" />
                             )}
-                            <div
-                                className="grid"
-                                ref={(el) =>
-                                    (sectionGridRefs.current[sIdx] = el)
-                                }
-                            >
-                                {s.items.map((it, i) => {
-                                    const key = `grid:${sIdx}:${i}`;
-                                    const isFoc =
-                                        focus.kind === "grid" &&
-                                        focus.section === sIdx &&
-                                        focus.item === i;
-                                    return (
-                                        <Tile
-                                            key={`${s.id}:${it.Id}`}
-                                            item={it}
-                                            size="library"
-                                            focused={!tabFocused && isFoc}
-                                            showProgress
-                                            onClick={() => {
-                                                setFocus({
-                                                    kind: "grid",
-                                                    section: sIdx,
-                                                    item: i,
-                                                });
-                                                navToWatch(it.Id);
-                                            }}
-                                            onFocus={() =>
-                                                setFocus({
-                                                    kind: "grid",
-                                                    section: sIdx,
-                                                    item: i,
-                                                })
-                                            }
-                                            refCallback={(el) =>
-                                                (tileRefs.current[key] = el)
-                                            }
-                                        />
-                                    );
-                                })}
-                            </div>
-                        </section>
-                    ))}
-                    {sort === "name" && (
-                        <div ref={sentinelRef} className="sentinel" />
+                            {loadingMore && (
+                                <p className="library-state">
+                                    Loading more...
+                                </p>
+                            )}
+                        </>
+                    }
+                    renderCell={(it, isFoc, refCallback, ctx) => (
+                        <Tile
+                            key={`${sections[ctx.sectionIdx].id}:${it.Id}`}
+                            item={it}
+                            size="library"
+                            focused={!tabFocused && isFoc}
+                            showProgress
+                            onClick={() => {
+                                setFocus({
+                                    kind: "grid",
+                                    section: ctx.sectionIdx,
+                                    item: ctx.itemIdx,
+                                });
+                                navToWatch(it.Id);
+                            }}
+                            onFocus={() =>
+                                setFocus({
+                                    kind: "grid",
+                                    section: ctx.sectionIdx,
+                                    item: ctx.itemIdx,
+                                })
+                            }
+                            refCallback={(el) =>
+                                refCallback(el as HTMLElement | null)
+                            }
+                        />
                     )}
-                    {loadingMore && (
-                        <p className="library-state">Loading more...</p>
-                    )}
-                </>
+                />
             )}
             </div>
             {override && (
@@ -987,7 +963,7 @@ export default function Library() {
                         title="Jump to"
                         options={sections.map((s) => ({
                             id: s.id,
-                            label: s.title ?? "All",
+                            label: s.label ?? "All",
                         }))}
                         currentId=""
                         onSelect={(id) => {
@@ -1029,24 +1005,32 @@ function AdminPreviewBanner() {
     );
 }
 
-function focusKey(f: Focus): string {
-    if (f.kind === "grid") return `grid:${f.section}:${f.item}`;
-    return f.kind;
-}
-
-type MoveOpts = {
-    sections: Section[];
-    columns: number;
-    onActivate: () => void;
+type ActivateHandlers = {
+    setFilterOpen: (v: boolean) => void;
+    setSortOpen: (v: boolean) => void;
+    setAlphaModalOpen: (v: boolean) => void;
+    openSearch: () => void;
 };
 
-function moveFocus(f: Focus, key: string, opts: MoveOpts): Focus {
+// moveControls handles arrow nav within the controls row only. Down
+// from any control hands off to the first grid cell (TileGrid takes
+// over from there). Up off the row is handled by the page's keydown
+// listener separately.
+function moveControls(
+    f: Focus,
+    key: string,
+    sections: GridSection<LibraryItem>[],
+    h: ActivateHandlers,
+): Focus {
     if (key === "Enter" || key === " ") {
-        opts.onActivate();
+        if (f.kind === "filter") h.setFilterOpen(true);
+        else if (f.kind === "sort") h.setSortOpen(true);
+        else if (f.kind === "alphaBtn") h.setAlphaModalOpen(true);
+        else if (f.kind === "search") h.openSearch();
         return f;
     }
     const firstGrid: Focus | null =
-        opts.sections.length > 0 && opts.sections[0].items.length > 0
+        sections.length > 0 && sections[0].items.length > 0
             ? { kind: "grid", section: 0, item: 0 }
             : null;
     switch (f.kind) {
@@ -1069,176 +1053,10 @@ function moveFocus(f: Focus, key: string, opts: MoveOpts): Focus {
             if (key === "ArrowLeft") return { kind: "sort" };
             if (key === "ArrowDown") return firstGrid ?? f;
             return f;
-        case "grid": {
-            return moveGrid(f, key, opts);
-        }
+        case "grid":
+            // grid arrows are owned by TileGrid; this case never
+            // fires in practice (the page-level handler skips when
+            // grid focus is active).
+            return f;
     }
-}
-
-function moveGrid(
-    f: { kind: "grid"; section: number; item: number },
-    key: string,
-    opts: MoveOpts,
-): Focus {
-    const cols = Math.max(1, opts.columns);
-    const sec = opts.sections[f.section];
-    if (!sec) return f;
-    const len = sec.items.length;
-    const i = f.item;
-    const col = i % cols;
-    const rowInSec = Math.floor(i / cols);
-    if (key === "ArrowLeft") {
-        if (col === 0) return f;
-        return { kind: "grid", section: f.section, item: i - 1 };
-    }
-    if (key === "ArrowRight") {
-        if (col + 1 >= cols || i + 1 >= len) return f;
-        return { kind: "grid", section: f.section, item: i + 1 };
-    }
-    if (key === "ArrowDown") {
-        // Within section: advance to next row even if it's a partial
-        // (last) row. Clamp the column to the last item that row has.
-        const nextRowStart = (rowInSec + 1) * cols;
-        if (nextRowStart < len) {
-            const nextRowItems = Math.min(cols, len - nextRowStart);
-            const target = Math.min(col, nextRowItems - 1);
-            return {
-                kind: "grid",
-                section: f.section,
-                item: nextRowStart + target,
-            };
-        }
-        // No next row in this section: hop to first row of next
-        // section, clamped to that row's width.
-        const nextSec = opts.sections[f.section + 1];
-        if (nextSec) {
-            const firstRowItems = Math.min(cols, nextSec.items.length);
-            const target = Math.min(col, firstRowItems - 1);
-            return {
-                kind: "grid",
-                section: f.section + 1,
-                item: Math.max(0, target),
-            };
-        }
-        // No further sections: stay (don't drift to a different col).
-        return f;
-    }
-    if (key === "ArrowUp") {
-        if (rowInSec > 0) {
-            const prevRowStart = (rowInSec - 1) * cols;
-            return {
-                kind: "grid",
-                section: f.section,
-                item: prevRowStart + col,
-            };
-        }
-        // First row of section: hop to last row of previous section,
-        // clamped to that row's width.
-        if (f.section > 0) {
-            const prev = opts.sections[f.section - 1];
-            const prevLen = prev.items.length;
-            const lastRowStart = Math.floor((prevLen - 1) / cols) * cols;
-            const lastRowItems = prevLen - lastRowStart;
-            const target = Math.min(col, lastRowItems - 1);
-            return {
-                kind: "grid",
-                section: f.section - 1,
-                item: lastRowStart + Math.max(0, target),
-            };
-        }
-        // First row of first section: hand off to controls row.
-        return { kind: "search" };
-    }
-    return f;
-}
-
-type ActivateHandlers = {
-    setFilterOpen: (v: boolean) => void;
-    setSortOpen: (v: boolean) => void;
-    setAlphaModalOpen: (v: boolean) => void;
-    openSearch: () => void;
-};
-
-function activate(f: Focus, h: ActivateHandlers) {
-    if (f.kind === "filter") {
-        h.setFilterOpen(true);
-        return;
-    }
-    if (f.kind === "sort") {
-        h.setSortOpen(true);
-        return;
-    }
-    if (f.kind === "alphaBtn") {
-        h.setAlphaModalOpen(true);
-        return;
-    }
-    if (f.kind === "search") {
-        h.openSearch();
-        return;
-    }
-    // grid Enter is owned by useLongPressEnter; not reached here.
-}
-
-// useGridColumns reports the grid track count (CSS columns) shared
-// across all section grids. All grids use the same `.grid` CSS
-// template so the count is identical between them.
-//
-// Reading `getComputedStyle(grid).gridTemplateColumns` is the
-// authoritative source: with `grid-template-columns: repeat(auto-fill,
-// minmax(170px, 1fr))`, the computed value resolves to a list of
-// real px tracks (e.g. "186.4px 186.4px ..."). Counting whitespace-
-// separated tokens gives the actual column count regardless of how
-// many items the first row has.
-//
-// The previous implementation counted children sharing offsetTop on
-// the first non-empty grid, which broke when sections like "Added
-// today" had only one item: that section's first row had 1 child, so
-// columns was reported as 1 and Down navigation collapsed to "next
-// item" instead of "next row".
-function useGridColumns(
-    refs: React.MutableRefObject<(HTMLDivElement | null)[]>,
-    sections: Section[],
-): number {
-    const [cols, setCols] = useState(4);
-    useEffect(() => {
-        const update = () => {
-            const grid = refs.current.find((g) => g && g.children.length > 0);
-            if (!grid) return;
-            const tpl = window
-                .getComputedStyle(grid)
-                .gridTemplateColumns.trim();
-            if (tpl && tpl !== "none") {
-                const tracks = tpl.split(/\s+/).filter(Boolean).length;
-                if (tracks > 0) {
-                    setCols(tracks);
-                    return;
-                }
-            }
-            // Fallback: count children sharing the first child's
-            // offsetTop on the LARGEST grid (most likely to have a
-            // full first row).
-            let best: HTMLDivElement | null = null;
-            let bestLen = 0;
-            for (const g of refs.current) {
-                if (g && g.children.length > bestLen) {
-                    best = g;
-                    bestLen = g.children.length;
-                }
-            }
-            if (!best) return;
-            const first = best.children[0] as HTMLElement;
-            const firstTop = first.offsetTop;
-            let count = 0;
-            for (let i = 0; i < best.children.length; i++) {
-                const c = best.children[i] as HTMLElement;
-                if (Math.abs(c.offsetTop - firstTop) > 1) break;
-                count++;
-            }
-            if (count > 0) setCols(count);
-        };
-        update();
-        window.addEventListener("resize", update);
-        return () => window.removeEventListener("resize", update);
-    }, [refs, sections]);
-    return cols;
 }
