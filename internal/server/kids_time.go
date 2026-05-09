@@ -1,15 +1,12 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
 
-	"github.com/fisherevans/jellybean/internal/auth"
 	"github.com/fisherevans/jellybean/internal/curation"
 )
 
@@ -82,13 +79,8 @@ func (s *Server) handleKidsCanPlay(w http.ResponseWriter, r *http.Request) {
 // for the admin dashboard. Used by the per-kid management page to
 // show today's bucket + segments at a glance.
 func (s *Server) handleAdminKidTimeStatus(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
@@ -109,13 +101,8 @@ func (s *Server) handleAdminKidTimeStatus(w http.ResponseWriter, r *http.Request
 // handleAdminProfileTimeLimits returns the current time-limits config
 // for a profile.
 func (s *Server) handleAdminProfileTimeLimits(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
@@ -131,25 +118,20 @@ func (s *Server) handleAdminProfileTimeLimits(w http.ResponseWriter, r *http.Req
 // handleAdminUpdateProfileTimeLimits PUTs new config. Body matches the
 // JSON shape of curation.ProfileTimeLimits.
 func (s *Server) handleAdminUpdateProfileTimeLimits(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
-	var body struct {
+	body, err := decodeJSON[struct {
 		Enabled               bool `json:"enabled"`
 		DailyCapMinutes       int  `json:"dailyCapMinutes"`
 		RefillIntervalHours   int  `json:"refillIntervalHours"`
 		DayStartHour          int  `json:"dayStartHour"`
 		DefaultShowCapMinutes *int `json:"defaultShowCapMinutes,omitempty"`
 		DefaultMovieStarts    *int `json:"defaultMovieStarts,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	}](r, 0)
+	if err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
@@ -172,13 +154,8 @@ func (s *Server) handleAdminUpdateProfileTimeLimits(w http.ResponseWriter, r *ht
 // handleAdminListContentOverrides returns per-item overrides for a
 // profile. Used by the manage-item page to surface "Time" rows.
 func (s *Server) handleAdminListContentOverrides(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
@@ -192,13 +169,8 @@ func (s *Server) handleAdminListContentOverrides(w http.ResponseWriter, r *http.
 
 // handleAdminUpsertContentOverride upserts a per-item override.
 func (s *Server) handleAdminUpsertContentOverride(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	pidStr := mux.Vars(r)["id"]
-	pid, err := strconv.ParseInt(pidStr, 10, 64)
-	if err != nil || pid <= 0 {
+	pid, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "profileId required", http.StatusBadRequest)
 		return
 	}
@@ -207,19 +179,19 @@ func (s *Server) handleAdminUpsertContentOverride(w http.ResponseWriter, r *http
 		http.Error(w, "itemId required", http.StatusBadRequest)
 		return
 	}
-	var body struct {
+	body, err := decodeJSON[struct {
 		OverrideCapMinutes *int `json:"overrideCapMinutes,omitempty"`
 		OverrideStarts     *int `json:"overrideStarts,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	}](r, 0)
+	if err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
 	o := curation.ContentTimeOverride{
-		ProfileID:           pid,
-		JellyfinItemID:      itemID,
-		OverrideCapMinutes:  body.OverrideCapMinutes,
-		OverrideStarts:      body.OverrideStarts,
+		ProfileID:          pid,
+		JellyfinItemID:     itemID,
+		OverrideCapMinutes: body.OverrideCapMinutes,
+		OverrideStarts:     body.OverrideStarts,
 	}
 	if err := s.curation.UpsertContentOverride(r.Context(), o); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

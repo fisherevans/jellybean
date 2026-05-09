@@ -1,14 +1,9 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
-	"strconv"
 	"time"
 
-	"github.com/gorilla/mux"
-
-	"github.com/fisherevans/jellybean/internal/auth"
 	"github.com/fisherevans/jellybean/internal/curation"
 )
 
@@ -45,13 +40,8 @@ func (s *Server) handleKidsBodyBreakStatus(w http.ResponseWriter, r *http.Reques
 
 // handleAdminProfileBodyBreaks GET returns the per-profile config.
 func (s *Server) handleAdminProfileBodyBreaks(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
@@ -68,13 +58,8 @@ func (s *Server) handleAdminProfileBodyBreaks(w http.ResponseWriter, r *http.Req
 // defaults. Triggered by the "Reset to defaults" button on the body-
 // breaks settings tab.
 func (s *Server) handleAdminResetProfileBodyBreaks(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
@@ -88,24 +73,19 @@ func (s *Server) handleAdminResetProfileBodyBreaks(w http.ResponseWriter, r *htt
 
 // handleAdminUpdateProfileBodyBreaks PUTs new config.
 func (s *Server) handleAdminUpdateProfileBodyBreaks(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
-	var body struct {
+	body, err := decodeJSON[struct {
 		Enabled              bool     `json:"enabled"`
 		PlayMinutes          int      `json:"playMinutes"`
 		BreakMinutes         int      `json:"breakMinutes"`
 		VoiceMessageTemplate string   `json:"voiceMessageTemplate"`
 		Reasons              []string `json:"reasons"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	}](r, 0)
+	if err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}

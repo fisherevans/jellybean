@@ -1,8 +1,6 @@
 package server
 
 import (
-	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 
@@ -59,10 +57,10 @@ func (s *Server) handleAdminListAPIKeys(w http.ResponseWriter, r *http.Request) 
 // with a "copy this now, you cannot see it again" warning. We never
 // store plaintext server-side.
 func (s *Server) handleAdminCreateAPIKey(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](r, 0)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -80,14 +78,13 @@ func (s *Server) handleAdminCreateAPIKey(w http.ResponseWriter, r *http.Request)
 
 // handleAdminRevokeAPIKey stamps revoked_at. Idempotent.
 func (s *Server) handleAdminRevokeAPIKey(w http.ResponseWriter, r *http.Request) {
-	id, err := parseIDParam(mux.Vars(r)["id"])
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	if err := s.curation.RevokeAPIKey(r.Context(), id); err != nil {
-		if errors.Is(err, curation.ErrAPIKeyNotFound) {
-			http.Error(w, "key not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -99,14 +96,13 @@ func (s *Server) handleAdminRevokeAPIKey(w http.ResponseWriter, r *http.Request)
 // handleAdminDeleteAPIKey hard-deletes a key. Access log entries
 // pointing at it survive (key_id is SET NULL on the cascade).
 func (s *Server) handleAdminDeleteAPIKey(w http.ResponseWriter, r *http.Request) {
-	id, err := parseIDParam(mux.Vars(r)["id"])
+	id, err := pathID(r, "id")
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
 	if err := s.curation.DeleteAPIKey(r.Context(), id); err != nil {
-		if errors.Is(err, curation.ErrAPIKeyNotFound) {
-			http.Error(w, "key not found", http.StatusNotFound)
+		if writeDomainError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)

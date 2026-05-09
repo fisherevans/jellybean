@@ -1,26 +1,16 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
-	"strconv"
 
-	"github.com/gorilla/mux"
-
-	"github.com/fisherevans/jellybean/internal/auth"
 	"github.com/fisherevans/jellybean/internal/curation"
 )
 
 // M15: cable TV channel CRUD. Per-profile.
 
 func (s *Server) handleAdminListChannels(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
@@ -36,18 +26,13 @@ func (s *Server) handleAdminListChannels(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleAdminCreateChannel(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
-	var body curation.Channel
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	body, err := decodeJSON[curation.Channel](r, 0)
+	if err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
@@ -61,18 +46,13 @@ func (s *Server) handleAdminCreateChannel(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleAdminUpdateChannel(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
-	var body curation.Channel
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	body, err := decodeJSON[curation.Channel](r, 0)
+	if err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
@@ -85,13 +65,8 @@ func (s *Server) handleAdminUpdateChannel(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleAdminDeleteChannel(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}

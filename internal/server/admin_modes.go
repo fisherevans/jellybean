@@ -1,14 +1,9 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
-	"strconv"
 	"time"
 
-	"github.com/gorilla/mux"
-
-	"github.com/fisherevans/jellybean/internal/auth"
 	"github.com/fisherevans/jellybean/internal/curation"
 )
 
@@ -17,13 +12,8 @@ import (
 // (deferred) effective-config merge.
 
 func (s *Server) handleAdminListModes(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
@@ -39,18 +29,13 @@ func (s *Server) handleAdminListModes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminCreateMode(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
-	var body curation.Mode
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	body, err := decodeJSON[curation.Mode](r, 0)
+	if err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
@@ -64,18 +49,13 @@ func (s *Server) handleAdminCreateMode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminUpdateMode(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
-	var body curation.Mode
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	body, err := decodeJSON[curation.Mode](r, 0)
+	if err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
@@ -88,13 +68,8 @@ func (s *Server) handleAdminUpdateMode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminDeleteMode(w http.ResponseWriter, r *http.Request) {
-	if auth.SessionFromContext(r.Context()) == nil {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return
-	}
-	idStr := mux.Vars(r)["id"]
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
+	id, err := pathID(r, "id")
+	if err != nil {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
