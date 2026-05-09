@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { TAG_ICONS, TAG_ICON_ORDER, isTagIconName, type TagIconName } from "./tagIcons";
+import { TAG_ICONS, TAG_ICON_ORDER, isTagIconName, type TagIconName } from "jellybean-shared";
 
 // IconPicker is the curated-Phosphor-icon grid used by the tag editor
 // (and reusable elsewhere). Renders a search box + scrollable grid so

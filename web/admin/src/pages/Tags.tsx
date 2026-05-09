@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { api, type Tag, type TagSort } from "../api";
 import TagModal from "../TagModal";
 import Spinner from "../Spinner";
-import { TAG_ICONS, isTagIconName } from "../tagIcons";
+import { TAG_ICONS, isTagIconName } from "jellybean-shared";
 
 // Tags list page (M6 #39). Each row is a Link to /tags/:id - the
 // detail page is where rename / description / icon / delete live.

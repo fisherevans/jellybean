@@ -108,7 +108,7 @@ export type Tag = {
     description?: string;
     sortOrder: number;
     // Optional Phosphor icon name from the curated allow-list (see
-    // tagIcons.ts in admin + kid). Empty string = no icon.
+    // jellybean-shared/tagIcons.ts). Empty string = no icon.
     icon?: string;
     itemCount?: number;
     createdAt?: number;

@@ -7,9 +7,6 @@
 // Add new entries by their bare Phosphor name (the export name from
 // @phosphor-icons/react). The kid client maps unknown names to no
 // icon, so a typo on the admin side renders cleanly.
-//
-// This file is duplicated in web/kids/src/tagIcons.ts - keep the
-// two in sync. (No shared workspace yet.)
 
 import {
     Airplane,
