@@ -10,12 +10,13 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/fisherevans/jellybean/internal/browse"
 	"github.com/fisherevans/jellybean/internal/curation"
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
 // Kids browse endpoint (M8 #47). Routes through the resolver in
-// browse_resolver.go, then decorates each row's item ids with full
+// internal/browse, then decorates each row's item ids with full
 // Jellyfin item bodies so the kid client can render tiles directly.
 
 type browseRowResponse struct {
@@ -85,6 +86,43 @@ type browseResponse struct {
 	LayoutName string              `json:"layoutName"`
 	ProfileID  int64               `json:"profileId"`
 	Rows       []browseRowResponse `json:"rows"`
+}
+
+// browseContext bundles the persistent dependencies the resolver needs.
+// Cheap enough to construct per request; we're not memoizing on Server
+// because the curation store + jellyfin client are already stable
+// references on Server itself.
+//
+// Warn forwards the resolver's non-fatal warnings (unknown row type,
+// per-row resolve errors that get swallowed) into our zerolog logger
+// without making internal/browse import zerolog.
+func (s *Server) browseContext() *browse.Context {
+	return &browse.Context{
+		Store: s.curation,
+		Jelly: s.jellyfin,
+		Warn: func(msg string, kv ...any) {
+			ev := s.logger.Warn()
+			for i := 0; i+1 < len(kv); i += 2 {
+				key, ok := kv[i].(string)
+				if !ok {
+					continue
+				}
+				switch v := kv[i+1].(type) {
+				case error:
+					ev = ev.Err(v)
+				case string:
+					ev = ev.Str(key, v)
+				case int:
+					ev = ev.Int(key, v)
+				case int64:
+					ev = ev.Int64(key, v)
+				default:
+					ev = ev.Interface(key, v)
+				}
+			}
+			ev.Msg(msg)
+		},
+	}
 }
 
 // handleKidsBrowse resolves the kid's layout into renderable rows.
@@ -190,34 +228,11 @@ func (s *Server) respondBrowseRow(
 		http.Error(w, "row not found", http.StatusNotFound)
 		return
 	}
-	bc := &browseContext{
-		store:   s.curation,
-		jelly:   s.jellyfin,
-		ctx:     ctx,
-		profile: *profile,
-		layout:  layout.Layout,
-		kidID:   kidID,
-		userID:  userID,
-		userTok: userTok,
-		visible: map[string]bool{},
-	}
-	resolvers := map[curation.RowType]rowResolver{
-		curation.RowContinueWatching: resolveContinueWatching,
-		curation.RowFavorites:        resolveFavorites,
-		curation.RowTag:              resolveSingleTag,
-		curation.RowTagFanout:        resolveTagFanout,
-		curation.RowRecentlyAdded:    resolveRecentlyAdded,
-		curation.RowRandomUnwatched:  resolveRandomUnwatched,
-		curation.RowWatchAgain:       resolveWatchAgain,
-	}
-	fn, ok := resolvers[target.Type]
-	if !ok {
+	if !browse.IsSupportedRowType(target.Type) {
 		http.Error(w, "row type not supported", http.StatusBadRequest)
 		return
 	}
-	cfg, _ := decodeRowConfig(target.ConfigJSON)
-	cfg["max_items"] = limit
-	resolved, err := fn(bc, *target, cfg)
+	resolved, err := browse.ResolveRow(ctx, s.browseContext(), profile, layout, *target, limit, kidID, userID, userTok)
 	if err != nil {
 		s.logger.Error().Err(err).Int64("row_id", rowID).Msg("browse row resolve")
 		writeUpstreamError(w, err, "failed to load row")
@@ -348,7 +363,7 @@ func (s *Server) respondBrowse(
 		}
 	}
 
-	resolved, err := s.resolveLayout(ctx, profile, layout, kidID, userID, userTok)
+	resolved, err := browse.Resolve(ctx, s.browseContext(), profile, layout, kidID, userID, userTok)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("resolve layout")
 		http.Error(w, "failed to resolve layout", http.StatusInternalServerError)
@@ -436,15 +451,15 @@ func (s *Server) respondBrowse(
 //   - "name"           -> alphabetical by Item.Name
 //   - "random"         -> no-op; trust the resolver's shuffled order
 //   - "recently_added" -> Item.DateCreated desc; items with empty /
-//                         unparseable DateCreated sink to the bottom
-//                         while preserving relative order
+//     unparseable DateCreated sink to the bottom
+//     while preserving relative order
 //   - "" / unknown     -> no-op (covers non-tag rows + any future
-//                         resolver that hasn't set SortMode yet)
+//     resolver that hasn't set SortMode yet)
 //
 // Other row types (continue_watching, recently_added, random_unwatched,
 // favorites, watch_again) leave SortMode empty - their resolver owns
 // the order and we don't touch it here.
-func applyPostFetchSort(items []jellyfin.Item, row ResolvedRow) {
+func applyPostFetchSort(items []jellyfin.Item, row browse.ResolvedRow) {
 	if len(items) <= 1 {
 		return
 	}

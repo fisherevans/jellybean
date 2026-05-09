@@ -1,4 +1,4 @@
-package server
+package browse
 
 import (
 	"reflect"
@@ -7,7 +7,7 @@ import (
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
-// resumeIDsForCuration is the small helper that turns Jellyfin's
+// ResumeIDsForCuration is the small helper that turns Jellyfin's
 // resume response (per-episode positions) into the curation-addressable
 // id list. We test it directly because the bug it fixes (Continue
 // Watching empty for series watchers) is purely about this rewrite.
@@ -71,7 +71,7 @@ func TestResumeIDsForCuration(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := resumeIDsForCuration(tc.in)
+			got := ResumeIDsForCuration(tc.in)
 			if len(tc.want) == 0 && len(got) == 0 {
 				return
 			}
