@@ -156,6 +156,7 @@ func (s *Store) RecordPlayActivity(ctx context.Context, kidID int64, itemID, ser
 	if kidID <= 0 {
 		return errors.New("kidID required")
 	}
+	defer s.lockKidWrite(kidID)()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -249,6 +250,12 @@ func (s *Store) GetBodyBreakStatus(ctx context.Context, kidID, profileID int64, 
 		return out, nil
 	}
 
+	// Same per-kid lock as RecordPlayActivity: this path conditionally
+	// writes (natural break expiry, StartBreak trigger) and the kid
+	// client polls it on the same cadence as the progress endpoint, so
+	// without serialization the two writers SQLITE_BUSY each other.
+	defer s.lockKidWrite(kidID)()
+
 	row := s.db.QueryRowContext(ctx, `
 		SELECT accumulator_seconds, on_break_until, COALESCE(on_break_reason, '')
 		FROM kid_body_break_state WHERE kid_id = ?`, kidID)
@@ -282,9 +289,10 @@ func (s *Store) GetBodyBreakStatus(ctx context.Context, kidID, profileID int64, 
 			WHERE kid_id = ?`, now.Unix(), kidID)
 	}
 
-	// Should we trigger a break right now?
+	// Should we trigger a break right now? Use the unlocked variant
+	// because we already hold the per-kid write lock.
 	if accSec >= float64(cfg.PlayMinutes)*60 {
-		st, err := s.StartBreak(ctx, kidID, profileID, now)
+		st, err := s.startBreakLocked(ctx, kidID, profileID, now)
 		if err != nil {
 			return nil, err
 		}
@@ -297,6 +305,15 @@ func (s *Store) GetBodyBreakStatus(ctx context.Context, kidID, profileID int64, 
 // random reason from the profile's list, and writes it to the kid
 // state row.
 func (s *Store) StartBreak(ctx context.Context, kidID, profileID int64, now time.Time) (*BodyBreakStatus, error) {
+	defer s.lockKidWrite(kidID)()
+	return s.startBreakLocked(ctx, kidID, profileID, now)
+}
+
+// startBreakLocked is the unlocked implementation of StartBreak. The
+// caller must already hold the per-kid write lock; used from inside
+// GetBodyBreakStatus which acquires the lock at the top of its body
+// and would otherwise self-deadlock on the public StartBreak.
+func (s *Store) startBreakLocked(ctx context.Context, kidID, profileID int64, now time.Time) (*BodyBreakStatus, error) {
 	cfg, err := s.GetProfileBodyBreaks(ctx, profileID)
 	if err != nil {
 		return nil, err
@@ -333,6 +350,7 @@ func (s *Store) StartBreak(ctx context.Context, kidID, profileID int64, now time
 // EndBreak ends the current break early. ViaOverride records that the
 // parent skipped the break (audit log lives in override_actions).
 func (s *Store) EndBreak(ctx context.Context, kidID int64, now time.Time, viaOverride bool) error {
+	defer s.lockKidWrite(kidID)()
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE kid_body_break_state
 		SET on_break_until = NULL, on_break_reason = NULL,

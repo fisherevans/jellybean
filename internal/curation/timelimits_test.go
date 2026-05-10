@@ -2,6 +2,7 @@ package curation
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
@@ -287,6 +288,45 @@ func TestRecordPlaybackProgressGapStartsNewSegment(t *testing.T) {
 	_ = store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM kid_watch_segments WHERE kid_id = ?`, kidID).Scan(&n)
 	if n != 2 {
 		t.Errorf("segments = %d after gap, want 2", n)
+	}
+}
+
+// Regression for the SQLITE_BUSY storm caught during real playback:
+// the kids progress endpoint fires RecordPlaybackProgress +
+// RecordPlayActivity back to back per poll, plus the body-break
+// status endpoint runs on the same cadence. Concurrent writers on the
+// same kid used to BUSY-out under WAL. The Store now serializes per-
+// kid writes via a sync.Map of mutexes; this test fans out writers
+// from goroutines and asserts every call returns nil + no deadlock.
+func TestRecordPlaybackProgressConcurrentDoesNotRace(t *testing.T) {
+	store, kidID, profileID := newTimeStore(t)
+	ctx := context.Background()
+	t0 := time.Date(2025, 5, 4, 12, 0, 0, 0, time.UTC)
+
+	const writers = 8
+	const iterations = 25
+
+	var wg sync.WaitGroup
+	errs := make(chan error, writers*iterations*2)
+	for w := 0; w < writers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				ts := t0.Add(time.Duration(w*iterations+i) * time.Second)
+				if err := store.RecordPlaybackProgress(ctx, kidID, profileID, "movie-1", "", false, ts); err != nil {
+					errs <- err
+				}
+				if err := store.RecordPlayActivity(ctx, kidID, "movie-1", "", false, ts); err != nil {
+					errs <- err
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent writer: %v", err)
 	}
 }
 

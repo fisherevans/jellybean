@@ -302,6 +302,7 @@ func (s *Store) RecordPlaybackProgress(ctx context.Context, kidID int64, profile
 	if err != nil {
 		return err
 	}
+	defer s.lockKidWrite(kidID)()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
