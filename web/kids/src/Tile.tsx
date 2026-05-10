@@ -40,17 +40,18 @@ type Props = {
 };
 
 const IMAGE_WIDTH: Record<TileSize, number> = {
-    // Browse tiles render at ~220px CSS width on the kid TV. The
-    // server delivers a 160px-wide image, the browser scales up by
-    // ~38%. On a low-DPI TV that scaling is invisible, but the
-    // smaller image cuts pixel count by ~55% versus a 240px-wide
-    // source - which directly cuts the WebView's per-image decode
-    // cost. LoAF data showed image decode/raster as the dominant
-    // freeze on cross-row arrow presses; smaller decodes thin out
-    // that backlog.
-    browse: 160,
-    library: 200,
-    cw: 220,
+    // Image width is targeted at the kid TV (720p), the constrained
+    // device. At 720p the responsive block in styles.css shrinks
+    // tiles to ~150px CSS for browse/cw and ~145px CSS for library;
+    // the server delivers a 130/130/130 image, the browser scales up
+    // by ~15%. On a low-DPI TV that scaling is invisible. On desktop
+    // dev (180px CSS for browse) the upscale is ~38%, still fine.
+    // Smaller decodes are the load-bearing win - LoAF data showed
+    // image decode/raster as the dominant freeze on cross-row arrow
+    // presses, and dropping from 160->130 cuts pixel count ~34%.
+    browse: 130,
+    library: 130,
+    cw: 130,
 };
 
 function TileImpl({
