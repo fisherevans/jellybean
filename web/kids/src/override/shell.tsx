@@ -148,6 +148,41 @@ export function ActionList({
         if (idx >= 0) refs.current[idx]?.focus();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+    function focusSibling(direction: "next" | "prev") {
+        // Fallback when the parent didn't provide an explicit
+        // onExitUp/Down: walk the modal's focusable siblings in DOM
+        // order and land on the closest one outside this list. This
+        // is what makes the BackLink "Back" / "Done" footer reachable
+        // by D-pad without every caller threading a ref through.
+        const anchor = refs.current.find(Boolean);
+        const root = (anchor?.closest(".override-modal") ??
+            document.body) as HTMLElement;
+        const all = Array.from(
+            root.querySelectorAll<HTMLElement>(
+                'button, [tabindex]:not([tabindex="-1"])',
+            ),
+        ).filter((el) => !(el as HTMLButtonElement).disabled);
+        const ours = new Set(refs.current.filter(Boolean) as HTMLElement[]);
+        // Find an "anchor" element in this list to know our position
+        // in the global order.
+        const anchorIdx = all.findIndex((el) => ours.has(el));
+        if (anchorIdx < 0) return;
+        if (direction === "next") {
+            for (let k = anchorIdx + 1; k < all.length; k++) {
+                if (!ours.has(all[k])) {
+                    all[k].focus();
+                    return;
+                }
+            }
+        } else {
+            for (let k = anchorIdx - 1; k >= 0; k--) {
+                if (!ours.has(all[k])) {
+                    all[k].focus();
+                    return;
+                }
+            }
+        }
+    }
     function onKeyDown(i: number, e: React.KeyboardEvent) {
         if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -157,9 +192,14 @@ export function ActionList({
                     return;
                 }
             }
-            // Already on the last enabled row - hand focus off
-            // to the parent if it provided an exit callback.
-            if (onExitDown) onExitDown();
+            // Already on the last enabled row - hand focus off to
+            // the parent's explicit callback, else fall through to
+            // the next focusable sibling (BackLink, etc).
+            if (onExitDown) {
+                onExitDown();
+                return;
+            }
+            focusSibling("next");
             return;
         }
         if (e.key === "ArrowUp") {
@@ -170,7 +210,11 @@ export function ActionList({
                     return;
                 }
             }
-            if (onExitUp) onExitUp();
+            if (onExitUp) {
+                onExitUp();
+                return;
+            }
+            focusSibling("prev");
             return;
         }
     }
@@ -202,12 +246,21 @@ export function ActionList({
 // focus ring is a 1px border around the inline text. Used in
 // place of ActionButton for back / done footers across the
 // override views per the M9 v2 visual brief.
+//
+// Pass `buttonRef` to let the parent stage steer D-pad focus down
+// onto the link from the last item in its body (e.g. MenuView
+// hands ArrowDown from the bottom row to the "Done" footer so the
+// label isn't a phantom selectable). Pass `onKeyDown` when the
+// stage wants to handle ArrowUp from the link to bounce focus back
+// up into the body.
 export function BackLink({
     onActivate,
     label = "Back",
     autoFocus,
     disabled,
     icon,
+    buttonRef,
+    onKeyDown,
 }: {
     onActivate: () => void;
     label?: string;
@@ -215,19 +268,51 @@ export function BackLink({
     disabled?: boolean;
     /** Override the default left-arrow glyph. Pass null to omit. */
     icon?: React.ReactNode | null;
+    buttonRef?: React.MutableRefObject<HTMLButtonElement | null>;
+    onKeyDown?: (e: React.KeyboardEvent<HTMLButtonElement>) => void;
 }) {
-    const ref = useRef<HTMLButtonElement | null>(null);
+    const localRef = useRef<HTMLButtonElement | null>(null);
+    const setRef = (el: HTMLButtonElement | null) => {
+        localRef.current = el;
+        if (buttonRef) buttonRef.current = el;
+    };
     useEffect(() => {
-        if (autoFocus) ref.current?.focus();
+        if (autoFocus) localRef.current?.focus();
     }, [autoFocus]);
     const glyph = icon === undefined ? <IconArrowLeft /> : icon;
+    // Default ArrowUp handler: walk DOM-backwards to the previous
+    // focusable inside the modal so the parent can reverse out of
+    // BackLink without losing focus into the void. The caller's
+    // onKeyDown (when supplied) wins so MenuView etc can override.
+    function defaultKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
+        if (onKeyDown) {
+            onKeyDown(e);
+            if (e.defaultPrevented) return;
+        }
+        if (e.key === "ArrowUp") {
+            e.preventDefault();
+            const root = localRef.current?.closest(
+                ".override-modal",
+            ) as HTMLElement | null;
+            if (!root) return;
+            const all = Array.from(
+                root.querySelectorAll<HTMLElement>(
+                    'button, [tabindex]:not([tabindex="-1"])',
+                ),
+            ).filter((el) => !(el as HTMLButtonElement).disabled);
+            const me = localRef.current;
+            const idx = me ? all.indexOf(me) : -1;
+            if (idx > 0) all[idx - 1].focus();
+        }
+    }
     return (
         <button
-            ref={ref}
+            ref={setRef}
             type="button"
             className="override-back-link"
             disabled={disabled}
             onClick={onActivate}
+            onKeyDown={defaultKeyDown}
         >
             {glyph && <span className="override-back-link-icon">{glyph}</span>}
             <span>{label}</span>

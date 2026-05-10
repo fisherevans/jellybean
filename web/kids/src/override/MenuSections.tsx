@@ -57,6 +57,13 @@ type MenuRow = {
     /** When set, render a paired secondary button to the right
      *  that clears an active override without leaving the menu. */
     reset?: { label: string; onActivate: () => void };
+    /** When true, render the row as non-interactive (no Enter
+     *  activation, skipped by D-pad navigation, halved opacity). The
+     *  status sub-text is what the parent should read instead. Used
+     *  for "No modes configured" today; designed as a generic flag
+     *  so future feature rows can surface the same dead-end-avoiding
+     *  pattern. */
+    disabled?: boolean;
 };
 
 type MenuViewProps = {
@@ -210,12 +217,13 @@ export function MenuView({
     // so the parent reads it as introducing a fresh effect rather
     // than adjusting one. Otherwise we keep the existing
     // "Override …" / "Adjust …" verbs.
-    const modeLabel =
-        !modeSummary.isOn && !modeSummary.isOverride
-            ? "Temporarily turn on a mode"
-            : activeMode
-              ? `Change mode (currently ${activeMode.name})`
-              : "Turn on a mode";
+    const modeLabel = modeSummary.disabled
+        ? "Turn on a mode"
+        : !modeSummary.isOn && !modeSummary.isOverride
+          ? "Temporarily turn on a mode"
+          : activeMode
+            ? `Change mode (currently ${activeMode.name})`
+            : "Turn on a mode";
     system.push({
         key: "mode",
         icon: <IconMode />,
@@ -225,15 +233,19 @@ export function MenuView({
         // Mode override is "active" when a local override exists.
         // The configured/scheduled mode is server-driven; clearing
         // a local mode override drops back to server state.
-        reset: modeOv
-            ? {
-                  label:
-                      modeOv.action === "disable"
-                          ? "Restore mode"
-                          : "Reset override",
-                  onActivate: () => overrides.clearMode(),
-              }
-            : undefined,
+        // Reset is suppressed when disabled (no modes configured) so
+        // the row stays a single non-interactive line.
+        reset:
+            modeOv && !modeSummary.disabled
+                ? {
+                      label:
+                          modeOv.action === "disable"
+                              ? "Restore mode"
+                              : "Reset override",
+                      onActivate: () => overrides.clearMode(),
+                  }
+                : undefined,
+        disabled: modeSummary.disabled,
     });
 
     const dimLabel =
@@ -347,15 +359,44 @@ export function MenuView({
             : undefined,
     });
 
+    // BackLink "Done" sits at the bottom of the focus order: ArrowDown
+    // from the last MenuSections row lands here; ArrowUp from here
+    // bounces back into the section grid. Without this wiring the
+    // link looks selectable but is unreachable via D-pad - exactly
+    // the "phantom affordance" parent feedback we're fixing.
+    const backRef = useRef<HTMLButtonElement | null>(null);
+    const sectionsRef = useRef<HTMLDivElement | null>(null);
     return (
         <ModalShell title="Adult menu" subtitle={`${itemType}: ${itemName}`}>
-            <MenuSections
-                sections={[
-                    { heading: `Manage ${editTargetName}`, rows: manage },
-                    { heading: "System", rows: system },
-                ]}
+            <div ref={sectionsRef}>
+                <MenuSections
+                    sections={[
+                        { heading: `Manage ${editTargetName}`, rows: manage },
+                        { heading: "System", rows: system },
+                    ]}
+                    onExitDown={() => backRef.current?.focus()}
+                />
+            </div>
+            <BackLink
+                onActivate={ctx.close}
+                label="Done"
+                buttonRef={backRef}
+                onKeyDown={(e) => {
+                    if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        // Focus the last enabled primary button in the
+                        // sections grid - querying the live DOM keeps
+                        // this resilient to disabled rows / re-renders.
+                        const buttons =
+                            sectionsRef.current?.querySelectorAll<HTMLButtonElement>(
+                                "button.override-row-primary",
+                            );
+                        if (buttons && buttons.length > 0) {
+                            buttons[buttons.length - 1].focus();
+                        }
+                    }
+                }}
             />
-            <BackLink onActivate={ctx.close} label="Done" />
         </ModalShell>
     );
 }
@@ -387,17 +428,28 @@ function MenuSections({
 
     useEffect(() => {
         if (noAutoFocus) return;
-        refs.current[0]?.[0]?.focus();
+        // First non-disabled row gets initial focus. Disabled rows
+        // render as static <div>s so refs.current[i][0] is null.
+        for (let i = 0; i < flatRows.length; i++) {
+            if (flatRows[i].disabled) continue;
+            const btn = refs.current[i]?.[0];
+            if (btn) {
+                btn.focus();
+                return;
+            }
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     function moveVertical(rowIdx: number, dir: 1 | -1) {
         // Always land on the primary column when crossing rows;
-        // primary is the wider hit and exists on every row.
+        // primary is the wider hit and exists on every row. Skip
+        // rows that have no focusable button (disabled rows render
+        // as a static <div> and don't enter the refs grid).
         let next = rowIdx + dir;
         while (next >= 0 && next < flatRows.length) {
             const btn = refs.current[next]?.[0];
-            if (btn) {
+            if (btn && !flatRows[next].disabled) {
                 btn.focus();
                 return true;
             }
@@ -451,6 +503,43 @@ function MenuSections({
                     <div className="override-section-rows">
                         {section.rows.map((row) => {
                             const i = rowIdx++;
+                            // Disabled row: render as a static block so
+                            // it sits in the visual flow but is skipped
+                            // by D-pad navigation, takes no Enter, and
+                            // visually reads as inert (halved opacity,
+                            // no focus ring). The status sub-text is
+                            // what carries the meaning ("No modes
+                            // configured").
+                            if (row.disabled) {
+                                return (
+                                    <div
+                                        className="override-row"
+                                        key={row.key}
+                                    >
+                                        <div
+                                            className={`override-action override-row-primary override-row-disabled${row.status ? " has-status" : ""}`}
+                                            aria-disabled="true"
+                                        >
+                                            <span
+                                                className="override-action-icon"
+                                                aria-hidden
+                                            >
+                                                {row.icon}
+                                            </span>
+                                            <span className="override-action-text">
+                                                <span className="override-action-label">
+                                                    {row.label}
+                                                </span>
+                                                {row.status !== undefined && (
+                                                    <span className="override-menu-status">
+                                                        {row.status}
+                                                    </span>
+                                                )}
+                                            </span>
+                                        </div>
+                                    </div>
+                                );
+                            }
                             return (
                                 <div className="override-row" key={row.key}>
                                     <button
