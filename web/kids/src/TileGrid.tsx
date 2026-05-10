@@ -129,12 +129,29 @@ export default function TileGrid<T>({
     const columns = useGridColumns(sectionGridRefs, effectiveSections);
 
     // Imperative focus + scroll on focus change.
+    //
+    // When focus transitions from a tile to null (because the page
+    // moved focus to a sibling pane like the keyboard or search), we
+    // actively blur the previously-focused tile. Otherwise the
+    // WebView's `:focus-visible` pseudo keeps the tile highlighted
+    // alongside the new pane's focus indicator (the t17 double-
+    // highlight bug). Tracking the last focused element via a ref
+    // avoids walking the refs map after the fact.
+    const lastFocusedElRef = useRef<HTMLElement | null>(null);
     useEffect(() => {
-        if (!focus) return;
+        if (!focus) {
+            const prev = lastFocusedElRef.current;
+            if (prev && document.activeElement === prev) {
+                prev.blur();
+            }
+            lastFocusedElRef.current = null;
+            return;
+        }
         const key = focusKey(focus);
         const el = refs.current[key];
         if (!el) return;
         el.focus({ preventScroll: true });
+        lastFocusedElRef.current = el;
         const onFirstRow =
             focus.sectionIdx === 0 && focus.itemIdx < Math.max(1, columns);
         if (onFirstRow) {
