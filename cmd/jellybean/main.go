@@ -113,6 +113,16 @@ func run() error {
 		}
 	}()
 
+	// Sweep the categorizations table for items that have disappeared
+	// from Jellyfin since the daemon last ran. Backgrounded with a
+	// generous timeout so a slow Jellyfin doesn't delay boot. See
+	// Server.RunStartupReconcile for the cache-invalidation rationale.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		srv.RunStartupReconcile(ctx)
+	}()
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
