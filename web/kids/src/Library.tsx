@@ -39,6 +39,7 @@ import { useOnlineStatus } from "./onlineStatus";
 import AlphaPickerModal from "./AlphaPickerModal";
 import OptionPickerModal from "./OptionPickerModal";
 import OverrideModal, { useLongPressEnter } from "./OverrideModal";
+import Keyboard from "./Keyboard";
 import { useKidsHome } from "./KidsHome";
 import { setHomeTab } from "./kidNav";
 import { useProgressiveBack } from "./useProgressiveBack";
@@ -237,6 +238,12 @@ export default function Library() {
     const [sort, setSort] = useState<SortId>(() => readSort());
     const [filterOpen, setFilterOpen] = useState(false);
     const [sortOpen, setSortOpen] = useState(false);
+    const [keyboardOpen, setKeyboardOpen] = useState(false);
+    // One-shot: open the keyboard automatically the first time search
+    // gets focus after mount. After that, opens are explicit (Enter on
+    // the focused search wrap or click). Prevents the keyboard from
+    // popping back open every time the kid arrows back up to search.
+    const searchAutoOpenedRef = useRef(false);
     const [searchInput, setSearchInput] = useState("");
     const [searchDebounced, setSearchDebounced] = useState("");
     useEffect(() => {
@@ -542,6 +549,16 @@ export default function Library() {
         if (focus.kind === "search") {
             searchWrapRef.current?.focus({ preventScroll: true });
             stack.scrollToTop();
+            // Auto-open the keyboard the first time search gets focus
+            // after the page mounts (matches the spec: "when the kid
+            // ... focuses it for the first time after the page mounts,
+            // open the keyboard"). One-shot via the ref so re-entries
+            // (kid arrows back up from grid to search) don't keep
+            // re-popping the keyboard.
+            if (!searchAutoOpenedRef.current) {
+                searchAutoOpenedRef.current = true;
+                setKeyboardOpen(true);
+            }
             return;
         }
         const el = chromeRefs.current[focus.kind];
@@ -573,6 +590,7 @@ export default function Library() {
     useEffect(() => {
         if (override || tabFocused) return;
         if (filterOpen || sortOpen || alphaModalOpen) return;
+        if (keyboardOpen) return; // Keyboard owns window keydown while open
         if (focus.kind === "grid") return; // TileGrid owns the keys here
         const handler = (e: KeyboardEvent) => {
             const k = e.key;
@@ -614,7 +632,7 @@ export default function Library() {
                     setFilterOpen,
                     setSortOpen,
                     setAlphaModalOpen,
-                    openSearch: () => searchInputRef.current?.focus(),
+                    openSearch: () => setKeyboardOpen(true),
                 }),
             );
         };
@@ -629,6 +647,7 @@ export default function Library() {
         filterOpen,
         sortOpen,
         alphaModalOpen,
+        keyboardOpen,
     ]);
 
     const focusedItem =
@@ -657,13 +676,22 @@ export default function Library() {
             !tabFocused &&
             !filterOpen &&
             !sortOpen &&
-            !alphaModalOpen,
+            !alphaModalOpen &&
+            !keyboardOpen,
         onShortPress: handleShortPress,
         onLongPress: handleLongPress,
     });
 
     useProgressiveBack(
         useCallback(() => {
+            // Keyboard registers its own back handler on top of the
+            // useProgressiveBack stack when open, so this branch is
+            // belt-and-suspenders for any race between
+            // setKeyboardOpen(true) and the child's effect-time push.
+            if (keyboardOpen) {
+                setKeyboardOpen(false);
+                return true;
+            }
             if (override) {
                 setOverride(null);
                 return true;
@@ -686,6 +714,7 @@ export default function Library() {
             // See web/kids/CLAUDE.md ("Back-then-Down focus contract").
             return handleBack();
         }, [
+            keyboardOpen,
             override,
             alphaModalOpen,
             filterOpen,
@@ -711,7 +740,7 @@ export default function Library() {
                         !tabFocused && focus.kind === "search" ? "focused" : ""
                     }`}
                     tabIndex={!tabFocused && focus.kind === "search" ? 0 : -1}
-                    onClick={() => searchInputRef.current?.focus()}
+                    onClick={() => setKeyboardOpen(true)}
                 >
                     <input
                         ref={searchInputRef}
@@ -719,8 +748,18 @@ export default function Library() {
                         className="library-search"
                         placeholder="Search"
                         value={searchInput}
+                        // Keyboard owns the value while open; in normal
+                        // pointer-driven flow (admin preview in a desktop
+                        // browser) the click on the wrap pops the
+                        // keyboard up too. The native onChange path is
+                        // a fallback for accessibility tooling that
+                        // injects characters directly.
                         onChange={(e) => setSearchInput(e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setKeyboardOpen(true);
+                        }}
+                        readOnly={keyboardOpen}
                     />
                 </div>
                 <button
@@ -802,7 +841,11 @@ export default function Library() {
                     onFocusChange={onGridFocusChange}
                     onExitTop={onGridExitTop}
                     enabled={
-                        !override && !filterOpen && !sortOpen && !alphaModalOpen
+                        !override &&
+                        !filterOpen &&
+                        !sortOpen &&
+                        !alphaModalOpen &&
+                        !keyboardOpen
                     }
                     scrollToTop={stack.scrollToTop}
                     scrollToCenter={stack.scrollToCenter}
@@ -881,6 +924,14 @@ export default function Library() {
                         setSortOpen(false);
                     }}
                     onClose={() => setSortOpen(false)}
+                />
+            )}
+            {keyboardOpen && (
+                <Keyboard
+                    value={searchInput}
+                    onChange={(v) => setSearchInput(v)}
+                    onSubmit={(_v) => setKeyboardOpen(false)}
+                    onClose={() => setKeyboardOpen(false)}
                 />
             )}
             {alphaModalOpen &&
