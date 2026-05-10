@@ -18,7 +18,6 @@ import * as overrides from "../parentOverrides";
 import { useParentOverride } from "../parentOverrides";
 import {
     useActiveMode,
-    useBodyBreakStatus,
     useTimeStatus,
     useViewingState,
 } from "../kidStatus";
@@ -74,19 +73,16 @@ export function MenuView({
     onMarkPlayed,
 }: MenuViewProps) {
     const time = useTimeStatus();
-    const breaks = useBodyBreakStatus(false);
     const viewing = useViewingState();
     const mode = useActiveMode();
 
-    // Server status drives "is this row even relevant" gates. Per-
-    // content time limit isn't surfaced by the API today; we use the
-    // global enabled flag as a proxy - when the kid has no daily
-    // limit at all, no per-item override makes sense either.
+    // Per-content time-limit row is the only thing we still gate on
+    // server status: an item-scoped budget makes no sense when no
+    // daily limit exists at all. Global feature-level rows always
+    // render so the parent can introduce a one-off cutoff (e.g.
+    // "TV off at 8pm tonight") even when nothing is configured
+    // globally.
     const hasContentTimeLimit = !!time?.enabled;
-    const hasGlobalTimeLimit = !!time?.enabled;
-    const hasBodyBreaks = !!breaks?.enabled;
-    const hasAutoOff =
-        !!viewing && (!!viewing.sleepTimerAt || viewing.autoOffActive);
     const activeMode = mode?.mode;
 
     // Local override readers - drive the secondary "Reset NN%" /
@@ -213,50 +209,56 @@ export function MenuView({
             : undefined,
     });
 
-    if (hasGlobalTimeLimit) {
-        system.push({
-            key: "globalTime",
-            icon: <IconClock />,
-            label: `Adjust daily time (${time.minutesRemaining}m left)`,
-            onActivate: () => ctx.push({ kind: "globalTime", token }),
-            reset: globalTimeOv
-                ? {
-                      label: "Reset time override",
-                      onActivate: () => overrides.clearGlobalTime(),
-                  }
-                : undefined,
-        });
-    }
+    // Global time, body breaks, and auto-off rows always render -
+    // even when the server has the feature globally disabled - so
+    // the parent can layer a one-off override on top (e.g. "TV
+    // off at 8pm tonight" with no scheduled auto-off configured).
+    // The server-merge layer in kidStatus.ts produces an effective
+    // "enabled" status when an override-only configuration is
+    // present.
+    const timeLabel = time?.enabled
+        ? `Adjust daily time (${time.minutesRemaining}m left)`
+        : "Adjust daily time";
+    system.push({
+        key: "globalTime",
+        icon: <IconClock />,
+        label: timeLabel,
+        onActivate: () => ctx.push({ kind: "globalTime", token }),
+        reset: globalTimeOv
+            ? {
+                  label: "Reset time override",
+                  onActivate: () => overrides.clearGlobalTime(),
+              }
+            : undefined,
+    });
 
-    if (hasBodyBreaks) {
-        system.push({
-            key: "bodyBreaks",
-            icon: <IconBreak />,
-            label: "Disable body breaks",
-            onActivate: () => ctx.push({ kind: "bodyBreaks", token }),
-            reset: bodyBreaksOv
-                ? {
-                      label: "Reset breaks override",
-                      onActivate: () => overrides.clearBodyBreaks(),
-                  }
-                : undefined,
-        });
-    }
+    system.push({
+        key: "bodyBreaks",
+        icon: <IconBreak />,
+        label: "Pause body breaks",
+        onActivate: () => ctx.push({ kind: "bodyBreaks", token }),
+        reset: bodyBreaksOv
+            ? {
+                  label: "Reset breaks override",
+                  onActivate: () => overrides.clearBodyBreaks(),
+              }
+            : undefined,
+    });
 
-    if (hasAutoOff) {
-        system.push({
-            key: "autoOff",
-            icon: <IconAutoOff />,
-            label: "Override auto-off",
-            onActivate: () => ctx.push({ kind: "autoOff", token }),
-            reset: autoOffOv
-                ? {
-                      label: "Reset auto-off override",
-                      onActivate: () => overrides.clearAutoOff(),
-                  }
-                : undefined,
-        });
-    }
+    system.push({
+        key: "autoOff",
+        icon: <IconAutoOff />,
+        label: viewing?.sleepTimerAt
+            ? "Override auto-off"
+            : "Set one-time auto-off",
+        onActivate: () => ctx.push({ kind: "autoOff", token }),
+        reset: autoOffOv
+            ? {
+                  label: "Reset auto-off override",
+                  onActivate: () => overrides.clearAutoOff(),
+              }
+            : undefined,
+    });
 
     return (
         <ModalShell title="Adult menu" subtitle={`${itemType}: ${itemName}`}>

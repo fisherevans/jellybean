@@ -29,6 +29,7 @@ export type Stage =
     | { kind: "bodyBreaks"; token: string }
     | { kind: "autoOff"; token: string }
     | { kind: "autoOffShift"; token: string }
+    | { kind: "autoOffOneTime"; token: string }
     | { kind: "qr"; token: string; url: string }
     | { kind: "error"; message: string }
     | { kind: "done"; message: string };
