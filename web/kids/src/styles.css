@@ -4202,3 +4202,107 @@ body[data-perf="slow"] .browse-hero-next-ep-overview,
 body[data-perf="slow"] .browse-hero-next-ep-label {
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 }
+
+/* ===== On-screen keyboard (t8) =====
+   D-pad-driven keyboard for Library search on the Skyworth TV. The
+   wrap is portaled to body so it sits above the rainbow bg + page
+   stack but below modals (.kids-keyboard-wrap z-index < OverrideModal,
+   AlphaPickerModal, etc. - those use 100+). Keys reuse .filter-pill
+   for the visual primitive: rounded white pill on transparent bg with
+   text-shadow, white-fill on .active (unused for keys - kept for
+   parity with the primitive), and a 3px white outline ring on .focused.
+*/
+.kids-keyboard-wrap {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+    /* Top padding leaves the kid's eye line on the focused key roughly
+       in the lower-third of the screen. The card itself owns its own
+       padding from the bottom edge. */
+    padding: 1.5rem 2rem 2rem;
+}
+.kids-keyboard-card {
+    pointer-events: auto;
+    background: rgba(20, 12, 32, 0.78);
+    border-radius: 22px;
+    padding: 1.4rem 1.6rem 1.6rem;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    /* Cap the width so the rows don't span the full TV; centered by
+       the wrap's flex justify. */
+    max-width: 1400px;
+    width: min(96vw, 1400px);
+}
+.kids-keyboard-preview {
+    color: #ffffff;
+    font-size: 1.4rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 0.4rem 0.8rem;
+    min-height: 2.2rem;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.06);
+    word-break: break-word;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+.kids-keyboard-preview-placeholder {
+    color: rgba(255, 255, 255, 0.55);
+    font-style: italic;
+}
+.kids-keyboard-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+.kids-keyboard-row {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+}
+/* Key cell. Inherits .filter-pill (rounded white pill primitive)
+   plus a fixed minimum size so the kid can read it from the couch
+   and the rows align cleanly even with different label widths. */
+.kids-keyboard-key {
+    /* Override .filter-pill's auto-width behavior: we want a fixed
+       cell so all alpha keys line up. The control-row keys widen via
+       their own modifier classes below. */
+    min-width: 4.6rem;
+    padding: 0.85rem 1rem;
+    font-size: 1.5rem;
+    text-align: center;
+    /* Disable the .filter-pill bg-color transition - the kid arrows
+       quickly and the per-frame transition is wasted work. The
+       focused outline appears synchronously; that's the only cue
+       that needs to track input speed. */
+    transition: none;
+    /* Pointer events off: keys are D-pad activated only. The whole
+       card is pointer-events: auto so the card-level click could be
+       wired in the future, but keys themselves don't need clicks. */
+    cursor: default;
+    user-select: none;
+}
+/* Wider control keys. Space spans roughly 4 char-cells so it reads as
+   a spacebar; the others get their natural label width plus padding. */
+.kids-keyboard-key-space {
+    min-width: 14rem;
+}
+.kids-keyboard-key-backspace,
+.kids-keyboard-key-clear,
+.kids-keyboard-key-done {
+    min-width: 7.5rem;
+}
+
+/* Slow-mode: drop the focus-ring outline-offset transition (it's
+   already :focus / .focused triggered, but the .filter-pill rule
+   above sets a transition on background-color we already removed).
+   No box-shadow on slow either. */
+body[data-perf="slow"] .kids-keyboard-key {
+    transition: none;
+}
