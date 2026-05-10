@@ -8,7 +8,7 @@ import {
     type ReactNode,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowUUpLeft, Plus } from "@phosphor-icons/react";
+import { ArrowUUpLeft, CaretUp, CaretDown, Plus } from "@phosphor-icons/react";
 import type { BrowseResponse, BrowseRow } from "jellybean-shared";
 import {
     authHeaders,
@@ -100,7 +100,10 @@ export default function Browse() {
     }, [fetchedData]);
     const tileRefs = useRef<Record<string, HTMLElement | null>>({});
     // Layout context: tab focus + menu opening live in KidsHome.
+    // t33: also pull setTabVisible so the TabPill hides when the kid
+    // has scrolled past row 0.
     const homeCtx = useKidsHome();
+    const { setTabVisible } = homeCtx;
     // Per-row column memory (forward-declared so the back-handler in
     // useHomeTabFocus's onTabReset can wipe it). Used by the D-pad
     // arrow handler below to restore "the column the kid was on" when
@@ -261,6 +264,18 @@ export default function Browse() {
 
     // KidsHome owns setHomeTab() and the body.kids-scroll-active class, so
     // Browse no longer touches either - just renders content.
+
+    // t33: single-row-at-a-time viewport. The TabPill is only visible
+    // when the kid is on row 0 (or has focus parked on the TabPill
+    // itself). Once the kid arrows down into row 1+, the pill
+    // collapses so the "previous row title" hint can take its place.
+    // Effect runs on every focus / tabFocused change. Restoring on
+    // unmount happens in KidsHome's route-change effect, which forces
+    // tabVisible=true on tab swaps.
+    useEffect(() => {
+        const showPill = tabFocused || focus.row === 0;
+        setTabVisible(showPill);
+    }, [focus.row, tabFocused, setTabVisible]);
 
     // Progressive image warm-up. Every 1.5s the active priority
     // radius grows by 1, so rows further from focus start loading
@@ -762,33 +777,14 @@ export default function Browse() {
         el.focus({ preventScroll: true });
         const isFirst = !didInitialFocusScroll.current;
         didInitialFocusScroll.current = true;
-        const sameRow =
-            !isFirst && prevFocusRowRef.current === focus.row;
         prevFocusRowRef.current = focus.row;
-        if (sameRow) return;
-        // Vertical target: row 0 pins stack to top; deeper rows
-        // center the focused tile. First paint snaps (no animation)
-        // so back-navigation with a primed cache lands instantly
-        // on the previously-focused tile; subsequent moves animate.
-        const pinToTop = focus.row === 0;
-        if (pinToTop) {
-            setStackY(0, isFirst);
-        } else {
-            // Center on the ROW's rect, not the tile's. The focused
-            // tile has transform: scale(1.12), and reading
-            // getBoundingClientRect on a transformed element can
-            // return inconsistent values on this WebView. Rows
-            // aren't transformed, so the row rect is stable. The
-            // delta is relative to stackYRef.current (the
-            // animator's CURRENT position, which is what the rect
-            // reflects); applied on top gives the absolute target.
-            const rowEl = el.closest(".browse-row") as HTMLElement | null;
-            const target = rowEl ?? el;
-            const rect = target.getBoundingClientRect();
-            const rowCenter = rect.top + rect.height / 2;
-            const delta = window.innerHeight / 2 - rowCenter;
-            setStackY(stackYRef.current + delta, isFirst);
-        }
+        // t33: single-row viewport. Each .browse-row is positioned via
+        // its data-pos attribute (active / prev / next / far). The
+        // stack-Y translate stays at 0 - per-row CSS transforms +
+        // opacity own the visual "scroll." First paint snaps so
+        // back-navigation lands instantly on the previously-focused
+        // tile; subsequent moves let the CSS transition animate.
+        setStackY(0, isFirst);
     }, [focus, tabFocused]);
 
     // Window-level keyboard listener. Skip while an override modal
@@ -856,8 +852,12 @@ export default function Browse() {
     }
 
 
+    // t33: data-active-row on the wrapper is exposed for debugging
+    // + future selectors (e.g. dimming when on the TabPill). The
+    // per-row data-pos attribute drives the actual layout.
+    const activeRow = tabFocused ? -1 : focus.row;
     return (
-        <div className="browse">
+        <div className="browse browse-single-row" data-active-row={activeRow}>
             <div className="browse-stack" ref={stackRef}>
             {data.rows.map((row, rIdx) => {
                 // Each row's targetCol drives useBrowseRowAnimator:
@@ -887,12 +887,42 @@ export default function Browse() {
                 // back to the active row. Pure class flip - all
                 // visual treatment lives in CSS.
                 const rowActive = !tabFocused && focus.row === rIdx;
+                // t33: single-row viewport. Each row is positioned
+                // via a data-pos attribute (active = visible /
+                // hint-prev / hint-next / far-prev / far-next). All
+                // rows stay mounted so per-row state (image priority
+                // latch, horizontal track position) persists across
+                // transitions; CSS handles the visibility + slide.
+                const anchor = tabFocused ? 0 : focus.row;
+                const delta = rIdx - anchor;
+                let rowPos: "active" | "hint-prev" | "hint-next" | "far-prev" | "far-next";
+                if (delta === 0) rowPos = "active";
+                else if (delta === -1) rowPos = "hint-prev";
+                else if (delta === 1) rowPos = "hint-next";
+                else if (delta < 0) rowPos = "far-prev";
+                else rowPos = "far-next";
                 return (
                     <section
                         key={row.rowId}
                         className={`browse-row${rowActive ? " browse-row-active" : ""}`}
+                        data-pos={rowPos}
+                        aria-hidden={rowPos === "active" ? undefined : true}
                     >
                         <h2 className="browse-row-title">
+                            {rowPos === "hint-prev" && (
+                                <CaretUp
+                                    weight="bold"
+                                    className="browse-row-hint-caret"
+                                    aria-hidden
+                                />
+                            )}
+                            {rowPos === "hint-next" && (
+                                <CaretDown
+                                    weight="bold"
+                                    className="browse-row-hint-caret"
+                                    aria-hidden
+                                />
+                            )}
                             <RowIcon name={row.icon} />
                             {row.title}
                         </h2>

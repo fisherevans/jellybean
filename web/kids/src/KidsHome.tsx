@@ -33,6 +33,14 @@ import { setHomeTab, type HomeTab } from "./kidNav";
 type Ctx = {
     tabFocused: boolean;
     setTabFocused: (b: boolean) => void;
+    // tabVisible drives whether the TabPill slot is shown at all
+    // (t33: Browse hides it once the kid scrolls past row 0 so the
+    // "previous row title hint" can take its spot). Library + Tags
+    // never flip this; they leave it at the default (true). When
+    // false, .kids-tabpill-slot collapses to height 0 + opacity 0
+    // via CSS, and the body content gets that space back.
+    tabVisible: boolean;
+    setTabVisible: (b: boolean) => void;
     openMenu: () => void;
 };
 
@@ -58,6 +66,9 @@ export default function KidsHome() {
     const location = useLocation();
     const active = pathToTab(location.pathname);
     const [tabFocused, setTabFocused] = useState(true);
+    // tabVisible default true; only Browse (t33) flips this to hide
+    // the TabPill when the kid has scrolled past row 0.
+    const [tabVisible, setTabVisible] = useState(true);
     const [menuOpen, setMenuOpen] = useState(false);
     const tabPillRef = useRef<HTMLButtonElement | null>(null);
     // renderedTab is the tab whose page content (via Outlet) is
@@ -108,6 +119,14 @@ export default function KidsHome() {
         setHomeTab(active);
     }, [active]);
 
+    // Re-show the TabPill whenever the active tab changes. Browse may
+    // have hidden it on a deep row scroll; switching to Library / Tags
+    // (or back to Browse) should always present the nav initially so
+    // the kid has a stable entry point.
+    useEffect(() => {
+        setTabVisible(true);
+    }, [active]);
+
     // Lock body scroll while inside any home tab. All three tabs
     // now use transform-based scroll (Browse via its own animator,
     // Library/Tags via useStackScroll), so body must stay at 0.
@@ -118,6 +137,21 @@ export default function KidsHome() {
         document.body.classList.add("kids-scroll-active");
         return () => document.body.classList.remove("kids-scroll-active");
     }, []);
+
+    // Mirror tabVisible onto body so any descendant (notably Browse's
+    // single-row layout) can react via CSS without prop-drilling. The
+    // class is gated on the body element so simple attribute
+    // selectors keep working from anywhere in the page tree.
+    useEffect(() => {
+        if (tabVisible) {
+            document.body.classList.remove("kids-tabpill-hidden");
+        } else {
+            document.body.classList.add("kids-tabpill-hidden");
+        }
+        return () => {
+            document.body.classList.remove("kids-tabpill-hidden");
+        };
+    }, [tabVisible]);
 
     // Tab transition: defer mounting the new route on slow TVs so
     // the loading interstitial gets a chance to paint. Without this
@@ -156,18 +190,25 @@ export default function KidsHome() {
     const transitioning = renderedTab !== active;
 
     // Imperatively focus the active tab button when tabFocused is
-    // true. Re-runs when the active tab changes too so cross-tab
-    // navigation lands DOM focus on the new tab's button. Pages
-    // running their own page-content focus path don't fight us
-    // because they only do so when tabFocused goes false.
+    // true AND the TabPill is currently visible. Re-runs when the
+    // active tab changes too so cross-tab navigation lands DOM focus
+    // on the new tab's button. Pages running their own page-content
+    // focus path don't fight us because they only do so when
+    // tabFocused goes false. While Browse has hidden the TabPill
+    // (deep row scroll), DOM focus stays on whatever tile the kid is
+    // on so re-showing the pill via ArrowUp doesn't steal it before
+    // the kid actually wants it.
     useEffect(() => {
         if (!tabFocused) return;
+        if (!tabVisible) return;
         tabPillRef.current?.focus({ preventScroll: true });
-    }, [tabFocused, active]);
+    }, [tabFocused, tabVisible, active]);
 
     const ctx: Ctx = {
         tabFocused,
         setTabFocused,
+        tabVisible,
+        setTabVisible,
         openMenu: () => setMenuOpen(true),
     };
 
@@ -192,11 +233,16 @@ export default function KidsHome() {
                     Tags, body scrolls naturally and the variable
                     stays at 0, so the TabPill scrolls with the rest
                     of the page in normal flow. */}
-                <div className="kids-tabpill-slot">
+                <div
+                    className={`kids-tabpill-slot${
+                        tabVisible ? "" : " kids-tabpill-slot-hidden"
+                    }`}
+                    aria-hidden={tabVisible ? undefined : true}
+                >
                     <TabPill
                         active={active}
                         search={location.search}
-                        focused={tabFocused}
+                        focused={tabFocused && tabVisible}
                         tabRef={(el) => (tabPillRef.current = el)}
                         onFocusContent={() => setTabFocused(false)}
                         onOpenMenu={() => setMenuOpen(true)}
