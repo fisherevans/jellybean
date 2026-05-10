@@ -638,7 +638,18 @@ export default function TagDetail() {
                         <ArrowLeft weight="fill" aria-hidden />
                     </button>
                 </header>
-                <p className="kids-tag-detail-state">Loading…</p>
+                <div
+                    className="kids-loading-center"
+                    role="status"
+                    aria-live="polite"
+                >
+                    <div className="kids-loading-dots" aria-hidden>
+                        <span />
+                        <span />
+                        <span />
+                    </div>
+                    <p className="kids-loading-label">Loading…</p>
+                </div>
             </div>
         );
     }

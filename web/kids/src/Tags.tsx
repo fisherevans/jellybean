@@ -367,7 +367,18 @@ export default function Tags() {
             <div className="kids-page kids-tags">
                 <div className="kids-tags-empty">
                     <h1>Tags</h1>
-                    <p>Loading…</p>
+                    <div
+                        className="kids-loading-center"
+                        role="status"
+                        aria-live="polite"
+                    >
+                        <div className="kids-loading-dots" aria-hidden>
+                            <span />
+                            <span />
+                            <span />
+                        </div>
+                        <p className="kids-loading-label">Loading…</p>
+                    </div>
                 </div>
             </div>
         );

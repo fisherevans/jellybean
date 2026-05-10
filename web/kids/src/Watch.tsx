@@ -571,7 +571,18 @@ export default function Watch() {
         return (
             <div className="kids-page kids-loading">
                 <div className="kids-home-bg" aria-hidden />
-                <p>Loading…</p>
+                <div
+                    className="kids-loading-center"
+                    role="status"
+                    aria-live="polite"
+                >
+                    <div className="kids-loading-dots" aria-hidden>
+                        <span />
+                        <span />
+                        <span />
+                    </div>
+                    <p className="kids-loading-label">Loading…</p>
+                </div>
             </div>
         );
     }

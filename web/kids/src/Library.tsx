@@ -886,7 +886,20 @@ export default function Library() {
         return () => cancelAnimationFrame(id);
     }, [keyboardOpen]);
 
-    if (admin === undefined) return <div className="screen">Loading...</div>;
+    if (admin === undefined) {
+        return (
+            <div className="screen">
+                <div className="kids-loading-center" role="status" aria-live="polite">
+                    <div className="kids-loading-dots" aria-hidden>
+                        <span />
+                        <span />
+                        <span />
+                    </div>
+                    <p className="kids-loading-label">Loading…</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className={`library ${keyboardOpen ? "keyboard-open" : ""}`}>
@@ -994,7 +1007,20 @@ export default function Library() {
             )}
 
             {loading ? (
-                <p className="library-state">Loading...</p>
+                <div
+                    className="grid"
+                    role="status"
+                    aria-live="polite"
+                    aria-label="Loading results"
+                >
+                    {Array.from({ length: 12 }).map((_, i) => (
+                        <div
+                            key={`skeleton-${i}`}
+                            className="library-skeleton-tile"
+                            aria-hidden
+                        />
+                    ))}
+                </div>
             ) : sections.length === 0 ? (
                 <p className="library-state">
                     Nothing here yet. Ask a parent to mark titles visible.
@@ -1021,9 +1047,18 @@ export default function Library() {
                                 <div ref={sentinelRef} className="sentinel" />
                             )}
                             {loadingMore && (
-                                <p className="library-state">
-                                    Loading more...
-                                </p>
+                                <div
+                                    className="library-loading-more"
+                                    role="status"
+                                    aria-live="polite"
+                                >
+                                    <span className="kids-loading-dots" aria-hidden>
+                                        <span />
+                                        <span />
+                                        <span />
+                                    </span>
+                                    <span>Loading more…</span>
+                                </div>
                             )}
                         </>
                     }
