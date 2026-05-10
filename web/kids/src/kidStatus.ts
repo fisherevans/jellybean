@@ -156,6 +156,13 @@ export type ActiveMode = {
         id: number;
         name: string;
         themeKey: string;
+        /** Mode-baked dim/warm contribution. The server bakes these
+         *  into /api/kids/viewing-state's dimPercent /
+         *  warmTintPercent as the baseline. Surfaced here so the
+         *  client-only mode-disable override can subtract the
+         *  contribution without a server round-trip. */
+        dimPercent?: number;
+        warmTintPercent?: number;
         enterVoiceMessage?: string;
         exitVoiceMessage?: string;
     };
@@ -331,6 +338,19 @@ export type FeatureSummary = {
     isOverride: boolean;
     disabled?: boolean;
 };
+
+// hasFutureTimestamp returns true iff `iso` parses to a real time
+// in the future. Tolerates the Go zero-time marshaling gotcha:
+// `time.Time` zero values serialize as "0001-01-01T00:00:00Z" even
+// with `,omitempty`, so a missing-on-the-server field still arrives
+// as a non-empty string. Treating any past timestamp (or unparseable
+// input) as "absent" matches the intent.
+function hasFutureTimestamp(iso: string | undefined): boolean {
+    if (!iso) return false;
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return false;
+    return t > Date.now();
+}
 
 function formatTimeShort(iso: string): string {
     const d = new Date(iso);
@@ -546,16 +566,47 @@ export function summarizeMode(
 // per-control local override is active. Auto-off (clock-driven on
 // the server) gets shifted / disabled by the local autoOff
 // override.
+//
+// Mode-disable interaction: when the local mode override action is
+// "disable", the server's viewing-state still has the disabled
+// mode's dim / warm baked into dimPercent / warmTintPercent
+// (the server doesn't know about the client-only override layer).
+// We strip that contribution here so disabling the mode visibly
+// un-dims the screen without a server round-trip. We only zero
+// out values that we can attribute to the mode - per-kid
+// server-side dim/warm overrides (signalled by
+// nextOverrideExpiresAt) replace the mode baseline on the
+// server, so we leave those alone.
 export function useEffectiveViewingState(): ViewingState | null {
     const server = useViewingState();
+    const serverActiveMode = useActiveMode();
     const dim = useParentOverride(() => overrides.getDim());
     const warm = useParentOverride(() => overrides.getWarm());
     const autoOff = useParentOverride(() => overrides.getAutoOff());
+    const modeOv = useParentOverride(() => overrides.getMode());
     if (!server) return null;
     let dimPercent = server.dimPercent;
     let warmPercent = server.warmTintPercent;
     let autoOffActive = server.autoOffActive;
     let sleepTimerAt = server.sleepTimerAt;
+    // Strip mode-contributed dim/warm when the mode is locally
+    // disabled. Only safe when no per-kid server override is
+    // active (no future nextOverrideExpiresAt) - otherwise the
+    // server value came from the override, not the mode. Note
+    // that Go's json marshaller serializes a zero time.Time as
+    // "0001-01-01T00:00:00Z" rather than omitting it, so we can't
+    // rely on the field being absent - we have to parse and
+    // compare to "now".
+    if (
+        modeOv?.action === "disable" &&
+        Date.parse(modeOv.expiresAt) > Date.now() &&
+        !hasFutureTimestamp(server.nextOverrideExpiresAt)
+    ) {
+        const modeDim = serverActiveMode?.mode?.dimPercent ?? 0;
+        const modeWarm = serverActiveMode?.mode?.warmTintPercent ?? 0;
+        if (modeDim > 0 && dimPercent === modeDim) dimPercent = 0;
+        if (modeWarm > 0 && warmPercent === modeWarm) warmPercent = 0;
+    }
     if (dim) dimPercent = dim.percent;
     if (warm) warmPercent = warm.percent;
     if (autoOff?.disabledUntilMidnight) {

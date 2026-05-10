@@ -25,8 +25,8 @@ import {
     useActiveMode,
     useBodyBreakStatus,
     useEffectiveTimeStatus,
+    useEffectiveViewingState,
     useTimeStatus,
-    useViewingState,
 } from "../kidStatus";
 import { BackLink, ModalShell } from "./shell";
 import {
@@ -94,7 +94,13 @@ export function MenuView({
 }: MenuViewProps) {
     const time = useTimeStatus();
     const effectiveTime = useEffectiveTimeStatus();
-    const viewing = useViewingState();
+    // Use the merged viewing state so the dim/warm sub-text
+    // reflects what's actually on screen, not just the raw server
+    // baseline. Critical when the parent has just locally disabled
+    // the active mode: the server still bakes the (now-disabled)
+    // mode's dim into its viewing-state response, but
+    // useEffectiveViewingState strips it back out.
+    const viewing = useEffectiveViewingState();
     const mode = useActiveMode();
     // Body breaks status: poll at the slower (non-playing) cadence
     // here - the kid isn't on /play while the override modal is
