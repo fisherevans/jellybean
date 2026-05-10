@@ -605,6 +605,16 @@ export default function PlayerTransport({
             // reveal to be eaten too, breaking play/pause.
             const consumed = showOnInput();
             if (consumed) {
+                // Enter / Space on the reveal press also pauses the
+                // video. Kids expect "OK" to mean "stop, let me see
+                // the controls" - the prior behavior (reveal-only)
+                // surfaced the transport but kept the show running
+                // behind it, which made it feel like Enter didn't
+                // do anything since the kid wasn't looking at the
+                // newly-visible chrome.
+                if (e.key === "Enter" || e.key === " ") {
+                    videoRef.current?.pause();
+                }
                 console.log("[player]   action: reveal-only (consumed)");
                 // preventDefault unconditionally on the reveal press.
                 // Without this, Enter on a focused button would still

@@ -50,15 +50,16 @@
     --row-fg-default: #ffffff;
     --row-fg-3: #20162e;     /* yellow row */
 
-    /* Action accent. Hot purple pops against the warm bg without
-       fighting the row palette. */
-    --accent: #C438D7;
+    /* Action accent. Periwinkle blue (matches the admin app's
+       --accent) - the previous hot purple was hard to read on the
+       warm bg and clashed with row palette pinks. */
+    --accent: #4F8AF7;
     --accent-fg: #ffffff;
     --accent-warm: #FA8943;
     --accent-warm-fg: #20162e;
     --success: #56CA5E;
     --error:   #E81819;
-    --accent-soft: #ffe4fa;
+    --accent-soft: #d9e6ff;
 
     /* Browse cursor + tile metrics. Tunable: bump --browse-cursor-x
        to peek more of the previous tile. With tile-width=180px +
@@ -1101,15 +1102,25 @@ body[data-perf="slow"] .tile-poster.is-watched > img {
     outline: none;
 }
 
+/* Play header sits on a dark gradient backdrop. Default --fg is
+   the kid app's deep aubergine which collapses to black-on-black
+   here, so override every text element to high-contrast white +
+   soft text-shadow. */
+.play-titles {
+    color: #ffffff;
+}
 .play-titles h1 {
     margin: 0;
     font-size: 1.4rem;
+    color: #ffffff;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
 }
 
 .play-series {
     margin: 0;
-    color: #888;
+    color: rgba(255, 255, 255, 0.85);
     font-size: 0.9rem;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
 }
 
 .play-episode-badge {
@@ -1120,9 +1131,10 @@ body[data-perf="slow"] .tile-poster.is-watched > img {
 
 .play-year {
     margin: 0.1rem 0 0;
-    color: #aaa;
+    color: rgba(255, 255, 255, 0.7);
     font-size: 0.8rem;
     letter-spacing: 0.05em;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
 }
 
 /* Favorite heart in the player header. Sits right after the title
@@ -3056,16 +3068,24 @@ body.browse-active {
     box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
     background: var(--card);
 }
+/* Watch sits over a dark blurred backdrop, so the page-level
+   --fg (deep aubergine) reads as black-on-black. Override hero
+   text to a high-contrast off-white with a soft text-shadow. */
+.watch-hero-text {
+    color: #fafafa;
+}
 .watch-hero-text h1 {
     font-size: 2.4rem;
     margin: 0 0 0.4rem;
     line-height: 1.1;
-    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+    color: #ffffff;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
 }
 .watch-hero-meta {
-    color: var(--muted);
+    color: rgba(255, 255, 255, 0.85);
     margin: 0 0 1.25rem;
     font-size: 1rem;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
 }
 .watch-actions {
     display: flex;
@@ -3086,8 +3106,11 @@ body.browse-active {
     scroll-snap-align: start;
 }
 .watch-action {
-    background: var(--card);
-    color: var(--fg);
+    /* White pill on the dark backdrop so action labels read at a
+       distance. The page-level --fg is dark aubergine which would
+       collapse to black-on-near-black if we inherited it. */
+    background: #ffffff;
+    color: #20162e;
     border: 1px solid var(--border);
     border-radius: 999px;
     padding: 0.85rem 1.5rem;
@@ -3107,9 +3130,9 @@ body.browse-active {
 }
 .watch-action.primary {
     background: var(--accent);
-    color: #111;
+    color: #ffffff;
     border-color: var(--accent);
-    font-weight: 600;
+    font-weight: 700;
 }
 .watch-action:focus {
     outline: 3px solid var(--accent);

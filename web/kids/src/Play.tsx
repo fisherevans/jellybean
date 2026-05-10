@@ -411,9 +411,17 @@ export default function Play() {
     // Up Next prefetch trigger: fired by the video's timeupdate
     // event. We poll-rate this via the upNextTriggeredRef one-shot
     // guard, so the actual cost is a single fetchNextUp on the
-    // first frame past the 90% threshold (matching the "watched"
-    // threshold used elsewhere in the kid app). Movies have no
-    // seriesId; the early-return drops them out.
+    // first frame past the threshold. Movies have no seriesId; the
+    // early-return drops them out.
+    //
+    // Threshold + countdown are both content-length-aware: short
+    // shows (<= 15min, e.g. Mickey Mouse Funhouse) finish in the
+    // last ~30s if we use the original 90% + 10s countdown, which
+    // jumped the kid out of the show ~30 seconds before the
+    // closing chord. Bumped to 95% + 5s for short content; 92% +
+    // 10s for longer episodes. Until we have proper Jellyfin
+    // MediaSegments credit markers (M17), this is the best we can
+    // do without an SDK that knows when the show is "really" over.
     const onTimeUpdate = useCallback(() => {
         if (upNextTriggeredRef.current) return;
         const seriesId = seriesIdForNextRef.current;
@@ -422,7 +430,10 @@ export default function Play() {
         const v = videoRef.current;
         if (!v || !v.duration || !Number.isFinite(v.duration)) return;
         const pct = (v.currentTime / v.duration) * 100;
-        if (pct < 90) return;
+        const isShort = v.duration <= 15 * 60; // <= 15 minutes
+        const threshold = isShort ? 95 : 92;
+        if (pct < threshold) return;
+        const countdownSeconds = isShort ? 5 : 10;
         upNextTriggeredRef.current = true;
         void (async () => {
             try {
@@ -436,7 +447,7 @@ export default function Play() {
                 }
                 setUpNext(next);
                 setUpNextStatus("shown");
-                setUpNextCountdown(10);
+                setUpNextCountdown(countdownSeconds);
             } catch {
                 // No-op: best-effort prefetch.
             }

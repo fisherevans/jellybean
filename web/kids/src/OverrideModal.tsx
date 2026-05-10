@@ -211,6 +211,43 @@ export default function OverrideModal({
         return true;
     });
 
+    // Global "armed" gate. The modal opens via long-press Enter; if
+    // we don't swallow the trailing keyup, the focused first menu
+    // button (typical autofocus target) catches it as a synthetic
+    // click and activates - landing the kid on Edit Tags before
+    // they've even seen the menu. The PinStage has its own armed
+    // gate inside KidModalShell, but the post-PIN session-reuse
+    // path skips PinStage entirely (mounts directly on the menu
+    // stage). Install a one-shot capture-phase Enter swallow at
+    // the host level so all stages are covered.
+    useEffect(() => {
+        let armed = false;
+        function swallowKey(e: KeyboardEvent) {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            if (armed) return;
+            // First keyup after mount -> we're armed (the long-press
+            // has been released). Prevent default so the focused
+            // button doesn't see this as a click. Subsequent presses
+            // pass through normally.
+            if (e.type === "keyup") {
+                armed = true;
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
+            // Pre-armed keydown (held from the open gesture) -
+            // swallow.
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        window.addEventListener("keydown", swallowKey, { capture: true });
+        window.addEventListener("keyup", swallowKey, { capture: true });
+        return () => {
+            window.removeEventListener("keydown", swallowKey, { capture: true });
+            window.removeEventListener("keyup", swallowKey, { capture: true });
+        };
+    }, []);
+
     // 30s sliding TTL: while a token is in scope, refresh so the
     // 60s server session stays alive.
     const tokenForRefresh =

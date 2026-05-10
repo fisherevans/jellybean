@@ -359,12 +359,16 @@ test.describe("kids up-next overlay (stubbed)", () => {
             if (!(v instanceof HTMLVideoElement)) {
                 throw new Error("video element not found");
             }
+            // Use a 30-min duration so the "long content" threshold
+            // (>=92%) applies, not the short-content branch (>15min
+            // gates threshold 95%). currentTime past the 92% mark
+            // fires the prefetch.
             Object.defineProperty(v, "duration", {
-                value: 100,
+                value: 30 * 60,
                 configurable: true,
             });
             Object.defineProperty(v, "currentTime", {
-                value: 92,
+                value: 30 * 60 * 0.93,
                 configurable: true,
             });
             v.dispatchEvent(new Event("timeupdate"));

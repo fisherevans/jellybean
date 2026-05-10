@@ -74,3 +74,4 @@ web/admin/playwright/.cache/
 
 # Docker local overrides
 docker-compose.override.yml
+test-results/
