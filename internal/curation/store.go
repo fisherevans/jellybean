@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -45,10 +46,34 @@ func ParseState(s string) (State, error) {
 // Store is the data access layer for categorizations + history.
 type Store struct {
 	db *sql.DB
+
+	// kidWriteLocks serializes per-kid write paths that share rows in
+	// kid_watch_segments / kid_open_segments / kid_body_break_state. The
+	// kids playback-progress endpoint fires every few seconds and pairs
+	// a RecordPlaybackProgress call with a RecordPlayActivity call back
+	// to back; without serialization the second BEGIN IMMEDIATE used to
+	// land on top of the first and SQLITE_BUSY out under WAL mode (the
+	// 5s busy_timeout absorbs short stalls but not concurrent inserts
+	// fired from goroutines off the same request). Per-kid granularity
+	// is enough because progress reporting is single-threaded per kid
+	// in practice; we keep parallelism across kids.
+	kidWriteLocks sync.Map // key=kidID(int64), val=*sync.Mutex
 }
 
 func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
+}
+
+// lockKidWrite returns a release func that holds the per-kid write
+// mutex. Always defer the release at the call site so a panic in the
+// transaction body still unlocks. Cheap path on the contended-lock
+// case: SQLite's busy_timeout no longer fires because we never start
+// the second BEGIN IMMEDIATE until the first commits.
+func (s *Store) lockKidWrite(kidID int64) func() {
+	muAny, _ := s.kidWriteLocks.LoadOrStore(kidID, &sync.Mutex{})
+	mu := muAny.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // HistoryEntry mirrors one row from categorization_history.

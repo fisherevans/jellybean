@@ -677,13 +677,14 @@ func decodePlaybackPayload(r *http.Request) (*playbackPayload, error) {
 }
 
 func (s *Server) handleKidsPlaybackStart(w http.ResponseWriter, r *http.Request) {
-	kc, _ := KidsContextFromRequest(r)
+	kc, profileID := KidsContextFromRequest(r)
 	p, err := decodePlaybackPayload(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	ctx := r.Context()
+	deviceID := r.Header.Get(kidsDeviceIDHeader)
 	err = s.jellyfin.ReportPlaybackStart(ctx, kc.JellyfinToken, jellyfin.PlaybackStartInfo{
 		ItemID:           p.ItemID,
 		MediaSourceID:    p.MediaSourceID,
@@ -695,18 +696,31 @@ func (s *Server) handleKidsPlaybackStart(w http.ResponseWriter, r *http.Request)
 	})
 	if err != nil {
 		s.logger.Warn().Err(err).Str("kid", kc.Label).Str("item", p.ItemID).Msg("playback start report")
+	} else {
+		// Success-path log so post-hoc forensics can confirm Jellyfin
+		// saw the report. Reports rarely 5xx and the TV doesn't
+		// surface failures, so silent partial success is plausible
+		// without this line.
+		s.logger.Info().
+			Int64("kid_id", kc.KidID).
+			Int64("profile_id", profileID).
+			Str("item_id", p.ItemID).
+			Str("device_id", deviceID).
+			Str("play_session_id", p.PlaySessionID).
+			Msg("playback_start")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleKidsPlaybackProgress(w http.ResponseWriter, r *http.Request) {
-	kc, _ := KidsContextFromRequest(r)
+	kc, profileID := KidsContextFromRequest(r)
 	p, err := decodePlaybackPayload(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	ctx := r.Context()
+	deviceID := r.Header.Get(kidsDeviceIDHeader)
 	err = s.jellyfin.ReportPlaybackProgress(ctx, kc.JellyfinToken, jellyfin.PlaybackProgressInfo{
 		ItemID:           p.ItemID,
 		MediaSourceID:    p.MediaSourceID,
@@ -717,6 +731,16 @@ func (s *Server) handleKidsPlaybackProgress(w http.ResponseWriter, r *http.Reque
 	})
 	if err != nil {
 		s.logger.Warn().Err(err).Str("kid", kc.Label).Str("item", p.ItemID).Msg("playback progress report")
+	} else {
+		s.logger.Info().
+			Int64("kid_id", kc.KidID).
+			Int64("profile_id", profileID).
+			Str("item_id", p.ItemID).
+			Int64("position_ticks", p.PositionTicks).
+			Bool("is_paused", p.IsPaused).
+			Str("device_id", deviceID).
+			Str("play_session_id", p.PlaySessionID).
+			Msg("playback_progress")
 	}
 	// M10: side-effect to maintain kid_watch_segments. Only kid path
 	// (admin preview has no kid id and no time tracking).
@@ -733,13 +757,14 @@ func (s *Server) handleKidsPlaybackProgress(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleKidsPlaybackStopped(w http.ResponseWriter, r *http.Request) {
-	kc, _ := KidsContextFromRequest(r)
+	kc, profileID := KidsContextFromRequest(r)
 	p, err := decodePlaybackPayload(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	ctx := r.Context()
+	deviceID := r.Header.Get(kidsDeviceIDHeader)
 	err = s.jellyfin.ReportPlaybackStopped(ctx, kc.JellyfinToken, jellyfin.PlaybackStopInfo{
 		ItemID:        p.ItemID,
 		MediaSourceID: p.MediaSourceID,
@@ -748,6 +773,15 @@ func (s *Server) handleKidsPlaybackStopped(w http.ResponseWriter, r *http.Reques
 	})
 	if err != nil {
 		s.logger.Warn().Err(err).Str("kid", kc.Label).Str("item", p.ItemID).Msg("playback stopped report")
+	} else {
+		s.logger.Info().
+			Int64("kid_id", kc.KidID).
+			Int64("profile_id", profileID).
+			Str("item_id", p.ItemID).
+			Int64("position_ticks", p.PositionTicks).
+			Str("device_id", deviceID).
+			Str("play_session_id", p.PlaySessionID).
+			Msg("playback_stopped")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

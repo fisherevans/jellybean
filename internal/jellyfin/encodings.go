@@ -16,6 +16,13 @@ import (
 // running on the Jellyfin host until it times out internally; on a
 // constrained server those accumulate and starve subsequent transcodes.
 //
+// Jellyfin's `DELETE /Videos/ActiveEncodings` requires `deviceId` as a
+// query parameter (separate from the Authorization header's DeviceId)
+// and rejects the request with 400 "deviceId field is required"
+// otherwise. The deviceID is pulled from the per-request context
+// (stamped via WithDeviceID upstream); empty falls back to the
+// service-account identity so admin callers stay functional.
+//
 // Empty playSessionID is a no-op (returns nil) so callers don't have to
 // special-case "no previous session" - matches the semantics of the
 // other Report* helpers in this package.
@@ -23,11 +30,13 @@ func (c *Client) StopActiveEncodings(ctx context.Context, userToken, playSession
 	if playSessionID == "" {
 		return nil
 	}
+	deviceID, _ := ctx.Value(deviceIDKey{}).(string)
+	if deviceID == "" {
+		deviceID = "jellybean-server"
+	}
 	q := url.Values{}
 	q.Set("playSessionId", playSessionID)
-	// DeviceId is not required by Jellyfin here, but the auth header
-	// includes it via the per-request context. The endpoint only cares
-	// about playSessionId + the bearer / api_key auth.
+	q.Set("deviceId", deviceID)
 	path := "/Videos/ActiveEncodings?" + q.Encode()
 	req, err := c.newRequestWithToken(ctx, http.MethodDelete, path, nil, userToken)
 	if err != nil {
