@@ -48,13 +48,19 @@ type browseRowResponse struct {
 // DateCreated is included so the kid client's date-bucketing utility
 // (Library + TagDetail recency sorts) can group items by "Added today
 // / this week / earlier" without a second round-trip.
+//
+// ProductionYear + RunTimeTicks are included so the M8 hero-detail
+// panel can render the year + runtime line synchronously off the
+// focused tile without a follow-up fetch. ~10 extra bytes per tile.
 type browseItem struct {
-	ID          string                 `json:"Id"`
-	Name        string                 `json:"Name"`
-	Type        string                 `json:"Type"`
-	DateCreated string                 `json:"DateCreated,omitempty"`
-	ImageTags   *browseImageTags       `json:"ImageTags,omitempty"`
-	UserData    *jellyfin.ItemUserData `json:"UserData,omitempty"`
+	ID             string                 `json:"Id"`
+	Name           string                 `json:"Name"`
+	Type           string                 `json:"Type"`
+	DateCreated    string                 `json:"DateCreated,omitempty"`
+	ProductionYear int                    `json:"ProductionYear,omitempty"`
+	RunTimeTicks   int64                  `json:"RunTimeTicks,omitempty"`
+	ImageTags      *browseImageTags       `json:"ImageTags,omitempty"`
+	UserData       *jellyfin.ItemUserData `json:"UserData,omitempty"`
 }
 
 // browseImageTags carries only the Primary tag - the kid client uses
@@ -69,11 +75,13 @@ type browseImageTags struct {
 // page renders.
 func toBrowseItem(it jellyfin.Item) browseItem {
 	out := browseItem{
-		ID:          it.ID,
-		Name:        it.Name,
-		Type:        it.Type,
-		DateCreated: it.DateCreated,
-		UserData:    it.UserData,
+		ID:             it.ID,
+		Name:           it.Name,
+		Type:           it.Type,
+		DateCreated:    it.DateCreated,
+		ProductionYear: it.ProductionYear,
+		RunTimeTicks:   it.RunTimeTicks,
+		UserData:       it.UserData,
 	}
 	if it.ImageTags.Primary != "" {
 		out.ImageTags = &browseImageTags{Primary: it.ImageTags.Primary}

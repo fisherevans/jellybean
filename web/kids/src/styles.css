@@ -4047,3 +4047,158 @@ body[data-perf="slow"] .up-next-btn {
        exists so the DynaPuff selector list has a clean hook and
        slow-mode disables transitions on it. */
 }
+
+/* ===== Browse hero detail (t5) =====
+   Renders at the top of .browse-stack on /browse only. Read-only
+   hero panel that surfaces context for the currently-focused tile:
+   movie metadata + overview, or series metadata + next-up episode.
+
+   Constraints driving the rules below:
+     - The hero is a child of the JS-translated .browse-stack, which
+       gets transform: translate3d(0, y, 0) every frame. We use
+       contain: layout (NOT contain: paint) so a paint subtree
+       doesn't fight the parent's compositor layer.
+     - Min-height is fixed across loading / loaded / movie / series
+       so the row positions below it don't reflow when the kid
+       arrows from one tile to another (movie vs series content
+       lengths differ).
+     - Text-only. No <img>, no filter, no backdrop-filter. Decode
+       cost has been a real culprit on the kid TV's WebView.
+     - Line-clamps cap overview length so the panel height is
+       bounded by line count, not source-string length.
+*/
+.browse-hero {
+    /* Sized to absorb the worst case (series with a long
+       overview + a 4-line episode block) so layout below it stays
+       stable regardless of which tile is focused.
+       Title (≤2 lines DynaPuff @ 2.6rem) + meta (1.05rem) + 2-line
+       series overview + next-ep block (label + headline + 3-line
+       overview) ≈ 15rem. Movie path (4-line overview clamp) lands
+       around 12rem and is comfortably absorbed. */
+    min-height: 15rem;
+    padding: 0.75rem var(--browse-cursor-x, 1.5rem) 1.25rem;
+    margin: 0 0 0.75rem;
+    color: #ffffff;
+    /* Layout containment only. Paint containment would require its
+       own compositor layer which fights the .browse-stack transform.
+       Layout containment still gives us "row-flip class changes
+       don't trigger page-level relayout" without that cost. */
+    contain: layout;
+}
+.browse-hero.browse-hero-empty {
+    /* Holds height when no tile is focused (e.g. tabFocused=true).
+       Keeps the row directly below from jumping when focus lands. */
+    min-height: 15rem;
+}
+.browse-hero-title {
+    margin: 0 0 0.25rem;
+    font-size: 2.6rem;
+    font-weight: 700;
+    line-height: 1.1;
+    color: #ffffff;
+    text-shadow:
+        0 2px 4px rgba(0, 0, 0, 0.6),
+        0 4px 14px rgba(0, 0, 0, 0.5);
+    /* Don't wrap to a third line on absurdly long names; clamp. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.browse-hero-meta {
+    font-size: 1.05rem;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.85);
+    margin: 0 0 0.6rem;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+    letter-spacing: 0.02em;
+}
+.browse-hero-overview {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 1rem;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.92);
+    margin: 0;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+    max-width: 60rem;
+}
+.browse-hero-empty-line {
+    color: rgba(255, 255, 255, 0.55);
+    font-style: italic;
+}
+.browse-hero-clamp-2,
+.browse-hero-clamp-3,
+.browse-hero-clamp-4 {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.browse-hero-clamp-2 {
+    -webkit-line-clamp: 2;
+}
+.browse-hero-clamp-3 {
+    -webkit-line-clamp: 3;
+}
+.browse-hero-clamp-4 {
+    -webkit-line-clamp: 4;
+}
+.browse-hero-next-ep {
+    margin: 0.65rem 0 0;
+    padding: 0.55rem 0 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.18);
+    max-width: 60rem;
+}
+.browse-hero-next-ep-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.7);
+    margin: 0 0 0.15rem;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+.browse-hero-next-ep-headline {
+    font-family: "DynaPuff", "Cause", -apple-system, BlinkMacSystemFont,
+        "Segoe UI", Roboto, sans-serif;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #ffffff;
+    margin: 0 0 0.25rem;
+    text-shadow:
+        0 1px 3px rgba(0, 0, 0, 0.6),
+        0 3px 10px rgba(0, 0, 0, 0.45);
+}
+.browse-hero-next-ep-overview {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 0.95rem;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.85);
+    margin: 0;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+/* Active-row reinforcement. Tile-level focus already drives the
+   primary cue (scale + ring); this is a peripheral hint that ties
+   the hero panel back to the row containing the focused tile.
+   Class flip only - no transform, no shadow change, just a brighter
+   title color. Kept light to avoid competing with the focused
+   tile's affordance. */
+.browse-row-active .browse-row-title {
+    color: var(--accent, #ffffff);
+}
+
+/* Slow-perf overrides. Drop the multi-stop drop-shadows on the
+   hero text. The hero is on every Browse render, so the difference
+   between two text-shadow stops and one is a measurable paint cost
+   on the Skyworth WebView. Layout + clamps stay so the panel still
+   reads. */
+body[data-perf="slow"] .browse-hero-title {
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+}
+body[data-perf="slow"] .browse-hero-overview,
+body[data-perf="slow"] .browse-hero-meta,
+body[data-perf="slow"] .browse-hero-next-ep-headline,
+body[data-perf="slow"] .browse-hero-next-ep-overview,
+body[data-perf="slow"] .browse-hero-next-ep-label {
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}

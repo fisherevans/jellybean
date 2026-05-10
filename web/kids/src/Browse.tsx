@@ -19,6 +19,7 @@ import {
 import { TAG_ICONS, isTagIconName } from "jellybean-shared";
 import OverrideModal, { useLongPressEnter } from "./OverrideModal";
 import { useItemHiddenEvent } from "./itemHidden";
+import BrowseHero from "./BrowseHero";
 import Tile from "./Tile";
 import { useBrowseRowAnimator } from "./useBrowseRowAnimator";
 import { useProgressiveBack } from "./useProgressiveBack";
@@ -835,6 +836,11 @@ export default function Browse() {
     return (
         <div className="browse">
             <div className="browse-stack" ref={stackRef}>
+            <BrowseHero
+                item={focusedItem}
+                adminPreview={!session}
+                adminProfileId={adminProfileId}
+            />
             {data.rows.map((row, rIdx) => {
                 // Each row's targetCol drives useBrowseRowAnimator:
                 // active row tracks the kid's focus.col, inactive rows
@@ -858,8 +864,16 @@ export default function Browse() {
                 if (inActiveWindow) warmRowsRef.current.add(rIdx);
                 const rowImagePriority =
                     inActiveWindow || warmRowsRef.current.has(rIdx);
+                // Highlight the row containing the focused tile so
+                // the kid has a peripheral cue tying the hero panel
+                // back to the active row. Pure class flip - all
+                // visual treatment lives in CSS.
+                const rowActive = !tabFocused && focus.row === rIdx;
                 return (
-                    <section key={row.rowId} className="browse-row">
+                    <section
+                        key={row.rowId}
+                        className={`browse-row${rowActive ? " browse-row-active" : ""}`}
+                    >
                         <h2 className="browse-row-title">
                             <RowIcon name={row.icon} />
                             {row.title}
