@@ -5235,44 +5235,18 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
     overflow: hidden;
 }
 
-/* Bug 2 fix: TabPill scrim. The previous gradient (alpha 0.55
-   -> 0.45 -> 0) was visibly too thin at 720p; tiles passing
-   under the pill were still readable through the scrim. Switch
-   to a high-opacity dark band that fully masks the underlying
-   tiles, with a short alpha-falloff at the very bottom of the
-   slot so the seam against the rainbow bg below stays soft.
-
-   Color choice: rgba(20, 12, 32, 0.92) matches the rainbow's
-   darkest stops (deep purple) so the band reads as part of the
-   page chrome rather than a foreign black bar. The 0.92 alpha is
-   enough to fully mask saturated tile content while still
-   letting a hint of rainbow color bleed through if we ever
-   relax it.
-
-   The previous t18 block sets `background:` directly on the
-   slot, which we're overriding by re-stating it here (later in
-   source, equal specificity).
-
-   z-index stays at 2 (set in the base .kids-tabpill-slot rule
-   at the top of the file) so the scrim sits above
-   .kids-home-content (z-index 1) where the tiles render. The
-   TabPill text itself is a child of the slot, so it draws on top
-   of its own background - no z-index fight needed. */
+/* Bug 2 fix (t25): scrim removed. Both the t18 soft-gradient and
+   the t22 near-opaque dark band read as visually intrusive on the
+   rainbow bg - the user prefers seeing the bg + half-tiles through
+   the TabPill area to a black bar across the top of the screen.
+   This rule strips the background entirely and keeps the slot's
+   reserved height so the TabPill itself still lays out the same.
+   No replacement scrim - if the seam between TabPill and tiles
+   below ever needs softening, do it as a low-alpha (~5-8%) shadow
+   on the TabPill itself, not a full-slot gradient. */
 .kids-tabpill-slot {
-    background: linear-gradient(
-        to bottom,
-        rgba(20, 12, 32, 0.92) 0%,
-        rgba(20, 12, 32, 0.92) 78%,
-        rgba(20, 12, 32, 0) 100%
-    );
-    /* Extend the slot ~12px past the TabPill content so the
-       fade-out region at the bottom doesn't eat into the
-       opaque area where tiles would otherwise show through.
-       The TabPill is ~65px tall in flow; the slot already
-       reserves 90px via min-height. We bump that to ~100px so
-       the 22% fade-out region (~22px) starts AFTER the
-       TabPill ends, not behind it. */
-    min-height: calc(var(--kids-tabpill-height, 90px) + 12px);
+    background: none;
+    min-height: var(--kids-tabpill-height, 90px);
 }
 
 /* ===== Keyboard refinements (t24) =====
