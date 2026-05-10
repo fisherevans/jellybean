@@ -4,10 +4,10 @@ import {
     useRef,
     useState,
     type FormEvent,
+    type ReactNode,
 } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-    ArrowLeft,
     DeviceMobile,
     KeyReturn,
     QrCode,
@@ -283,6 +283,33 @@ export default function Login() {
 
     const error = submitError ?? qc.error;
 
+    // Shared mode-switcher factory. Each card calls it with its own
+    // autoFocusFirst flag (true when the card has no in-card primary
+    // action and the switcher should catch initial D-pad focus). The
+    // closure captures the parent's mode-pick callback so all three
+    // cards funnel through the same state transitions. QC is omitted
+    // from the row when the upstream Jellyfin admin has it disabled
+    // (qc.mode locked to password by the unavailable-flip effect).
+    const qcAvailable = qc.mode === "qc" || qc.mode === "loading";
+    const onPick = (target: "qc" | "password" | "pair") => {
+        setSubmitError(null);
+        qc.setError(null);
+        if (target === "pair") {
+            setOverrideCard("pair");
+            return;
+        }
+        setOverrideCard(null);
+        qc.setMode(target);
+    };
+    const renderSwitcher = (autoFocusFirst: boolean) => (
+        <ModeSwitcher
+            current={card}
+            qcAvailable={qcAvailable}
+            onPick={onPick}
+            autoFocusFirst={autoFocusFirst}
+        />
+    );
+
     return (
         <div className="kid-login">
             <img
@@ -301,16 +328,7 @@ export default function Login() {
                     code={qc.code}
                     expired={qc.expired}
                     onRetry={qc.restart}
-                    onSwitchToPassword={() => {
-                        setSubmitError(null);
-                        qc.setError(null);
-                        qc.setMode("password");
-                    }}
-                    onSwitchToPair={() => {
-                        setSubmitError(null);
-                        qc.setError(null);
-                        setOverrideCard("pair");
-                    }}
+                    renderSwitcher={renderSwitcher}
                 />
             )}
             {card === "password" && (
@@ -321,35 +339,13 @@ export default function Login() {
                     onUsername={setUsername}
                     onPassword={setPassword}
                     onSubmit={onSubmit}
-                    showQCBack={!qc.error}
-                    onSwitchToQC={() => {
-                        setSubmitError(null);
-                        qc.setError(null);
-                        qc.setMode("qc");
-                    }}
-                    onSwitchToPair={() => {
-                        setSubmitError(null);
-                        qc.setError(null);
-                        setOverrideCard("pair");
-                    }}
+                    renderSwitcher={renderSwitcher}
                 />
             )}
             {card === "pair" && (
                 <PairCard
                     onAuthorized={completeLogin}
-                    onSwitchToPassword={() => {
-                        setSubmitError(null);
-                        qc.setError(null);
-                        setOverrideCard(null);
-                        qc.setMode("password");
-                    }}
-                    onSwitchToQC={() => {
-                        setSubmitError(null);
-                        qc.setError(null);
-                        setOverrideCard(null);
-                        qc.setMode("qc");
-                    }}
-                    qcAvailable={qc.mode === "qc" || qc.mode === "loading"}
+                    renderSwitcher={renderSwitcher}
                 />
             )}
             {error && <p className="kid-login-error">{error}</p>}
@@ -357,31 +353,113 @@ export default function Login() {
     );
 }
 
+// ModeSwitcher renders a 3-pill row at the bottom of each card so
+// all three sign-in modes are visible regardless of which card is
+// active. The current mode is rendered as a non-focusable label;
+// the other two are buttons that swap the card. Single shared
+// component so the switcher looks identical from every entry point
+// and the kid (or parent) sees the full menu of options at all times.
+//
+// QC is hidden when qcAvailable is false (the upstream Jellyfin admin
+// has Quick Connect disabled, or the /enabled probe failed on boot).
+function ModeSwitcher({
+    current,
+    qcAvailable,
+    onPick,
+    autoFocusFirst = false,
+}: {
+    current: Card;
+    qcAvailable: boolean;
+    onPick: (target: "qc" | "password" | "pair") => void;
+    autoFocusFirst?: boolean;
+}) {
+    const firstLinkRef = useRef<HTMLButtonElement | null>(null);
+    useEffect(() => {
+        // TV: D-pad needs an anchor element. When the active card has
+        // no in-card primary action (QC waiting state, PairCard QR
+        // state) the parent passes autoFocusFirst so the kid can pick
+        // up from a focused mode button instead of an unfocused page.
+        if (autoFocusFirst) firstLinkRef.current?.focus();
+    }, [autoFocusFirst]);
+    const items: {
+        key: "qc" | "password" | "pair";
+        label: string;
+        icon: ReactNode;
+    }[] = [];
+    if (qcAvailable) {
+        items.push({
+            key: "qc",
+            label: "Quick Connect",
+            icon: <DeviceMobile size={16} weight="bold" aria-hidden />,
+        });
+    }
+    items.push({
+        key: "pair",
+        label: "Sign in with phone",
+        icon: <QrCode size={16} weight="bold" aria-hidden />,
+    });
+    items.push({
+        key: "password",
+        label: "Use password",
+        icon: <KeyReturn size={16} weight="bold" aria-hidden />,
+    });
+    let firstLinkAssigned = false;
+    return (
+        <div className="kid-login-modes" role="group" aria-label="Sign-in options">
+            {items.map((it) => {
+                const isCurrent = it.key === current;
+                if (isCurrent) {
+                    return (
+                        <span
+                            key={it.key}
+                            className="kid-login-mode kid-login-mode-current"
+                            aria-current="true"
+                        >
+                            {it.icon} {it.label}
+                        </span>
+                    );
+                }
+                const ref = !firstLinkAssigned ? firstLinkRef : undefined;
+                if (!firstLinkAssigned) firstLinkAssigned = true;
+                return (
+                    <button
+                        key={it.key}
+                        ref={ref}
+                        type="button"
+                        className="kid-login-mode kid-login-mode-link"
+                        onClick={() => onPick(it.key)}
+                    >
+                        {it.icon} {it.label}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
 // QCCard: shows the 6-digit code + a "go to your phone" instruction.
 // Big monospace digits so a kid (or a parent leaning back on the
-// couch) can read them from across the room. The "Use password
-// instead" footer is the secondary affordance, focusable for D-pad.
+// couch) can read them from across the room. The mode-switcher row
+// at the bottom (rendered by Login) makes the other two sign-in
+// surfaces directly reachable.
 function QCCard({
     code,
     expired,
     onRetry,
-    onSwitchToPassword,
-    onSwitchToPair,
+    renderSwitcher,
 }: {
     code: string | null;
     expired: boolean;
     onRetry: () => void;
-    onSwitchToPassword: () => void;
-    onSwitchToPair: () => void;
+    renderSwitcher: (autoFocusFirst: boolean) => ReactNode;
 }) {
-    const switchRef = useRef<HTMLButtonElement | null>(null);
     const retryRef = useRef<HTMLButtonElement | null>(null);
     useEffect(() => {
-        // Default focus on the secondary action. The code itself is
-        // info-only; nothing for the kid to do on this view except
-        // wait or switch to password.
+        // Only auto-focus the retry button when the code expired and
+        // a primary action exists. In the normal "waiting" state the
+        // code itself is info-only; the switcher row catches initial
+        // D-pad focus instead (autoFocusFirst below).
         if (expired) retryRef.current?.focus();
-        else switchRef.current?.focus();
     }, [expired]);
     return (
         <div className="kid-login-card">
@@ -427,32 +505,16 @@ function QCCard({
                     </p>
                 </>
             )}
-            <button
-                ref={switchRef}
-                type="button"
-                className="kid-login-link"
-                onClick={onSwitchToPair}
-            >
-                <QrCode size={16} weight="bold" aria-hidden /> Sign in with
-                phone
-            </button>
-            <button
-                type="button"
-                className="kid-login-link"
-                onClick={onSwitchToPassword}
-            >
-                <KeyReturn size={16} weight="bold" aria-hidden /> Use password
-                instead
-            </button>
+            {renderSwitcher(!expired)}
         </div>
     );
 }
 
-// PasswordCard: the original username + password form, with the
-// "Use Quick Connect" link as a secondary affordance when QC is
-// available. autoFocus on the username input so the kid (or
-// parent leaning over with their phone keyboard) can start typing
-// immediately.
+// PasswordCard: the original username + password form. The shared
+// mode-switcher row at the bottom (rendered by Login) handles the
+// "switch to a different sign-in" affordance. autoFocus on the
+// username input so the kid (or parent leaning over with their
+// phone keyboard) can start typing immediately.
 function PasswordCard({
     username,
     password,
@@ -460,9 +522,7 @@ function PasswordCard({
     onUsername,
     onPassword,
     onSubmit,
-    showQCBack,
-    onSwitchToQC,
-    onSwitchToPair,
+    renderSwitcher,
 }: {
     username: string;
     password: string;
@@ -470,9 +530,7 @@ function PasswordCard({
     onUsername: (v: string) => void;
     onPassword: (v: string) => void;
     onSubmit: (e: FormEvent) => void;
-    showQCBack: boolean;
-    onSwitchToQC: () => void;
-    onSwitchToPair: () => void;
+    renderSwitcher: (autoFocusFirst: boolean) => ReactNode;
 }) {
     return (
         <div className="kid-login-card">
@@ -508,24 +566,9 @@ function PasswordCard({
                     {submitting ? "Signing in…" : "Sign in"}
                 </button>
             </form>
-            <button
-                type="button"
-                className="kid-login-link"
-                onClick={onSwitchToPair}
-            >
-                <QrCode size={16} weight="bold" aria-hidden /> Sign in with
-                phone
-            </button>
-            {showQCBack && (
-                <button
-                    type="button"
-                    className="kid-login-link"
-                    onClick={onSwitchToQC}
-                >
-                    <ArrowLeft size={16} weight="bold" aria-hidden /> Use Quick
-                    Connect instead
-                </button>
-            )}
+            {/* Username input owns initial focus via autoFocus, so the
+                switcher should NOT steal it. */}
+            {renderSwitcher(false)}
         </div>
     );
 }
@@ -540,14 +583,10 @@ function PasswordCard({
 // matches useQuickConnect's pattern).
 function PairCard({
     onAuthorized,
-    onSwitchToPassword,
-    onSwitchToQC,
-    qcAvailable,
+    renderSwitcher,
 }: {
     onAuthorized: (kid: LoginResponse) => void;
-    onSwitchToPassword: () => void;
-    onSwitchToQC: () => void;
-    qcAvailable: boolean;
+    renderSwitcher: (autoFocusFirst: boolean) => ReactNode;
 }) {
     const [start, setStart] = useState<PairStartResponse | null>(null);
     const [expired, setExpired] = useState(false);
@@ -641,12 +680,13 @@ function PairCard({
         void beginPair();
     }, [beginPair]);
 
-    const switchRef = useRef<HTMLButtonElement | null>(null);
     const retryRef = useRef<HTMLButtonElement | null>(null);
     useEffect(() => {
-        if (expired) retryRef.current?.focus();
-        else switchRef.current?.focus();
-    }, [expired]);
+        // Focus the retry primary when we're in an error / expired
+        // state. In the live-QR state there's no in-card primary - the
+        // mode-switcher row at the bottom catches initial focus.
+        if (expired || pairError) retryRef.current?.focus();
+    }, [expired, pairError]);
 
     return (
         <div className="kid-login-card">
@@ -708,25 +748,10 @@ function PairCard({
             ) : (
                 <p className="kid-login-blurb">Generating a code…</p>
             )}
-            <button
-                ref={switchRef}
-                type="button"
-                className="kid-login-link"
-                onClick={onSwitchToPassword}
-            >
-                <KeyReturn size={16} weight="bold" aria-hidden /> Use password
-                instead
-            </button>
-            {qcAvailable && (
-                <button
-                    type="button"
-                    className="kid-login-link"
-                    onClick={onSwitchToQC}
-                >
-                    <ArrowLeft size={16} weight="bold" aria-hidden /> Use Quick
-                    Connect instead
-                </button>
-            )}
+            {/* Switcher catches initial focus only when there's no
+                in-card primary (live-QR / generating states). The
+                pairError + expired branches focus retryRef instead. */}
+            {renderSwitcher(!expired && !pairError)}
         </div>
     );
 }
