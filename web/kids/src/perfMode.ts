@@ -38,6 +38,36 @@ export function getPerfMode(): PerfMode {
     return heuristicMode();
 }
 
+// posterWidthForViewport returns the pixel width to request from the
+// Jellyfin image endpoint for a poster tile. Slow-perf devices stay at
+// 130 regardless of viewport (decode cost dominates per kid CLAUDE.md);
+// fast-perf devices scale by viewport width and DPR so 1440p+ screens
+// stop looking soft. Cached for the session so we don't bounce values
+// and invalidate the browser HTTP cache - window.innerWidth doesn't
+// change meaningfully in this app.
+let cachedPosterWidth: number | null = null;
+export function posterWidthForViewport(): number {
+    if (cachedPosterWidth !== null) return cachedPosterWidth;
+    if (typeof document === "undefined" || typeof window === "undefined") {
+        cachedPosterWidth = 130;
+        return cachedPosterWidth;
+    }
+    const isSlow = document.body?.dataset.perf === "slow";
+    if (isSlow) {
+        cachedPosterWidth = 130;
+        return cachedPosterWidth;
+    }
+    const w = window.innerWidth;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let base: number;
+    if (w <= 1280) base = 160;
+    else if (w <= 1920) base = 200;
+    else if (w <= 2560) base = 260;
+    else base = 320;
+    cachedPosterWidth = Math.min(360, Math.round(base * dpr));
+    return cachedPosterWidth;
+}
+
 // startPerfMonitor stamps body[data-perf] from the heuristic
 // immediately, then refines after a short rAF-based FPS sample.
 // Call once at app boot.

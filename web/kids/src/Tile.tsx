@@ -2,6 +2,7 @@ import { memo } from "react";
 import { Check } from "@phosphor-icons/react";
 import type { Item } from "jellybean-shared";
 import { imageAuthSuffix } from "./auth";
+import { posterWidthForViewport } from "./perfMode";
 
 // Tile is the shared poster card used by both the Browse rows and the
 // Library grid. Size variants:
@@ -39,21 +40,6 @@ type Props = {
     priority?: boolean;
 };
 
-const IMAGE_WIDTH: Record<TileSize, number> = {
-    // Image width is targeted at the kid TV (720p), the constrained
-    // device. At 720p the responsive block in styles.css shrinks
-    // tiles to ~150px CSS for browse/cw and ~145px CSS for library;
-    // the server delivers a 130/130/130 image, the browser scales up
-    // by ~15%. On a low-DPI TV that scaling is invisible. On desktop
-    // dev (180px CSS for browse) the upscale is ~38%, still fine.
-    // Smaller decodes are the load-bearing win - LoAF data showed
-    // image decode/raster as the dominant freeze on cross-row arrow
-    // presses, and dropping from 160->130 cuts pixel count ~34%.
-    browse: 130,
-    library: 130,
-    cw: 130,
-};
-
 function TileImpl({
     item,
     size,
@@ -65,10 +51,15 @@ function TileImpl({
     priority = true,
 }: Props) {
     const tag = item.ImageTags?.Primary ?? "";
+    // Poster width is adaptive: slow-perf devices stay at 130 (decode
+    // cost dominates per kid CLAUDE.md); fast-perf scales by viewport
+    // width and DPR. Cached per session inside the helper so the URL
+    // stays stable across re-renders and the browser HTTP cache holds.
+    const imageWidth = posterWidthForViewport();
     // <img> can't attach Authorization headers, so the bearer-auth
     // kid path passes token + userId as query params. The server's
     // parseBearer accepts both. Admin-cookie path returns "" suffix.
-    const src = `/api/kids/items/${encodeURIComponent(item.Id)}/image?type=Primary&width=${IMAGE_WIDTH[size]}${
+    const src = `/api/kids/items/${encodeURIComponent(item.Id)}/image?type=Primary&width=${imageWidth}${
         tag ? `&tag=${encodeURIComponent(tag)}` : ""
     }${imageAuthSuffix()}`;
     const isSeries = item.Type === "Series";
