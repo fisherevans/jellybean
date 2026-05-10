@@ -1531,8 +1531,10 @@ body.kids-scroll-active .kids-home-content {
     position: absolute;
     inset: 0;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 1rem;
     color: #ffffff;
     font-size: 1.6rem;
     font-weight: 700;
@@ -1540,6 +1542,13 @@ body.kids-scroll-active .kids-home-content {
     /* Pad-down slightly so the label sits below the TabPill at
        the top of the locked viewport. */
     padding: var(--kids-tabpill-height, 90px) 2rem 0;
+}
+.kids-route-interstitial .kids-loading-dots span {
+    width: 0.85rem;
+    height: 0.85rem;
+}
+.kids-route-interstitial p {
+    margin: 0;
 }
 
 /* TabPill slot: wraps the TabPill so it can scroll with content on
@@ -5352,3 +5361,119 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
         font-size: 0.65em;
     }
 }
+
+/* ===== Loading states (t29) ===== */
+
+/* Shared bouncing-dots primitive. Three rounded dots that pulse in
+   sequence so the kid reads it as "working on it" without an image
+   decode. Pure CSS so no animation library and no extra <img>.
+   Slow-perf path: animation is dropped to a static "filled" state
+   so the row still reads as a loader without burning paint cycles
+   on the WebView. */
+.kids-loading-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.kids-loading-dots span {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    opacity: 0.35;
+    animation: kids-loading-dot 1100ms ease-in-out infinite;
+}
+.kids-loading-dots span:nth-child(2) {
+    animation-delay: 180ms;
+}
+.kids-loading-dots span:nth-child(3) {
+    animation-delay: 360ms;
+}
+@keyframes kids-loading-dot {
+    0%, 80%, 100% { opacity: 0.35; transform: translateY(0); }
+    40%           { opacity: 1;    transform: translateY(-4px); }
+}
+body[data-perf="slow"] .kids-loading-dots span {
+    animation: none;
+    opacity: 0.8;
+    transform: none;
+}
+
+/* Centered full-area loader for routes that don't have a grid to fill
+   (Browse / Watch / TagDetail / Tags / KidsHome interstitial). Sits
+   on whatever background the page provides; the dots + label are
+   bright white so they read against both the rainbow bg and the
+   darker page backdrops. */
+.kids-loading-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    min-height: 50vh;
+    padding: 2rem;
+    color: #ffffff;
+    text-align: center;
+}
+.kids-loading-center .kids-loading-label {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+.kids-loading-center .kids-loading-dots span {
+    width: 0.9rem;
+    height: 0.9rem;
+}
+
+/* Library search-results skeleton: render placeholder tile shapes
+   in the existing .grid so the layout doesn't jump when the real
+   tiles land. The skeleton tile mirrors .tile-poster's 2:3 aspect
+   + 20px radius and adds a subtle shimmer driven by a moving
+   gradient. The shimmer is a transform on a pseudo-element so it
+   stays compositor-only (no layout/paint thrash). */
+.library-skeleton-tile {
+    aspect-ratio: 2 / 3;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.12);
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+.library-skeleton-tile::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        100deg,
+        rgba(255, 255, 255, 0) 30%,
+        rgba(255, 255, 255, 0.28) 50%,
+        rgba(255, 255, 255, 0) 70%
+    );
+    transform: translateX(-100%);
+    animation: library-skeleton-shimmer 1400ms ease-in-out infinite;
+    will-change: transform;
+}
+@keyframes library-skeleton-shimmer {
+    to { transform: translateX(100%); }
+}
+body[data-perf="slow"] .library-skeleton-tile::after {
+    /* No shimmer on slow TVs - the flat translucent rectangle still
+       reads as "tile placeholder" and avoids per-frame composite
+       work on a page that's about to mount a heavy grid. */
+    animation: none;
+    background: none;
+}
+/* "Loading more" footer below the existing grid - small dot row,
+   left-aligned with the grid's padding. */
+.library-loading-more {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 1.25rem 1.25rem 0;
+    color: rgba(255, 255, 255, 0.85);
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+

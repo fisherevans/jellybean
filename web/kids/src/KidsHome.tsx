@@ -209,6 +209,11 @@ export default function KidsHome() {
                             role="status"
                             aria-live="polite"
                         >
+                            <div className="kids-loading-dots" aria-hidden>
+                                <span />
+                                <span />
+                                <span />
+                            </div>
                             <p>Loading…</p>
                         </div>
                     ) : (
