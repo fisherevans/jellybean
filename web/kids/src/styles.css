@@ -5274,3 +5274,97 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
        TabPill ends, not behind it. */
     min-height: calc(var(--kids-tabpill-height, 90px) + 12px);
 }
+
+/* ===== Keyboard refinements (t24) =====
+   Three fold-ins on top of t16/t19:
+     1. Equal-width rows. The 6 grid columns use repeat(6, 1fr) so
+        every row reads as a column-aligned rectangle. We also reset
+        the t8-era min-widths defensively here in case any earlier
+        rule order sneaks them back in (the grid track grows to
+        accommodate child auto min-content if min-width isn't 0).
+     2. Three-zone color treatment:
+          Zone A (rows 1-5, letters): per-cell --kb-color from a
+            randomized 2-corner gradient (Keyboard.tsx pickTheme).
+          Zone B (row 6, SPACE): black/white only - .kids-keyboard-
+            key-mono branch below.
+          Zone C (rows 7-8, digits + ' + -): per-cell --kb-color from
+            a separately-randomized 2-corner gradient.
+        The mono branch overrides --kb-color so SPACE always renders
+        the same black/white treatment regardless of palette pick.
+     3. Sticky scroll. The keyboard wrap is positioned absolutely
+        below the controls row at scrollY=0; as the library-stack
+        transforms upward (negative --kids-scroll-y), the wrap
+        applies a matching translate up to its visual top, clamped
+        once the wrap would leave the viewport so it sticks at the
+        top edge. CSS-only via max() of --kids-scroll-y against the
+        clamp distance; no JS subscription needed.
+     4. SPACE label size dialed back from t19's 1.1em to 0.9em - the
+        legend was reading too dominant inside the keycap. */
+
+/* (1) Equal-width grid columns. Hard-restate so column widths can't
+       drift if any later rule re-introduces a min-width on a key. The
+       repeat(6, 1fr) was already in place (line ~4808) - this rule
+       just locks the contract. */
+.library.keyboard-open .kids-keyboard-grid {
+    grid-template-columns: repeat(6, 1fr);
+}
+.library.keyboard-open .kids-keyboard-grid .kids-keyboard-key {
+    /* min-width must stay 0 so a 1fr track doesn't expand to fit a
+       legacy min-width from t8. Without this, BACK/CLEAR/DONE
+       inflate column 6 wider than columns 1-5. */
+    min-width: 0;
+}
+
+/* (2) Zone B - SPACE row monochrome. Overrides --kb-color so the
+       cell renders dark text/border on white at rest, near-black fill
+       with white text on focus. The mono class is added by
+       Keyboard.tsx's render branch when zoneForRow(row) === "B". */
+.kids-keyboard-key.kids-keyboard-key-mono {
+    color: #20162e;
+    background: #ffffff;
+    border-color: rgba(32, 22, 46, 0.35);
+}
+.kids-keyboard-key.kids-keyboard-key-mono.focused {
+    background: #20162e;
+    border-color: #20162e;
+    color: #ffffff;
+    outline-color: #20162e;
+}
+
+/* (3) Sticky scroll. --kids-scroll-y is written per rAF frame by
+       useStackScroll (negative when scrolled down). transform follows
+       the stack until the wrap's natural top would cross above the
+       viewport edge; max() clamps it so the keyboard sticks at ~1rem
+       from the viewport top.
+
+       Clamp math: natural top is calc(--kids-tabpill-height + 1.5rem
+       + 5.5rem) ≈ 90+24+88 = 202px. Sticky target is 1rem (16px) from
+       viewport top, so the keyboard can translate at most -186px
+       before it stops moving. CSS max() picks the less-negative
+       value, which gives "follow scrollY until -186px, then hold."
+       The bottom: 1.5rem stays as-is, so the layout box height is
+       fixed; transform shifts visual position only. At sticky state
+       the box visually spans from y=16 to y=(viewport_height - 24 -
+       186), leaving empty space below - intentional, the keyboard
+       reads as anchored to the top of the viewport rather than
+       spanning the whole height when scrolled. */
+.library.keyboard-open .kids-keyboard-wrap {
+    transform: translate3d(0, max(var(--kids-scroll-y, 0px), -186px), 0);
+    will-change: transform;
+}
+
+/* (4) SPACE label size: 1.1em was too dominant inside the keycap.
+       0.9em with the existing 0.22em letter-spacing keeps the legend
+       readable but lets the bracket-bar share visual weight. */
+.kids-keyboard-key-space .kids-keyboard-space-label {
+    font-size: 0.9em;
+    letter-spacing: 0.22em;
+}
+@media (max-height: 800px) {
+    /* 720p: keep the slightly smaller label so it doesn't crowd the
+       narrower bracket-bar. 0.85em sits a touch below the desktop
+       0.9em to match the cell density on this screen. */
+    .kids-keyboard-key-space .kids-keyboard-space-label {
+        font-size: 0.85em;
+    }
+}

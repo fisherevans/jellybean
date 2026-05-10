@@ -198,12 +198,17 @@ const OCCUPANCY: number[][] = (() => {
 const REPEAT_THROTTLE_MS = 150;
 const REPEAT_GAP_MS = 250;
 
-// ----- Color theme (t15) -----
+// ----- Color theme (t24) -----
 //
-// White panel + dark colorful letters. Each cell is tinted by a
-// position-interpolated color; on focus the cell fills with that color
-// and the letter flips to white. The palette is randomized at open
-// time so consecutive keyboard opens look distinct.
+// White panel + dark colorful letters. Cells in the letter zone (rows
+// 1-5) and digit/punctuation zone (rows 7-8) get position-interpolated
+// colors; on focus the cell fills with that color and the letter flips
+// to white. The SPACE row is monochrome (black/white) and never
+// randomizes - it's a visual breakpoint between the two color zones.
+//
+// Each zone picks its own palette independently at open-time so
+// consecutive keyboard opens look distinct AND the two zones look
+// distinct from each other on a single open.
 
 type RGB = [number, number, number];
 
@@ -223,86 +228,90 @@ function rgbToCss(rgb: RGB, alpha = 1): string {
         : `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-// Three-color palettes pulled from the kid-friendly visual language
-// already used elsewhere in the app (rainbow page bg, browse hero
-// gradients). t19 picks anchors with MORE hue separation (e.g. blue
-// paired with red instead of blue paired with purple) so the cascade
-// across the 6x8 grid reads as a clear corner-to-corner shift, not a
-// subtle blend. Saturation is bumped on the anchors so the cells pop
-// against the white panel. Yellow is intentionally absent - low
-// contrast on white.
-const PALETTES: [string, string, string][] = [
-    ["#0066ff", "#ff1a4d", "#00c853"], // blue / red / green
-    ["#00b86b", "#0048d6", "#e60053"], // green / deep-blue / magenta
-    ["#ff5722", "#aa00ff", "#00b3ff"], // orange / violet / cyan
-    ["#d10031", "#ff8a00", "#00875a"], // red / orange / forest
-    ["#3a00d6", "#00b896", "#ff4a1f"], // indigo / teal / red-orange
-    ["#c300ff", "#0073ff", "#00d65a"], // magenta / blue / lime
-    ["#ff006a", "#3300cc", "#00a86b"], // hot-pink / deep-purple / green
-    ["#0099ff", "#ff2a5b", "#7a00e6"], // cyan-blue / coral-red / violet
+// Two-corner palettes for each color zone. Yellow is intentionally
+// absent across both pools - low contrast on white. The two pools are
+// disjoint hue families so a randomly-paired (zoneA, zoneC) pick still
+// reads as visibly distinct zones rather than two slices of the same
+// gradient.
+const ZONE_A_PALETTES: [string, string][] = [
+    ["#0066ff", "#aa00ff"], // blue → violet
+    ["#0099ff", "#3300cc"], // cyan-blue → deep-purple
+    ["#3a00d6", "#c300ff"], // indigo → magenta
+    ["#0048d6", "#ff006a"], // deep-blue → hot-pink
+    ["#0073ff", "#7a00e6"], // azure → violet
+    ["#00b3ff", "#0048d6"], // sky → deep-blue
+];
+const ZONE_C_PALETTES: [string, string][] = [
+    ["#ff5722", "#d10031"], // orange → red
+    ["#00b86b", "#00b3ff"], // green → cyan
+    ["#ff8a00", "#e60053"], // orange → magenta
+    ["#00c853", "#00875a"], // green → forest
+    ["#ff4a1f", "#aa00ff"], // red-orange → violet
+    ["#00b896", "#3300cc"], // teal → deep-purple
 ];
 
-// Theme captured at open-time. We pick a palette + assign each color
-// to one of the three "anchor" corners (top-left, top-right, bottom).
-// Each cell's color is computed via barycentric interpolation across
-// (col, row), so the kid sees a smooth diagonal gradient across the
-// 6x8 grid.
-type Theme = {
-    cTL: RGB;
-    cTR: RGB;
-    cB: RGB;
+// Zone B (SPACE row) has no palette - it's rendered with a fixed
+// black/white treatment via a CSS class branch in the render code.
+
+type ZoneTheme = {
+    cA: RGB; // top-left anchor of the zone
+    cB: RGB; // bottom-right anchor of the zone
 };
 
-function pickTheme(): Theme {
-    const palette = PALETTES[Math.floor(Math.random() * PALETTES.length)];
-    // Shuffle the three colors into TL / TR / Bottom slots. Six
-    // permutations; pick one uniformly.
-    const perm = [...palette];
-    for (let i = perm.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [perm[i], perm[j]] = [perm[j], perm[i]];
-    }
+type Theme = {
+    zoneA: ZoneTheme; // letters, rows 1-5
+    zoneC: ZoneTheme; // digits + punctuation, rows 7-8
+};
+
+function pickZoneTheme(palettes: [string, string][]): ZoneTheme {
+    const palette = palettes[Math.floor(Math.random() * palettes.length)];
+    // Randomize which color anchors which corner. Two permutations.
+    const flip = Math.random() < 0.5;
     return {
-        cTL: hexToRgb(perm[0]),
-        cTR: hexToRgb(perm[1]),
-        cB: hexToRgb(perm[2]),
+        cA: hexToRgb(flip ? palette[1] : palette[0]),
+        cB: hexToRgb(flip ? palette[0] : palette[1]),
     };
 }
 
-// Compute a cell's color via barycentric interpolation across the
-// three corner anchors:
-//   TL = (col=0, row=0)
-//   TR = (col=COLS-1, row=0)
-//   B  = (col=(COLS-1)/2, row=ROWS-1)
-// t19: a gamma curve (exponent < 1) is applied to each barycentric
-// weight before normalization. This pushes cells closer to a corner
-// further into that corner's color rather than spending most of the
-// grid in the muddy mid-blend. Visually: a clear shift from one
-// corner to the next instead of "everything looks slightly purple."
-// Weights are then re-normalized so they sum to 1 and the output
-// stays inside the anchor triangle.
-const CASCADE_GAMMA = 0.55;
+function pickTheme(): Theme {
+    return {
+        zoneA: pickZoneTheme(ZONE_A_PALETTES),
+        zoneC: pickZoneTheme(ZONE_C_PALETTES),
+    };
+}
+
+// Map a 1-indexed grid row to its zone. Row 6 is SPACE (zone B,
+// monochrome, no color interpolation).
+type Zone = "A" | "B" | "C";
+function zoneForRow(row: number): Zone {
+    if (row >= 1 && row <= 5) return "A";
+    if (row === 6) return "B";
+    return "C";
+}
+
+// Compute a cell's color inside its zone via diagonal interpolation
+// from the zone's top-left anchor (cA) to its bottom-right anchor
+// (cB). Coords (row, col) are 1-indexed grid positions; we normalize
+// to the zone's local row range so each zone's cascade fills its
+// rectangle. Zone B (SPACE) returns black; the render branches on
+// zone before reading the color.
 function cellColor(theme: Theme, row: number, col: number): RGB {
-    const u = (COLS - 1) === 0 ? 0 : col / (COLS - 1); // 0..1 across cols
-    const v = (ROWS - 1) === 0 ? 0 : row / (ROWS - 1); // 0..1 down rows
-    // Raw barycentric weights: bottom corner pulls in proportional to
-    // v; top corners share the remainder weighted by u.
-    let wTL = (1 - v) * (1 - u);
-    let wTR = (1 - v) * u;
-    let wB = v;
-    // Push each weight via gamma < 1 so values near 1 stay near 1 but
-    // mid-range values get amplified toward 1. The dominant corner
-    // becomes more dominant after re-normalization.
-    wTL = Math.pow(wTL, CASCADE_GAMMA);
-    wTR = Math.pow(wTR, CASCADE_GAMMA);
-    wB = Math.pow(wB, CASCADE_GAMMA);
-    const wSum = wTL + wTR + wB || 1;
-    wTL /= wSum;
-    wTR /= wSum;
-    wB /= wSum;
-    const r = theme.cTL[0] * wTL + theme.cTR[0] * wTR + theme.cB[0] * wB;
-    const g = theme.cTL[1] * wTL + theme.cTR[1] * wTR + theme.cB[1] * wB;
-    const b = theme.cTL[2] * wTL + theme.cTR[2] * wTR + theme.cB[2] * wB;
+    const zone = zoneForRow(row);
+    if (zone === "B") return [0, 0, 0];
+    const palette = zone === "A" ? theme.zoneA : theme.zoneC;
+    // Zone-local row coordinates. Zone A spans rows 1-5 (0..4 local),
+    // zone C spans rows 7-8 (0..1 local).
+    const zoneRowMin = zone === "A" ? 1 : 7;
+    const zoneRowMax = zone === "A" ? 5 : 8;
+    const zoneRowSpan = zoneRowMax - zoneRowMin;
+    const v = zoneRowSpan === 0 ? 0 : (row - zoneRowMin) / zoneRowSpan;
+    const u = (col - 1) / (COLS - 1);
+    // Diagonal blend: t=0 at top-left, t=1 at bottom-right of the
+    // zone. Average of u and v gives a clean corner-to-corner cascade.
+    const t = (u + v) / 2;
+    const r = palette.cA[0] * (1 - t) + palette.cB[0] * t;
+    const g = palette.cA[1] * (1 - t) + palette.cB[1] * t;
+    const b = palette.cA[2] * (1 - t) + palette.cB[2] * t;
     return [r, g, b];
 }
 
@@ -608,13 +617,25 @@ export default function Keyboard({
     void value;
 
     // Pre-compute each key's color once per render. Cheap (44 keys)
-    // and lets KeyboardKey stay memoized on simple props.
+    // and lets KeyboardKey stay memoized on simple props. Zone B
+    // (SPACE row) is monochrome - a sentinel "mono" flag tells the
+    // KeyboardKey to render black/white styling instead of reading
+    // --kb-color from the gradient palette.
     const keyStyles = useMemo(() => {
         return KEYS.map((k) => {
-            const rgb = cellColor(theme, k.row - 1, k.col - 1);
+            const zone = zoneForRow(k.row);
+            if (zone === "B") {
+                return {
+                    color: "",
+                    colorMuted: "",
+                    mono: true,
+                };
+            }
+            const rgb = cellColor(theme, k.row, k.col);
             return {
                 color: rgbToCss(rgb, 1),
                 colorMuted: rgbToCss(rgb, 0.55),
+                mono: false,
             };
         });
     }, [theme]);
@@ -653,6 +674,7 @@ export default function Keyboard({
                                 colSpan={k.colSpan}
                                 color={style.color}
                                 colorMuted={style.colorMuted}
+                                mono={style.mono}
                                 focused={focusedCell}
                             />
                         );
@@ -687,6 +709,10 @@ type KeyProps = {
     colSpan: number;
     color: string;
     colorMuted: string;
+    /** When true, the key renders in monochrome (black border + dark
+     *  text on white, near-black fill on focus) instead of reading
+     *  --kb-color from the gradient palette. Used for the SPACE row. */
+    mono: boolean;
     focused: boolean;
 };
 
@@ -704,23 +730,32 @@ const KeyboardKey = memo(
         colSpan,
         color,
         colorMuted,
+        mono,
         focused,
     }: KeyProps) {
         const cls =
             "kids-keyboard-key " +
             `kids-keyboard-key-${kind}` +
+            (mono ? " kids-keyboard-key-mono" : "") +
             (focused ? " focused" : "");
         // Inline grid placement + per-cell color. The CSS picks up
         // --kb-color (and --kb-color-muted) for letter color, border,
         // and the focused fill. Inline style is the cheapest way to
         // pass a per-instance color into shared CSS rules without
-        // generating a unique class per key.
-        const style: React.CSSProperties = {
-            gridRow: `${row} / span ${rowSpan}`,
-            gridColumn: `${col} / span ${colSpan}`,
-            ["--kb-color" as string]: color,
-            ["--kb-color-muted" as string]: colorMuted,
-        };
+        // generating a unique class per key. Mono cells skip the
+        // color vars and let the .kids-keyboard-key-mono CSS branch
+        // own the black/white treatment.
+        const style: React.CSSProperties = mono
+            ? {
+                  gridRow: `${row} / span ${rowSpan}`,
+                  gridColumn: `${col} / span ${colSpan}`,
+              }
+            : {
+                  gridRow: `${row} / span ${rowSpan}`,
+                  gridColumn: `${col} / span ${colSpan}`,
+                  ["--kb-color" as string]: color,
+                  ["--kb-color-muted" as string]: colorMuted,
+              };
         return (
             <span
                 className={cls}
@@ -741,6 +776,7 @@ const KeyboardKey = memo(
         prev.colSpan === next.colSpan &&
         prev.color === next.color &&
         prev.colorMuted === next.colorMuted &&
+        prev.mono === next.mono &&
         prev.focused === next.focused,
 );
 
