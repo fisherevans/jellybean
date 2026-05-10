@@ -4355,3 +4355,57 @@ body[data-perf="slow"] .kids-keyboard-key {
     padding-top: 0.5rem;
     padding-bottom: 0.5rem;
 }
+
+/* ===== Login mode-switcher (t11) =====
+   Three sign-in surfaces (Quick Connect, phone QR, password) live
+   in three separate cards. Originally each card had two text-link
+   "Use X instead" buttons stacked vertically; the QR option got
+   visually buried because it read like a footnote rather than a
+   peer mode. This row replaces both stacked links with a single
+   horizontal pill row that's identical across all three cards: the
+   active mode is shown as a highlighted "current" pill (non-
+   focusable), the other two are pill-buttons. Same affordance from
+   every card -> kid (or parent) sees all three options at all
+   times. */
+.kid-login-modes {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 0.4rem;
+    padding-top: 0.85rem;
+    width: 100%;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+.kid-login-mode {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 0.4rem 0.75rem;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    line-height: 1.1;
+}
+.kid-login-mode-current {
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.22);
+    cursor: default;
+}
+.kid-login-mode-link {
+    background: transparent;
+    color: #c8c8d0;
+    cursor: pointer;
+}
+.kid-login-mode-link:hover {
+    color: #fff;
+}
+.kid-login-mode-link:focus,
+.kid-login-mode-link:focus-visible {
+    outline: none;
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.7);
+    background: rgba(255, 255, 255, 0.08);
+}
