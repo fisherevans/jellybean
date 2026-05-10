@@ -182,6 +182,7 @@ type Focus =
     | { kind: "search" }
     | { kind: "filter" }
     | { kind: "sort" }
+    | { kind: "keyboard" }
     | { kind: "grid"; section: number; item: number };
 
 const PAGE_SIZE = 5000;
@@ -540,12 +541,23 @@ export default function Library() {
         // Up off section 0 row 0 hands focus back to the controls row.
         setFocus({ kind: "search" });
     }, []);
+    const onGridExitLeft = useCallback(() => {
+        // ArrowLeft off the grid's leftmost column hands focus to the
+        // on-screen keyboard when it's open. When closed, the grid
+        // already had nothing to its left - we no-op so the kid sees
+        // a clamp instead of a flicker.
+        if (!keyboardOpen) return;
+        setFocus({ kind: "keyboard" });
+    }, [keyboardOpen]);
 
     // Focus DOM management for chrome focus. TileGrid handles the
-    // grid case (focus + scroll on cell change) on its own.
+    // grid case (focus + scroll on cell change) on its own; the
+    // Keyboard owns its internal cursor / DOM focus, so we skip
+    // both here.
     useEffect(() => {
         if (tabFocused) return;
         if (focus.kind === "grid") return;
+        if (focus.kind === "keyboard") return;
         if (focus.kind === "search") {
             searchWrapRef.current?.focus({ preventScroll: true });
             stack.scrollToTop();
@@ -583,7 +595,13 @@ export default function Library() {
     useEffect(() => {
         if (override || tabFocused) return;
         if (filterOpen || sortOpen || alphaModalOpen) return;
-        if (keyboardOpen) return; // Keyboard owns window keydown while open
+        // Keyboard owns window keydown while focused. When the kid has
+        // arrowed-right out of the keyboard into the grid (keyboard is
+        // still open as a sibling pane), this listener should NOT
+        // claim the keys - TileGrid owns them. The grid early-return
+        // below handles that case naturally because focus.kind ===
+        // "grid" while the kid is in the grid.
+        if (focus.kind === "keyboard") return;
         if (focus.kind === "grid") return; // TileGrid owns the keys here
         const handler = (e: KeyboardEvent) => {
             const k = e.key;
@@ -621,12 +639,18 @@ export default function Library() {
                 return;
             }
             setFocus((f) =>
-                moveControls(f, k, sections, {
-                    setFilterOpen,
-                    setSortOpen,
-                    setAlphaModalOpen,
-                    openSearch: () => setKeyboardOpen(true),
-                }),
+                moveControls(
+                    f,
+                    k,
+                    sections,
+                    {
+                        setFilterOpen,
+                        setSortOpen,
+                        setAlphaModalOpen,
+                        openSearch: () => setKeyboardOpen(true),
+                    },
+                    keyboardOpen,
+                ),
             );
         };
         window.addEventListener("keydown", handler);
@@ -670,7 +694,10 @@ export default function Library() {
             !filterOpen &&
             !sortOpen &&
             !alphaModalOpen &&
-            !keyboardOpen,
+            // Only block long-press Enter when the keyboard owns
+            // input. With focus in the grid (keyboard open as a
+            // sibling pane), Enter on a tile should still navigate.
+            focus.kind !== "keyboard",
         onShortPress: handleShortPress,
         onLongPress: handleLongPress,
     });
@@ -678,11 +705,23 @@ export default function Library() {
     useProgressiveBack(
         useCallback(() => {
             // Keyboard registers its own back handler on top of the
-            // useProgressiveBack stack when open, so this branch is
-            // belt-and-suspenders for any race between
-            // setKeyboardOpen(true) and the child's effect-time push.
+            // useProgressiveBack stack when open AND focused. When the
+            // keyboard is open but unfocused (the kid arrowed into the
+            // grid), the keyboard's own handler returns false and we
+            // fall through here. Back from the grid in that state
+            // moves focus to the search input rather than closing the
+            // keyboard - the kid can keep typing without re-popping it.
+            if (keyboardOpen && focus.kind !== "keyboard") {
+                setFocus({ kind: "search" });
+                return true;
+            }
+            // Belt-and-suspenders: if the keyboard's own back fired
+            // and somehow returned false while focused (race between
+            // setKeyboardOpen(true) and the child's effect-time push),
+            // close the keyboard from here.
             if (keyboardOpen) {
                 setKeyboardOpen(false);
+                setFocus({ kind: "search" });
                 return true;
             }
             if (override) {
@@ -708,6 +747,7 @@ export default function Library() {
             return handleBack();
         }, [
             keyboardOpen,
+            focus,
             override,
             alphaModalOpen,
             filterOpen,
@@ -747,7 +787,10 @@ export default function Library() {
                         !tabFocused && focus.kind === "search" ? "focused" : ""
                     }`}
                     tabIndex={!tabFocused && focus.kind === "search" ? 0 : -1}
-                    onClick={() => setKeyboardOpen(true)}
+                    onClick={() => {
+                        setKeyboardOpen(true);
+                        setFocus({ kind: "keyboard" });
+                    }}
                 >
                     <input
                         ref={searchInputRef}
@@ -765,6 +808,7 @@ export default function Library() {
                         onClick={(e) => {
                             e.stopPropagation();
                             setKeyboardOpen(true);
+                            setFocus({ kind: "keyboard" });
                         }}
                         readOnly={keyboardOpen}
                     />
@@ -847,12 +891,12 @@ export default function Library() {
                     focus={gridFocus}
                     onFocusChange={onGridFocusChange}
                     onExitTop={onGridExitTop}
+                    onExitLeft={onGridExitLeft}
                     enabled={
                         !override &&
                         !filterOpen &&
                         !sortOpen &&
-                        !alphaModalOpen &&
-                        !keyboardOpen
+                        !alphaModalOpen
                     }
                     scrollToTop={stack.scrollToTop}
                     scrollToCenter={stack.scrollToCenter}
@@ -898,6 +942,57 @@ export default function Library() {
                 />
             )}
             </div>
+            {keyboardOpen && (
+                <Keyboard
+                    value={searchInput}
+                    onChange={(v) => setSearchInput(v)}
+                    onSubmit={(_v) => {
+                        setKeyboardOpen(false);
+                        // After "Done" the search results become the
+                        // primary thing to interact with - drop focus
+                        // straight onto the first grid tile when one
+                        // exists, otherwise fall back to the search
+                        // input so the kid isn't stranded with nothing
+                        // focused.
+                        if (
+                            sections.length > 0 &&
+                            sections[0].items.length > 0
+                        ) {
+                            setFocus({
+                                kind: "grid",
+                                section: 0,
+                                item: 0,
+                            });
+                        } else {
+                            setFocus({ kind: "search" });
+                        }
+                    }}
+                    onClose={() => {
+                        setKeyboardOpen(false);
+                        setFocus({ kind: "search" });
+                    }}
+                    focused={focus.kind === "keyboard"}
+                    onExitRight={() => {
+                        // ArrowRight off the keyboard's rightmost
+                        // column hands focus to the leftmost grid
+                        // tile. When the grid is empty (no results
+                        // for the current search), there's nothing to
+                        // focus - stay put. The keyboard's own listener
+                        // is gated on `focused`, so once focus.kind
+                        // flips out of "keyboard" we stop intercepting.
+                        if (sections.length === 0) return;
+                        if (sections[0].items.length === 0) return;
+                        setFocus({ kind: "grid", section: 0, item: 0 });
+                    }}
+                    onExitUp={() => {
+                        // ArrowUp from the keyboard's top row hands
+                        // focus back to the search input above. The
+                        // keyboard stays open; ArrowDown from search
+                        // re-engages it.
+                        setFocus({ kind: "search" });
+                    }}
+                />
+            )}
             {override && (
                 <OverrideModal
                     itemId={override.itemId}
@@ -931,14 +1026,6 @@ export default function Library() {
                         setSortOpen(false);
                     }}
                     onClose={() => setSortOpen(false)}
-                />
-            )}
-            {keyboardOpen && (
-                <Keyboard
-                    value={searchInput}
-                    onChange={(v) => setSearchInput(v)}
-                    onSubmit={(_v) => setKeyboardOpen(false)}
-                    onClose={() => setKeyboardOpen(false)}
                 />
             )}
             {alphaModalOpen &&
@@ -1015,20 +1102,31 @@ type ActivateHandlers = {
 };
 
 // moveControls handles arrow nav within the controls row only. Down
-// from any control hands off to the first grid cell (TileGrid takes
-// over from there). Up off the row is handled by the page's keydown
-// listener separately.
+// from search hands off to the keyboard when open (re-engaging it
+// after the kid arrowed up to the search bar) or to the first grid
+// cell otherwise. Down from filter/sort/jump still goes to the grid -
+// the keyboard isn't to their visual left, so steering them into it
+// would feel arbitrary. Up off the row is handled by the page's
+// keydown listener separately.
 function moveControls(
     f: Focus,
     key: string,
     sections: GridSection<LibraryItem>[],
     h: ActivateHandlers,
+    keyboardOpen: boolean,
 ): Focus {
     if (key === "Enter" || key === " ") {
         if (f.kind === "filter") h.setFilterOpen(true);
         else if (f.kind === "sort") h.setSortOpen(true);
         else if (f.kind === "alphaBtn") h.setAlphaModalOpen(true);
-        else if (f.kind === "search") h.openSearch();
+        else if (f.kind === "search") {
+            h.openSearch();
+            // Hand focus to the keyboard so its listener takes over
+            // immediately. Library's effect that follows focus.kind
+            // skips the DOM-focus dance for "keyboard" - the keyboard
+            // owns its internal focus state.
+            return { kind: "keyboard" };
+        }
         return f;
     }
     const firstGrid: Focus | null =
@@ -1039,7 +1137,12 @@ function moveControls(
         case "search":
             if (key === "ArrowLeft") return f;
             if (key === "ArrowRight") return { kind: "filter" };
-            if (key === "ArrowDown") return firstGrid ?? f;
+            if (key === "ArrowDown") {
+                // Re-engage the keyboard if it's open; otherwise fall
+                // through to the grid.
+                if (keyboardOpen) return { kind: "keyboard" };
+                return firstGrid ?? f;
+            }
             return f;
         case "filter":
             if (key === "ArrowLeft") return { kind: "search" };
@@ -1059,6 +1162,11 @@ function moveControls(
             // grid arrows are owned by TileGrid; this case never
             // fires in practice (the page-level handler skips when
             // grid focus is active).
+            return f;
+        case "keyboard":
+            // Keyboard arrows are owned by Keyboard.tsx's window
+            // listener; this case never fires in practice (the page-
+            // level handler skips when keyboard focus is active).
             return f;
     }
 }

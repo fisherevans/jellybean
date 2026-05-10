@@ -77,6 +77,11 @@ export type TileGridProps<T> = {
      *  use this to hand focus back to chrome (search wrap on Library,
      *  back button on TagDetail). */
     onExitTop: () => void;
+    /** Optional. Fired when the kid presses ArrowLeft on column 0 of
+     *  any row. Pages use this when there's a sibling pane to the
+     *  left of the grid (Library hands off to the on-screen keyboard
+     *  when it's open). When omitted, ArrowLeft on col 0 clamps. */
+    onExitLeft?: () => void;
     /** Window keydown listener gating. Pages should pass false while
      *  modals are open. When false, TileGrid still renders + scrolls
      *  but doesn't intercept keys. (TileGrid additionally idles its
@@ -105,6 +110,7 @@ export default function TileGrid<T>({
     focus,
     onFocusChange,
     onExitTop,
+    onExitLeft,
     enabled,
     scrollToTop,
     scrollToCenter,
@@ -174,6 +180,10 @@ export default function TileGrid<T>({
                 onExitTop();
                 return;
             }
+            if (next === "exitLeft") {
+                if (onExitLeft) onExitLeft();
+                return;
+            }
             if (
                 next.sectionIdx !== focus.sectionIdx ||
                 next.itemIdx !== focus.itemIdx
@@ -183,7 +193,15 @@ export default function TileGrid<T>({
         };
         window.addEventListener("keydown", handler);
         return () => window.removeEventListener("keydown", handler);
-    }, [enabled, focus, effectiveSections, columns, onExitTop, onFocusChange]);
+    }, [
+        enabled,
+        focus,
+        effectiveSections,
+        columns,
+        onExitTop,
+        onExitLeft,
+        onFocusChange,
+    ]);
 
     return (
         <>
@@ -228,13 +246,15 @@ function focusKey(f: GridFocus): string {
 
 // moveGrid handles arrow nav within the sectioned grid. Returns
 // "exitTop" when ArrowUp at section 0 row 0 wants to hand off to
-// chrome above; the page wires that up via `onExitTop`.
+// chrome above; "exitLeft" when ArrowLeft on col 0 wants to hand off
+// to a sibling pane (Library uses this for the on-screen keyboard).
+// Both signals are wired by the page via `onExitTop` / `onExitLeft`.
 function moveGrid<T>(
     f: GridFocus,
     key: string,
     sections: GridSection<T>[],
     columns: number,
-): GridFocus | "exitTop" {
+): GridFocus | "exitTop" | "exitLeft" {
     const cols = Math.max(1, columns);
     const sec = sections[f.sectionIdx];
     if (!sec) return f;
@@ -243,7 +263,7 @@ function moveGrid<T>(
     const col = i % cols;
     const rowInSec = Math.floor(i / cols);
     if (key === "ArrowLeft") {
-        if (col === 0) return f;
+        if (col === 0) return "exitLeft";
         return { sectionIdx: f.sectionIdx, itemIdx: i - 1 };
     }
     if (key === "ArrowRight") {
