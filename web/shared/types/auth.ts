@@ -60,3 +60,33 @@ export interface KidLoginResponse {
     /** Jellybean profile display name. */
     profileName?: string;
 }
+
+/**
+ * PairStartResponse is the body returned by
+ * POST /api/kids/auth/pair/start. The TV renders pairUrl as a QR
+ * code; the parent's phone scans it and lands on /pair/<shortCode>
+ * which serves the Jellyfin login form. The TV polls with
+ * pollingToken (NOT shortCode) so the QR-visible code can't be
+ * used to enumerate completed pairings out-of-band.
+ */
+export interface PairStartResponse {
+    shortCode: string;
+    pairUrl: string;
+    pollingToken: string;
+    /** ISO 8601 timestamp when the pairing TTLs out. */
+    expiresAt: string;
+}
+
+/**
+ * PairPollResponse is the body returned by
+ * GET /api/kids/auth/pair/poll. status="pending" while the parent is
+ * still typing; "complete" once Jellyfin AuthenticateByName has
+ * succeeded server-side and the row is sealed; "expired" once the
+ * TTL elapses or the row is gone. On "complete" the server embeds
+ * the same KidLoginResponse shape that /api/kids/auth/login emits,
+ * so the TV's session-mint code is shared.
+ */
+export interface PairPollResponse {
+    status: "pending" | "complete" | "expired";
+    kid?: KidLoginResponse;
+}

@@ -3889,3 +3889,42 @@ body[data-perf="slow"] .pt-button.focused {
 body[data-perf="slow"] .up-next-btn {
     transition: none;
 }
+
+/* ===== QR pair login (t3) ===== */
+
+/* The QR canvas wrapper. White background so the dark-on-light QR
+   stays scannable on the dark login card; small chamfer matches
+   the surrounding pill-corner aesthetic. The 220px size is wired
+   on the QRCodeSVG component itself; the wrapper just centers and
+   pads it. */
+.kid-login-qr {
+    background: #fff;
+    border-radius: 12px;
+    padding: 0.4rem;
+    margin: 0.4rem 0 0.2rem;
+    line-height: 0;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+.kid-login-qr svg {
+    display: block;
+}
+
+/* Below-the-QR fallback URL line. Smaller dimmer copy so it doesn't
+   compete with the QR for attention; the parent's eye should land
+   on the QR first, with the URL as a "if scanning fails" backup. */
+.kid-login-pair-code {
+    margin: 0;
+    color: #c0c0c0;
+    font-size: 0.85rem;
+    text-align: center;
+    max-width: 100%;
+    word-break: break-all;
+}
+.kid-login-pair-url {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 0.15rem 0.4rem;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-size: 0.8rem;
+    color: #e8e8ea;
+}
