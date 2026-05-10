@@ -17,7 +17,14 @@ import { useEffect, useRef } from "react";
 import * as overrides from "../parentOverrides";
 import { useParentOverride } from "../parentOverrides";
 import {
+    summarizeAutoOff,
+    summarizeBodyBreaks,
+    summarizeGlobalTime,
+    summarizeMode,
+    summarizeViewingPercent,
     useActiveMode,
+    useBodyBreakStatus,
+    useEffectiveTimeStatus,
     useTimeStatus,
     useViewingState,
 } from "../kidStatus";
@@ -40,6 +47,12 @@ type MenuRow = {
     key: string;
     icon: React.ReactNode;
     label: string;
+    /** Optional one-line muted sub-text rendered under the action
+     *  label. Used by the system-section rows to surface the
+     *  feature's current effective state ("Off", "9:00pm", "30m
+     *  left today (override)", etc.) so the parent can read what's
+     *  happening before tapping. */
+    status?: string;
     onActivate: () => void;
     /** When set, render a paired secondary button to the right
      *  that clears an active override without leaving the menu. */
@@ -73,8 +86,13 @@ export function MenuView({
     onMarkPlayed,
 }: MenuViewProps) {
     const time = useTimeStatus();
+    const effectiveTime = useEffectiveTimeStatus();
     const viewing = useViewingState();
     const mode = useActiveMode();
+    // Body breaks status: poll at the slower (non-playing) cadence
+    // here - the kid isn't on /play while the override modal is
+    // open, so the 60s tick is plenty for a status sub-text.
+    const bodyBreakStatus = useBodyBreakStatus(false);
 
     // Per-content time-limit row is the only thing we still gate on
     // server status: an item-scoped budget makes no sense when no
@@ -96,6 +114,30 @@ export function MenuView({
     const bodyBreaksOv = useParentOverride(() => overrides.getBodyBreaks());
     const autoOffOv = useParentOverride(() => overrides.getAutoOff());
     const globalTimeOv = useParentOverride(() => overrides.getGlobalTime());
+
+    // Per-feature status summaries. Each returns the muted sub-text
+    // line + booleans that pick the action verb ("Temporarily turn
+    // on …" vs the existing configured-feature copy).
+    const modeSummary = summarizeMode(mode, modeOv);
+    const dimSummary = summarizeViewingPercent(viewing?.dimPercent, dimOv);
+    const warmSummary = summarizeViewingPercent(
+        viewing?.warmTintPercent,
+        warmOv,
+    );
+    const globalTimeSummary = summarizeGlobalTime(
+        time,
+        effectiveTime,
+        globalTimeOv,
+    );
+    const bodyBreaksSummary = summarizeBodyBreaks(
+        bodyBreakStatus,
+        bodyBreaksOv,
+    );
+    const autoOffSummary = summarizeAutoOff(
+        viewing,
+        autoOffOv,
+        viewing?.sleepTimerAt,
+    );
 
     // Manage-section rows: persistent edits to the focused item
     // (tags, hide, mark, per-content time-limit). Mark watched and
@@ -162,12 +204,23 @@ export function MenuView({
     // override in place without leaving the menu.
     const system: MenuRow[] = [];
 
+    // Action labels follow the same rule per feature: when the
+    // feature is currently producing no effect (off server-side AND
+    // no override active), copy switches to "Temporarily turn on …"
+    // so the parent reads it as introducing a fresh effect rather
+    // than adjusting one. Otherwise we keep the existing
+    // "Override …" / "Adjust …" verbs.
+    const modeLabel =
+        !modeSummary.isOn && !modeSummary.isOverride
+            ? "Temporarily turn on a mode"
+            : activeMode
+              ? `Change mode (currently ${activeMode.name})`
+              : "Turn on a mode";
     system.push({
         key: "mode",
         icon: <IconMode />,
-        label: activeMode
-            ? `Change mode (currently ${activeMode.name})`
-            : "Turn on a mode",
+        label: modeLabel,
+        status: modeSummary.status,
         onActivate: () => ctx.push({ kind: "modeAction", token }),
         // Mode override is "active" when a local override exists.
         // The configured/scheduled mode is server-driven; clearing
@@ -183,10 +236,15 @@ export function MenuView({
             : undefined,
     });
 
+    const dimLabel =
+        !dimSummary.isOn && !dimSummary.isOverride
+            ? "Temporarily set dimming"
+            : "Override dimming";
     system.push({
         key: "dim",
         icon: <IconDim />,
-        label: "Override dimming",
+        label: dimLabel,
+        status: dimSummary.status,
         onActivate: () => ctx.push({ kind: "dimSetup", token }),
         reset: dimOv
             ? {
@@ -196,10 +254,15 @@ export function MenuView({
             : undefined,
     });
 
+    const warmLabel =
+        !warmSummary.isOn && !warmSummary.isOverride
+            ? "Temporarily set warming"
+            : "Override warming";
     system.push({
         key: "warm",
         icon: <IconWarm />,
-        label: "Override warming",
+        label: warmLabel,
+        status: warmSummary.status,
         onActivate: () => ctx.push({ kind: "warmSetup", token }),
         reset: warmOv
             ? {
@@ -216,13 +279,15 @@ export function MenuView({
     // The server-merge layer in kidStatus.ts produces an effective
     // "enabled" status when an override-only configuration is
     // present.
-    const timeLabel = time?.enabled
-        ? `Adjust daily time (${time.minutesRemaining}m left)`
-        : "Adjust daily time";
+    const timeLabel =
+        !globalTimeSummary.isOn && !globalTimeSummary.isOverride
+            ? "Temporarily turn on daily time limit"
+            : "Adjust daily time limit";
     system.push({
         key: "globalTime",
         icon: <IconClock />,
         label: timeLabel,
+        status: globalTimeSummary.status,
         onActivate: () => ctx.push({ kind: "globalTime", token }),
         reset: globalTimeOv
             ? {
@@ -232,10 +297,15 @@ export function MenuView({
             : undefined,
     });
 
+    const bodyBreaksLabel =
+        !bodyBreaksSummary.isOn && !bodyBreaksSummary.isOverride
+            ? "Temporarily turn on body breaks"
+            : "Pause body breaks";
     system.push({
         key: "bodyBreaks",
         icon: <IconBreak />,
-        label: "Pause body breaks",
+        label: bodyBreaksLabel,
+        status: bodyBreaksSummary.status,
         onActivate: () => ctx.push({ kind: "bodyBreaks", token }),
         reset: bodyBreaksOv
             ? {
@@ -254,10 +324,15 @@ export function MenuView({
     // parent can choose between "Disable until tomorrow" and
     // "Shift the time".
     const autoOffConfigured = !!viewing?.sleepTimerAt;
+    const autoOffLabel =
+        !autoOffSummary.isOn && !autoOffSummary.isOverride
+            ? "Temporarily turn on auto-off"
+            : "Adjust auto-off";
     system.push({
         key: "autoOff",
         icon: <IconAutoOff />,
-        label: autoOffConfigured ? "Adjust auto-off" : "Enable auto-off",
+        label: autoOffLabel,
+        status: autoOffSummary.status,
         onActivate: () =>
             ctx.push(
                 autoOffConfigured
@@ -387,7 +462,7 @@ function MenuSections({
                                             refs.current[i][0] = el;
                                         }}
                                         type="button"
-                                        className={`override-action override-row-primary${row.reset ? " has-reset" : ""}`}
+                                        className={`override-action override-row-primary${row.reset ? " has-reset" : ""}${row.status ? " has-status" : ""}`}
                                         onClick={row.onActivate}
                                         onKeyDown={(e) => onKeyDown(i, 0, e)}
                                     >
@@ -397,8 +472,15 @@ function MenuSections({
                                         >
                                             {row.icon}
                                         </span>
-                                        <span className="override-action-label">
-                                            {row.label}
+                                        <span className="override-action-text">
+                                            <span className="override-action-label">
+                                                {row.label}
+                                            </span>
+                                            {row.status !== undefined && (
+                                                <span className="override-menu-status">
+                                                    {row.status}
+                                                </span>
+                                            )}
                                         </span>
                                     </button>
                                     {row.reset && (

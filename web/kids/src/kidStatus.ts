@@ -307,6 +307,215 @@ export function useEffectiveBodyBreakStatus(
     return server;
 }
 
+// FeatureSummary is the shape every override-menu summarizer
+// returns. The MenuSections rows read this to (a) decide between
+// "Temporarily turn on …" and the configured-feature verb, and
+// (b) render a one-line status sub-text under the action label.
+//
+//   isOn:       feature is currently producing an effect on the
+//               kid (server-configured OR override-driven).
+//   isOverride: a local override is currently active. May be true
+//               while isOn is false (e.g. body breaks paused via
+//               override - the feature exists, but the active
+//               effect right now is "no effect").
+//   status:     short human string the menu shows under the
+//               action label. "Off" when nothing is happening.
+export type FeatureSummary = {
+    status: string;
+    isOn: boolean;
+    isOverride: boolean;
+};
+
+function formatTimeShort(iso: string): string {
+    const d = new Date(iso);
+    if (!Number.isFinite(d.getTime())) return "soon";
+    return d.toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+    });
+}
+
+function formatHM(totalMinutes: number): string {
+    const m = Math.max(0, Math.round(totalMinutes));
+    const h = Math.floor(m / 60);
+    const rem = m % 60;
+    if (h === 0) return `${rem}m`;
+    if (rem === 0) return `${h}h`;
+    return `${h}h ${rem}m`;
+}
+
+// summarizeAutoOff produces the menu status line for the auto-off
+// row. Inputs are the merged viewing state + the local override
+// (independent so the caller can subscribe via useParentOverride
+// without an extra hook layer). Server-side configuration is
+// reflected by `serverSleepTimerAt` - present means a clock-off
+// is configured today.
+export function summarizeAutoOff(
+    viewing: ViewingState | null,
+    autoOff: overrides.AutoOffOverride | null,
+    serverSleepTimerAt?: string,
+): FeatureSummary {
+    const isOverride = !!autoOff;
+    if (autoOff?.disabledUntilMidnight) {
+        return {
+            status: "Skipped until tomorrow (override)",
+            isOn: false,
+            isOverride: true,
+        };
+    }
+    if (autoOff?.oneTimeAt) {
+        return {
+            status: `${formatTimeShort(autoOff.oneTimeAt)} tonight (override)`,
+            isOn: true,
+            isOverride: true,
+        };
+    }
+    if (autoOff?.shiftMinutes && viewing?.sleepTimerAt) {
+        return {
+            status: `${formatTimeShort(viewing.sleepTimerAt)} today (override)`,
+            isOn: true,
+            isOverride: true,
+        };
+    }
+    if (serverSleepTimerAt) {
+        return {
+            status: formatTimeShort(serverSleepTimerAt),
+            isOn: true,
+            isOverride: false,
+        };
+    }
+    return { status: "Off", isOn: false, isOverride };
+}
+
+// summarizeGlobalTime: status line for the global daily time
+// limit row. Server `enabled=true` => budgeted, with a
+// minutesRemaining count. Override-only path => budget comes
+// entirely from the local layer.
+export function summarizeGlobalTime(
+    server: TimeStatus | null,
+    effective: TimeStatus | null,
+    override: overrides.TimeOverride | null,
+): FeatureSummary {
+    const isOverride = !!override;
+    if (
+        override?.disabledUntil &&
+        Date.parse(override.disabledUntil) > Date.now()
+    ) {
+        return {
+            status: `No limit until ${formatTimeShort(override.disabledUntil)} (override)`,
+            isOn: false,
+            isOverride: true,
+        };
+    }
+    if (effective?.enabled) {
+        const left = formatHM(effective.minutesRemaining);
+        if (isOverride) {
+            return {
+                status: `${left} left today (override)`,
+                isOn: true,
+                isOverride: true,
+            };
+        }
+        if (server?.enabled) {
+            return {
+                status: `${left} left today`,
+                isOn: true,
+                isOverride: false,
+            };
+        }
+    }
+    return { status: "Off", isOn: false, isOverride };
+}
+
+// summarizeBodyBreaks: status line for the body-breaks row.
+// Override pauses breaks until a fixed time; configured but
+// non-paused state surfaces the cadence.
+export function summarizeBodyBreaks(
+    server: BodyBreakStatus | null,
+    override: overrides.BodyBreaksOverride | null,
+): FeatureSummary {
+    const isOverride = !!(
+        override?.disabledUntil &&
+        Date.parse(override.disabledUntil) > Date.now()
+    );
+    if (isOverride && override?.disabledUntil) {
+        return {
+            status: `Paused until ${formatTimeShort(override.disabledUntil)} (override)`,
+            isOn: false,
+            isOverride: true,
+        };
+    }
+    if (server?.enabled) {
+        const cadence = `${server.breakMinutes}min break every ${server.playMinutes}min`;
+        return {
+            status: `On - ${cadence}`,
+            isOn: true,
+            isOverride: false,
+        };
+    }
+    return { status: "Off", isOn: false, isOverride: false };
+}
+
+// summarizeViewingPercent handles dim and warm in one shape -
+// they're override-only on the server today, so the status
+// reduces to "Off" or "<n>% until <time> (override)".
+export function summarizeViewingPercent(
+    serverPercent: number | undefined,
+    override: overrides.ViewingOverride | null,
+): FeatureSummary {
+    if (override) {
+        return {
+            status: `${override.percent}% until ${formatTimeShort(override.expiresAt)} (override)`,
+            isOn: override.percent > 0,
+            isOverride: true,
+        };
+    }
+    if (serverPercent && serverPercent > 0) {
+        return {
+            status: `${serverPercent}%`,
+            isOn: true,
+            isOverride: false,
+        };
+    }
+    return { status: "Off", isOn: false, isOverride: false };
+}
+
+// summarizeMode: status line for the mode row. Server reports a
+// scheduled mode; override can disable or swap.
+export function summarizeMode(
+    server: ActiveMode | null,
+    override: overrides.ModeOverride | null,
+): FeatureSummary {
+    const serverMode = server?.mode;
+    if (override?.action === "disable") {
+        const baseName = serverMode?.name ?? "mode";
+        return {
+            status: `${baseName} disabled until ${formatTimeShort(override.expiresAt)} (override)`,
+            isOn: false,
+            isOverride: true,
+        };
+    }
+    if (override?.action === "set") {
+        const picked =
+            server?.available?.find((m) => m.id === override.modeId)?.name ??
+            (serverMode?.id === override.modeId ? serverMode.name : undefined);
+        const name = picked ?? "Mode";
+        return {
+            status: `${name} until ${formatTimeShort(override.expiresAt)} (override)`,
+            isOn: true,
+            isOverride: true,
+        };
+    }
+    if (serverMode) {
+        return {
+            status: `${serverMode.name} mode`,
+            isOn: true,
+            isOverride: false,
+        };
+    }
+    return { status: "Off", isOn: false, isOverride: false };
+}
+
 // Viewing resolution: dim and warm percent get overridden if a
 // per-control local override is active. Auto-off (clock-driven on
 // the server) gets shifted / disabled by the local autoOff

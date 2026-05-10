@@ -4306,3 +4306,52 @@ body[data-perf="slow"] .browse-hero-next-ep-label {
 body[data-perf="slow"] .kids-keyboard-key {
     transition: none;
 }
+
+/* ===== Override menu status (t10) =====
+   Two-line system rows in the post-PIN override menu. The action
+   label (verb) sits on top; a muted status line under it tells the
+   parent what's currently happening for that feature ("Off",
+   "9:00pm", "30m left today (override)"). The container is a
+   vertical flexbox so the label keeps its ellipsis behavior; the
+   status line gets reduced-weight typography and lower opacity to
+   read as secondary information. */
+.override-action-text {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.override-action-text .override-action-label {
+    /* Reset the row-style flex grow / text-overflow that previously
+       lived on this element. The text-truncation behavior moves
+       onto the label span when nested inside .override-action-text
+       so a long label still ellipses without pushing the status
+       line out of view. */
+    flex: 0 0 auto;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.override-menu-status {
+    color: #9a9a9a;
+    font-size: 0.78rem;
+    line-height: 1.15;
+    font-weight: 400;
+    /* Reserve a min-height so a row with no status line and a row
+       with a status line have the same vertical footprint - keeps
+       the menu from jittering when an override clears. */
+    min-height: 1.05em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    width: 100%;
+}
+/* Pad the row a touch when a status line is present so the two
+   text rows don't crowd the icon vertically. */
+.override-row-primary.has-status {
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+}
