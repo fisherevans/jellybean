@@ -1,17 +1,16 @@
 // AutoOffStage + sub-stages: clock-based auto-off override.
 //
-// Two paths depending on whether the server has an auto-off
-// configured for the active profile:
+// AutoOffStage is the "configured" entrypoint - the menu only
+// pushes it when the server reports a sleepTimerAt for today. It
+// offers the two adjustments that need a baseline time:
+//   - "Disable until tomorrow"
+//   - "Shift the time (+/-15m)" -> AutoOffShiftStage
 //
-//   Server has auto-off (sleepTimerAt present):
-//     - "Disable until tomorrow"
-//     - "Shift the time (±15m)" -> AutoOffShiftStage
-//
-//   Server has no auto-off:
-//     - "Set one-time auto-off (today only)" -> AutoOffOneTimeStage
-//       lets the parent pick an absolute fire time (e.g. 8pm
-//       tonight). Stored as `oneTimeAt` so the kidStatus merge
-//       can surface it as the effective sleepTimerAt for today.
+// The unconfigured case skips this menu entirely: the parent menu
+// pushes AutoOffOneTimeStage directly so the parent picks an
+// absolute fire time (e.g. 8pm tonight). Stored as `oneTimeAt` so
+// the kidStatus merge surfaces it as the effective sleepTimerAt
+// for today.
 //
 // Both shift / one-time stages clamp to (now, next-local-midnight].
 
@@ -29,48 +28,29 @@ type Props = {
 };
 
 export function AutoOffStage({ ctx, token }: Props) {
-    const viewing = useViewingState();
-    const hasServerAutoOff = !!viewing?.sleepTimerAt;
-    const items = hasServerAutoOff
-        ? [
-              {
-                  key: "tomorrow",
-                  label: "Disable until tomorrow",
-                  onActivate: () => {
-                      overrides.setAutoOff({
-                          disabledUntilMidnight: true,
-                          expiresAt: nextLocalMidnight(),
-                      });
-                      ctx.replaceTop({
-                          kind: "done",
-                          message: "Auto-off skipped until tomorrow.",
-                      });
-                  },
-              },
-              {
-                  key: "shift",
-                  label: "Shift the time (±15m)",
-                  onActivate: () =>
-                      ctx.push({ kind: "autoOffShift", token }),
-              },
-          ]
-        : [
-              {
-                  key: "one-time",
-                  label: "Set one-time auto-off (today only)",
-                  onActivate: () =>
-                      ctx.push({ kind: "autoOffOneTime", token }),
-              },
-          ];
+    const items = [
+        {
+            key: "tomorrow",
+            label: "Disable until tomorrow",
+            onActivate: () => {
+                overrides.setAutoOff({
+                    disabledUntilMidnight: true,
+                    expiresAt: nextLocalMidnight(),
+                });
+                ctx.replaceTop({
+                    kind: "done",
+                    message: "Auto-off skipped until tomorrow.",
+                });
+            },
+        },
+        {
+            key: "shift",
+            label: "Shift the time (+/-15m)",
+            onActivate: () => ctx.push({ kind: "autoOffShift", token }),
+        },
+    ];
     return (
-        <ModalShell
-            title="Override auto-off"
-            subtitle={
-                hasServerAutoOff
-                    ? undefined
-                    : "No auto-off configured. Set a one-off cutoff for today."
-            }
-        >
+        <ModalShell title="Adjust auto-off">
             <ActionList items={items} />
             <BackLink onActivate={ctx.pop} />
         </ModalShell>
@@ -182,24 +162,23 @@ export function AutoOffShiftStage({ ctx }: ShiftProps) {
 
 // AutoOffOneTimeStage: pick an absolute auto-off time for today.
 // Used when no server-side auto-off is configured. Default lands
-// 1h from now rounded up to the next 15min slot, clamped under
-// midnight. Up/Down step ±15min between (now, midnight).
+// 2h from now rounded down to the prior 15min slot, clamped
+// under midnight. Up/Down step +/-15min between (now, midnight).
 type OneTimeProps = {
     ctx: StageCtx;
 };
 
-function roundedUpTo15(d: Date): Date {
+function roundedDownTo15(d: Date): Date {
     const out = new Date(d);
     const m = out.getMinutes();
-    const add = (15 - (m % 15)) % 15 || 15;
-    out.setMinutes(m + add, 0, 0);
+    out.setMinutes(m - (m % 15), 0, 0);
     return out;
 }
 
 export function AutoOffOneTimeStage({ ctx }: OneTimeProps) {
     const midnight = Date.parse(nextLocalMidnight());
-    const initialDefault = roundedUpTo15(
-        new Date(Date.now() + 60 * 60_000),
+    const initialDefault = roundedDownTo15(
+        new Date(Date.now() + 2 * 60 * 60_000),
     );
     // Clamp into the [now+15m, midnight-15m] window.
     const minMs = Date.now() + SHIFT_STEP_MIN * 60_000;
