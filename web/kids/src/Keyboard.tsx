@@ -2,6 +2,7 @@ import {
     memo,
     useCallback,
     useEffect,
+    useMemo,
     useRef,
     useState,
 } from "react";
@@ -19,28 +20,34 @@ import { useProgressiveBack } from "./useProgressiveBack";
 // stateless / controlled - the parent owns `value` and the keyboard
 // only emits changes via the callbacks.
 //
-// Layout (t13):
-//   Rows 0-3: 6 letters each (A-F, G-L, M-R, S-X).
-//   Row 4   : Y Z Space Backspace Clear Done (Space gets flex:2 so it
-//             reads as a wider spacebar; the action keys are icon-only
-//             via Phosphor).
-//   Row 5   : digits 0-9 on their own row.
-// Letters first because kids don't know QWERTY; alphabetical gets them
-// to the right key faster.
+// Layout (t15): 6 columns x 8 rows on a CSS grid.
+//
+//   Row 1:  A    B    C    D    E    BACK    <- BACK row-spans 2
+//   Row 2:  F    G    H    I    J    (BACK)
+//   Row 3:  K    L    M    N    O    CLEAR
+//   Row 4:  P    Q    R    S    T    DONE
+//   Row 5:  U    V    W    X    Y    Z
+//   Row 6:  [---------- SPACE (col-spans 6) ----------]
+//   Row 7:  1    2    3    4    5    '
+//   Row 8:  6    7    8    9    0    -
+//
+// Letters first because kids don't know QWERTY; alphabetical gets
+// them to the right key faster. BACK is doubled-up vertically so it
+// reads as a tall rest-position for the right thumb. SPACE is one
+// wide cell so it can't be missed.
 //
 // Navigation:
 //   - ArrowLeft / ArrowRight clamp horizontally within a row (no wrap).
-//   - ArrowUp / ArrowDown clamp vertically between rows (no wrap). When
-//     the target row is shorter than the source col, the col snaps to
-//     the last valid position.
-//   - Enter on a letter / digit appends to value (e.repeat suppressed).
-//   - Enter on Space appends a single space.
-//   - Enter on Backspace removes the last char; held Backspace repeats
-//     at REPEAT_THROTTLE_MS via the time-since-last-event pattern from
-//     PlayerTransport.tsx (NOT e.repeat - WebView remote behavior is
-//     unreliable there).
-//   - Enter on Clear empties value.
-//   - Enter on Done calls onSubmit(value).
+//   - ArrowUp / ArrowDown clamp vertically between rows (no wrap).
+//   - When a target cell is part of a span (BACK or SPACE), the focus
+//     lands on the key anchor; the kid sees one solid focused cell.
+//   - Enter on a char key (letters, digits, ', -) appends to value.
+//   - Enter on SPACE appends a single space.
+//   - Enter on BACK removes the last char; held BACK repeats at
+//     REPEAT_THROTTLE_MS via the time-since-last-event pattern from
+//     PlayerTransport.tsx (e.repeat is unreliable on this WebView).
+//   - Enter on CLEAR empties value.
+//   - Enter on DONE calls onSubmit(value).
 //   - Back calls onClose() and lets the page own the back-press.
 //
 // The keyboard owns a window-level capture-phase keydown listener
@@ -57,26 +64,133 @@ type KeyKind =
     | { kind: "clear" }
     | { kind: "done" };
 
-type Row = KeyKind[];
+// Key descriptor including grid placement. row/col are 1-indexed to
+// match CSS `grid-row` / `grid-column` semantics; rowSpan/colSpan
+// default to 1 and increase only for BACK and SPACE.
+type Key = {
+    id: string;
+    kind: KeyKind;
+    row: number;
+    col: number;
+    rowSpan: number;
+    colSpan: number;
+};
 
-const ROWS: Row[] = [
-    "ABCDEF".split("").map((c) => ({ kind: "char", label: c, value: c })),
-    "GHIJKL".split("").map((c) => ({ kind: "char", label: c, value: c })),
-    "MNOPQR".split("").map((c) => ({ kind: "char", label: c, value: c })),
-    "STUVWX".split("").map((c) => ({ kind: "char", label: c, value: c })),
-    [
-        { kind: "char", label: "Y", value: "Y" },
-        { kind: "char", label: "Z", value: "Z" },
-        { kind: "space" },
-        { kind: "backspace" },
-        { kind: "clear" },
-        { kind: "done" },
-    ],
-    "0123456789".split("").map((c) => ({ kind: "char", label: c, value: c })),
+const COLS = 6;
+const ROWS = 8;
+
+function ch(c: string, row: number, col: number): Key {
+    return {
+        id: `c:${c}`,
+        kind: { kind: "char", label: c, value: c },
+        row,
+        col,
+        rowSpan: 1,
+        colSpan: 1,
+    };
+}
+
+const KEYS: Key[] = [
+    // Row 1: A B C D E + BACK (rowSpan 2)
+    ch("A", 1, 1),
+    ch("B", 1, 2),
+    ch("C", 1, 3),
+    ch("D", 1, 4),
+    ch("E", 1, 5),
+    {
+        id: "ctrl:back",
+        kind: { kind: "backspace" },
+        row: 1,
+        col: 6,
+        rowSpan: 2,
+        colSpan: 1,
+    },
+    // Row 2: F G H I J (BACK fills col 6)
+    ch("F", 2, 1),
+    ch("G", 2, 2),
+    ch("H", 2, 3),
+    ch("I", 2, 4),
+    ch("J", 2, 5),
+    // Row 3: K L M N O CLEAR
+    ch("K", 3, 1),
+    ch("L", 3, 2),
+    ch("M", 3, 3),
+    ch("N", 3, 4),
+    ch("O", 3, 5),
+    {
+        id: "ctrl:clear",
+        kind: { kind: "clear" },
+        row: 3,
+        col: 6,
+        rowSpan: 1,
+        colSpan: 1,
+    },
+    // Row 4: P Q R S T DONE
+    ch("P", 4, 1),
+    ch("Q", 4, 2),
+    ch("R", 4, 3),
+    ch("S", 4, 4),
+    ch("T", 4, 5),
+    {
+        id: "ctrl:done",
+        kind: { kind: "done" },
+        row: 4,
+        col: 6,
+        rowSpan: 1,
+        colSpan: 1,
+    },
+    // Row 5: U V W X Y Z
+    ch("U", 5, 1),
+    ch("V", 5, 2),
+    ch("W", 5, 3),
+    ch("X", 5, 4),
+    ch("Y", 5, 5),
+    ch("Z", 5, 6),
+    // Row 6: SPACE (colSpan 6)
+    {
+        id: "ctrl:space",
+        kind: { kind: "space" },
+        row: 6,
+        col: 1,
+        rowSpan: 1,
+        colSpan: 6,
+    },
+    // Row 7: digits 1-5 + apostrophe
+    ch("1", 7, 1),
+    ch("2", 7, 2),
+    ch("3", 7, 3),
+    ch("4", 7, 4),
+    ch("5", 7, 5),
+    ch("'", 7, 6),
+    // Row 8: digits 6-0 + hyphen
+    ch("6", 8, 1),
+    ch("7", 8, 2),
+    ch("8", 8, 3),
+    ch("9", 8, 4),
+    ch("0", 8, 5),
+    ch("-", 8, 6),
 ];
 
+// Build a (row, col) -> Key index occupancy matrix once. Each cell
+// inside a key's span (BACK, SPACE) maps back to the same key index
+// so navigation can reject "same key" steps cheaply.
+const OCCUPANCY: number[][] = (() => {
+    const grid: number[][] = [];
+    for (let r = 0; r < ROWS; r++) {
+        grid.push(new Array(COLS).fill(-1));
+    }
+    KEYS.forEach((k, idx) => {
+        for (let r = k.row; r < k.row + k.rowSpan; r++) {
+            for (let c = k.col; c < k.col + k.colSpan; c++) {
+                grid[r - 1][c - 1] = idx;
+            }
+        }
+    });
+    return grid;
+})();
+
 // Held-Backspace repeat: 150ms throttle, time-since-last-event based
-// (matches the seek-hold pattern from PlayerTransport.tsx:171). e.repeat
+// (matches the seek-hold pattern from PlayerTransport.tsx). e.repeat
 // is unreliable on this WebView - Android TV remotes sometimes emit
 // streams of repeat=false keydowns instead of toggling repeat. The
 // time-since-last-event gate is robust either way: a "real" hold
@@ -84,6 +198,92 @@ const ROWS: Row[] = [
 // burst that briefly looks like a hold is bounded by the throttle.
 const REPEAT_THROTTLE_MS = 150;
 const REPEAT_GAP_MS = 250;
+
+// ----- Color theme (t15) -----
+//
+// White panel + dark colorful letters. Each cell is tinted by a
+// position-interpolated color; on focus the cell fills with that color
+// and the letter flips to white. The palette is randomized at open
+// time so consecutive keyboard opens look distinct.
+
+type RGB = [number, number, number];
+
+function hexToRgb(hex: string): RGB {
+    const h = hex.replace("#", "");
+    return [
+        parseInt(h.slice(0, 2), 16),
+        parseInt(h.slice(2, 4), 16),
+        parseInt(h.slice(4, 6), 16),
+    ];
+}
+
+function rgbToCss(rgb: RGB, alpha = 1): string {
+    const [r, g, b] = rgb.map((v) => Math.round(Math.max(0, Math.min(255, v))));
+    return alpha === 1
+        ? `rgb(${r}, ${g}, ${b})`
+        : `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// Three-color palettes pulled from the kid-friendly visual language
+// already used elsewhere in the app (rainbow page bg, browse hero
+// gradients). Yellow is intentionally absent - low contrast on white.
+const PALETTES: [string, string, string][] = [
+    ["#2679ff", "#8b5cf6", "#d92b6f"], // blue / purple / pink
+    ["#10b981", "#2679ff", "#8b5cf6"], // green / blue / purple
+    ["#f97316", "#d92b6f", "#8b5cf6"], // orange / pink / purple
+    ["#e05a3a", "#f59e0b", "#10b981"], // red / orange / green
+    ["#6366f1", "#10b981", "#f97316"], // indigo / green / orange
+    ["#a855f7", "#2679ff", "#34d399"], // purple / blue / mint
+    ["#d92b6f", "#6366f1", "#10b981"], // pink / indigo / green
+];
+
+// Theme captured at open-time. We pick a palette + assign each color
+// to one of the three "anchor" corners (top-left, top-right, bottom).
+// Each cell's color is computed via barycentric interpolation across
+// (col, row), so the kid sees a smooth diagonal gradient across the
+// 6x8 grid.
+type Theme = {
+    cTL: RGB;
+    cTR: RGB;
+    cB: RGB;
+};
+
+function pickTheme(): Theme {
+    const palette = PALETTES[Math.floor(Math.random() * PALETTES.length)];
+    // Shuffle the three colors into TL / TR / Bottom slots. Six
+    // permutations; pick one uniformly.
+    const perm = [...palette];
+    for (let i = perm.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [perm[i], perm[j]] = [perm[j], perm[i]];
+    }
+    return {
+        cTL: hexToRgb(perm[0]),
+        cTR: hexToRgb(perm[1]),
+        cB: hexToRgb(perm[2]),
+    };
+}
+
+// Compute a cell's color via barycentric interpolation across the
+// three corner anchors:
+//   TL = (col=0, row=0)
+//   TR = (col=COLS-1, row=0)
+//   B  = (col=(COLS-1)/2, row=ROWS-1)
+// Weights sum to 1 by construction; the result is clamped to [0,1]
+// per channel implicitly via the anchor RGBs already being valid.
+function cellColor(theme: Theme, row: number, col: number): RGB {
+    const u = (COLS - 1) === 0 ? 0 : col / (COLS - 1); // 0..1 across cols
+    const v = (ROWS - 1) === 0 ? 0 : row / (ROWS - 1); // 0..1 down rows
+    // Barycentric weights: bottom corner pulls in proportional to v;
+    // top corners share the remainder weighted by u.
+    const wB = v;
+    const wTL = (1 - v) * (1 - u);
+    const wTR = (1 - v) * u;
+    const r = theme.cTL[0] * wTL + theme.cTR[0] * wTR + theme.cB[0] * wB;
+    const g = theme.cTL[1] * wTL + theme.cTR[1] * wTR + theme.cB[1] * wB;
+    const b = theme.cTL[2] * wTL + theme.cTR[2] * wTR + theme.cB[2] * wB;
+    return [r, g, b];
+}
 
 type Props = {
     value: string;
@@ -98,13 +298,11 @@ export default function Keyboard({
     onSubmit,
     onClose,
 }: Props) {
-    // Default focus on the first letter of the first row. The row+col
-    // pair lives in component state so re-renders keep the focused key
-    // in sync; the refs below mirror it for the keydown listener so
-    // the listener doesn't re-bind on every key press.
+    // Default focus: row 1 col 1 = "A". Track by key index for cheap
+    // refs; `pos` is the (row, col) we use for navigation math.
     const [pos, setPos] = useState<{ row: number; col: number }>({
-        row: 0,
-        col: 0,
+        row: 1,
+        col: 1,
     });
     const posRef = useRef(pos);
     posRef.current = pos;
@@ -117,37 +315,58 @@ export default function Keyboard({
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
 
-    // Held-Backspace state. lastBackspaceAt tracks the most recent
-    // commit; lastEventAt tracks the most recent keydown so we can
-    // tell tap-bursts from a real hold.
+    // Theme is captured once per keyboard open via useRef so it stays
+    // stable through re-renders. New random pick on next open (when
+    // the component mounts again).
+    const themeRef = useRef<Theme | null>(null);
+    if (themeRef.current === null) {
+        themeRef.current = pickTheme();
+    }
+    const theme = themeRef.current;
+
+    // Held-Backspace state. lastEventAt tracks the most recent
+    // keydown so we can tell tap-bursts from a real hold; lastFireAt
+    // gates how often we actually commit.
     const backspaceHoldRef = useRef<{
         lastEventAt: number;
         lastFireAt: number;
     } | null>(null);
 
+    // Resolve the key currently focused at (row, col). For span keys
+    // (BACK, SPACE) every covered cell maps to the same key index.
+    const focusedKeyIdx = OCCUPANCY[pos.row - 1][pos.col - 1];
+    const focusedKey = KEYS[focusedKeyIdx];
+
+    // Move within the grid. dRow/dCol are the desired step; we walk
+    // the occupancy matrix until we leave the current key's footprint
+    // (so ArrowDown from BACK skips its row-2 cell and lands on
+    // CLEAR). Clamp at edges. The (row, col) tracked here is the
+    // kid's logical cursor: preserving col across span keys (SPACE
+    // covers all 6 cols of row 6) means ArrowDown from "W" lands on
+    // SPACE then on "3", not on "1". The focused-cell render still
+    // highlights the entire span.
     const move = useCallback((dRow: number, dCol: number) => {
         const cur = posRef.current;
-        let row = cur.row + dRow;
-        // Clamp vertical (no wrap).
-        if (row < 0) row = 0;
-        if (row >= ROWS.length) row = ROWS.length - 1;
-        let col = cur.col + dCol;
-        const targetRow = ROWS[row];
-        // When stepping vertically, the source col may be past the
-        // target row's length (e.g. col 9 from the digits row jumping
-        // up into the 6-key letter rows). Snap to last valid col.
-        if (dRow !== 0) {
-            col = cur.col;
-            if (col >= targetRow.length) col = targetRow.length - 1;
+        const curIdx = OCCUPANCY[cur.row - 1][cur.col - 1];
+        let r = cur.row;
+        let c = cur.col;
+        while (true) {
+            r += dRow;
+            c += dCol;
+            if (r < 1 || r > ROWS || c < 1 || c > COLS) {
+                // Edge: clamp and bail.
+                return;
+            }
+            const idx = OCCUPANCY[r - 1][c - 1];
+            if (idx !== curIdx) {
+                setPos({ row: r, col: c });
+                return;
+            }
         }
-        // Clamp horizontal (no wrap). Same rule for both directions.
-        if (col < 0) col = 0;
-        if (col >= targetRow.length) col = targetRow.length - 1;
-        setPos({ row, col });
     }, []);
 
-    const commitChar = useCallback((ch: string) => {
-        onChangeRef.current(valueRef.current + ch);
+    const commitChar = useCallback((s: string) => {
+        onChangeRef.current(valueRef.current + s);
     }, []);
 
     const commitBackspace = useCallback(() => {
@@ -166,11 +385,10 @@ export default function Keyboard({
     }, []);
 
     const activate = useCallback(() => {
-        const cur = posRef.current;
-        const k = ROWS[cur.row][cur.col];
-        switch (k.kind) {
+        const k = KEYS[OCCUPANCY[posRef.current.row - 1][posRef.current.col - 1]];
+        switch (k.kind.kind) {
             case "char":
-                commitChar(k.value);
+                commitChar(k.kind.value);
                 return;
             case "space":
                 commitChar(" ");
@@ -193,10 +411,8 @@ export default function Keyboard({
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             const k = e.key;
-            // Back closes the keyboard. Don't preventDefault here - if
-            // the page has nothing else to consume the back, the
-            // useProgressiveBack hook will route it through the bridge.
-            // We just intercept Escape (desktop testing) directly.
+            // Escape closes the keyboard (desktop testing path).
+            // Hardware Back is wired through useProgressiveBack below.
             if (k === "Escape") {
                 e.preventDefault();
                 e.stopPropagation();
@@ -235,12 +451,12 @@ export default function Keyboard({
                 case "Enter":
                 case " ": {
                     const cur = posRef.current;
-                    const focusedKey = ROWS[cur.row][cur.col];
+                    const fk = KEYS[OCCUPANCY[cur.row - 1][cur.col - 1]];
                     // Held Enter on Backspace MAY repeat (intentional -
                     // kids hold Backspace to clear quickly). Use the
                     // PlayerTransport time-since-last-event pattern so
                     // we don't depend on e.repeat.
-                    if (focusedKey.kind === "backspace") {
+                    if (fk.kind.kind === "backspace") {
                         const now =
                             typeof performance !== "undefined"
                                 ? performance.now()
@@ -309,26 +525,40 @@ export default function Keyboard({
     // valueRef inside the listener).
     void value;
 
+    // Pre-compute each key's color once per render. Cheap (44 keys)
+    // and lets KeyboardKey stay memoized on simple props.
+    const keyStyles = useMemo(() => {
+        return KEYS.map((k) => {
+            const rgb = cellColor(theme, k.row - 1, k.col - 1);
+            return {
+                color: rgbToCss(rgb, 1),
+                colorMuted: rgbToCss(rgb, 0.55),
+            };
+        });
+    }, [theme]);
+
     return createPortal(
         <div className="kids-keyboard-wrap" role="dialog" aria-label="Keyboard">
             <div className="kids-keyboard-card">
-                <div className="kids-keyboard-rows">
-                    {ROWS.map((row, rIdx) => (
-                        <div key={rIdx} className="kids-keyboard-row">
-                            {row.map((k, cIdx) => {
-                                const focused =
-                                    pos.row === rIdx && pos.col === cIdx;
-                                return (
-                                    <KeyboardKey
-                                        key={keyId(k, cIdx)}
-                                        kind={k.kind}
-                                        label={labelFor(k)}
-                                        focused={focused}
-                                    />
-                                );
-                            })}
-                        </div>
-                    ))}
+                <div className="kids-keyboard-grid">
+                    {KEYS.map((k, idx) => {
+                        const focused = focusedKey.id === k.id;
+                        const style = keyStyles[idx];
+                        return (
+                            <KeyboardKey
+                                key={k.id}
+                                kind={k.kind.kind}
+                                label={labelFor(k.kind)}
+                                row={k.row}
+                                col={k.col}
+                                rowSpan={k.rowSpan}
+                                colSpan={k.colSpan}
+                                color={style.color}
+                                colorMuted={style.colorMuted}
+                                focused={focused}
+                            />
+                        );
+                    })}
                 </div>
             </div>
         </div>,
@@ -351,43 +581,56 @@ function labelFor(k: KeyKind): string {
     }
 }
 
-function keyId(k: KeyKind, col: number): string {
-    switch (k.kind) {
-        case "char":
-            return `c:${k.value}`;
-        case "space":
-            return "ctrl:space";
-        case "backspace":
-            return "ctrl:bs";
-        case "clear":
-            return "ctrl:clr";
-        case "done":
-            return "ctrl:done";
-        default:
-            return `pos:${col}`;
-    }
-}
-
 type KeyProps = {
     kind: KeyKind["kind"];
     label: string;
+    row: number;
+    col: number;
+    rowSpan: number;
+    colSpan: number;
+    color: string;
+    colorMuted: string;
     focused: boolean;
 };
 
-// Each key is React.memo'd on (kind, label, focused). Callback
-// identity is intentionally absent from the props - clicks go
-// nowhere (D-pad only) and all activation flows through the window
-// keydown handler. With ~40 keys this gates re-render cost to only
-// the two keys whose focus state flipped on each arrow press, which
-// matters on the slow Skyworth WebView.
+// Each key is React.memo'd on the small set of value-typed props
+// above. With ~44 keys this gates re-render cost to only the two
+// keys whose focus state flipped on each arrow press, which matters
+// on the slow Skyworth WebView.
 const KeyboardKey = memo(
-    function KeyboardKey({ kind, label, focused }: KeyProps) {
+    function KeyboardKey({
+        kind,
+        label,
+        row,
+        col,
+        rowSpan,
+        colSpan,
+        color,
+        colorMuted,
+        focused,
+    }: KeyProps) {
         const cls =
-            "filter-pill kids-keyboard-key " +
+            "kids-keyboard-key " +
             `kids-keyboard-key-${kind}` +
             (focused ? " focused" : "");
+        // Inline grid placement + per-cell color. The CSS picks up
+        // --kb-color (and --kb-color-muted) for letter color, border,
+        // and the focused fill. Inline style is the cheapest way to
+        // pass a per-instance color into shared CSS rules without
+        // generating a unique class per key.
+        const style: React.CSSProperties = {
+            gridRow: `${row} / span ${rowSpan}`,
+            gridColumn: `${col} / span ${colSpan}`,
+            ["--kb-color" as string]: color,
+            ["--kb-color-muted" as string]: colorMuted,
+        };
         return (
-            <span className={cls} aria-label={label} aria-selected={focused}>
+            <span
+                className={cls}
+                style={style}
+                aria-label={label}
+                aria-selected={focused}
+            >
                 {renderKeyContent(kind, label)}
             </span>
         );
@@ -395,14 +638,19 @@ const KeyboardKey = memo(
     (prev, next) =>
         prev.kind === next.kind &&
         prev.label === next.label &&
+        prev.row === next.row &&
+        prev.col === next.col &&
+        prev.rowSpan === next.rowSpan &&
+        prev.colSpan === next.colSpan &&
+        prev.color === next.color &&
+        prev.colorMuted === next.colorMuted &&
         prev.focused === next.focused,
 );
 
-// Render the visible content of a key. Char + digit cells show the
-// label; action keys show a Phosphor icon (no text label) sized to
-// the key. Space is a special case: a horizontal bracket-bar shape
-// drawn in CSS with the word "space" inside, mimicking the standard
-// `⎵` glyph at TV scale.
+// Render the visible content of a key. Char cells show the label;
+// action keys show a Phosphor icon. Space is a special case: a
+// horizontal bracket-bar shape drawn in CSS with the word "SPACE"
+// centered inside the plate, mimicking a spacebar at TV scale.
 function renderKeyContent(kind: KeyKind["kind"], label: string) {
     switch (kind) {
         case "char":
@@ -411,7 +659,7 @@ function renderKeyContent(kind: KeyKind["kind"], label: string) {
             return (
                 <span className="kids-keyboard-space-glyph" aria-hidden>
                     <span className="kids-keyboard-space-bar" />
-                    <span className="kids-keyboard-space-label">space</span>
+                    <span className="kids-keyboard-space-label">SPACE</span>
                 </span>
             );
         case "backspace":
