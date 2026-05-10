@@ -26,6 +26,7 @@ import (
 
 	"github.com/fisherevans/jellybean/internal/curation"
 	"github.com/fisherevans/jellybean/internal/jellyfin"
+	"golang.org/x/sync/errgroup"
 )
 
 // Context carries the long-lived dependencies the resolver needs.
@@ -342,24 +343,143 @@ func resolveContinueWatching(b *resolveCtx, row curation.LayoutRow, cfg map[stri
 	if b.userID == "" || b.userTok == "" {
 		return []ResolvedRow{newRow(row, "Continue Watching", "", nil)}, nil
 	}
-	res, err := b.jelly.GetResumeItems(b.ctx, b.userID, b.userTok, max*2)
-	if err != nil {
+	// Overfetch budget: 4x lets multi-episode shows collapse to a single
+	// series tile without starving the row. Jellyfin's Resume returns
+	// one row per partially-watched episode, so a kid juggling four
+	// episodes of Care Bears burns four slots on one tile.
+	const overfetchMul = 4
+	budget := max * overfetchMul
+
+	// Fan out Resume + NextUp in parallel: Resume covers
+	// mid-episode progress + movies; NextUp covers "you finished E7,
+	// E8 is up next" - the case Resume drops the moment Played=true
+	// flips. Together they form the kid's mental model of "shows I'm
+	// in the middle of."
+	var resumeItems, nextUpItems []jellyfin.Item
+	g, gctx := errgroup.WithContext(b.ctx)
+	g.Go(func() error {
+		res, err := b.jelly.GetResumeItems(gctx, b.userID, b.userTok, budget)
+		if err != nil {
+			return err
+		}
+		resumeItems = res.Items
+		return nil
+	})
+	g.Go(func() error {
+		res, err := b.jelly.GetNextUpForUser(gctx, b.userID, b.userTok, budget)
+		if err != nil {
+			return err
+		}
+		nextUpItems = res.Items
+		return nil
+	})
+	if err := g.Wait(); err != nil {
 		return nil, err
 	}
-	// Resume returns the granular position - one entry per episode the
-	// kid is mid-way through. We surface series tiles instead so:
+
+	// We surface series tiles (not episode tiles) so:
 	// (a) curation state (categorized at the series level) actually
 	// applies - episodes have no per-episode categorization and would
 	// otherwise be filtered as hidden;
 	// (b) "I'm watching Care Bears" appears once instead of four times
 	// when the kid bounced between episodes;
 	// (c) clicking a tile lands on /watch/{seriesId} where the
-	// accordion auto-selects the in-progress episode.
-	ids := ResumeIDsForCuration(res.Items)
-	visible, err := b.filterVisible(ids)
+	// accordion auto-selects the in-progress / next-up episode.
+	//
+	// Build a per-id sort key = max(Resume.LastPlayedDate,
+	// NextUp.LastPlayedDate). When neither has a usable date (NextUp
+	// can return an unwatched episode with empty LastPlayedDate),
+	// fall back to the position in Jellyfin's response - earlier =
+	// more recent - which is what Jellyfin already sorted by.
+	type entry struct {
+		when     time.Time
+		hasWhen  bool
+		fallback int // smaller = more recent in source response
+	}
+	merged := map[string]*entry{}
+	order := []string{} // first-seen insertion order for stable fallback ranking
+
+	mergeOne := func(items []jellyfin.Item, baseRank int) {
+		ids := ResumeIDsForCuration(items)
+		// Build an index from items -> their position in the rewritten
+		// id list so we can map LastPlayedDate by id.
+		idForItem := func(it jellyfin.Item) string {
+			id := it.ID
+			if it.Type == "Episode" && it.SeriesID != "" {
+				id = it.SeriesID
+			}
+			return id
+		}
+		// Pull LastPlayedDate by the rewritten id, taking the first
+		// occurrence (Jellyfin returns episodes newest-first, so the
+		// most-recent episode of a multi-episode duplicate wins).
+		lastPlayed := map[string]string{}
+		for _, it := range items {
+			id := idForItem(it)
+			if _, ok := lastPlayed[id]; ok {
+				continue
+			}
+			if it.UserData != nil {
+				lastPlayed[id] = it.UserData.LastPlayedDate
+			} else {
+				lastPlayed[id] = ""
+			}
+		}
+		for i, id := range ids {
+			e, ok := merged[id]
+			if !ok {
+				e = &entry{fallback: baseRank + i}
+				merged[id] = e
+				order = append(order, id)
+			}
+			lp := lastPlayed[id]
+			if lp == "" {
+				continue
+			}
+			t, err := time.Parse(time.RFC3339Nano, lp)
+			if err != nil {
+				continue
+			}
+			if !e.hasWhen || t.After(e.when) {
+				e.when = t
+				e.hasWhen = true
+			}
+		}
+	}
+
+	// Resume first so movies (only Resume returns them) keep their
+	// fallback ordering ahead of NextUp on ties. NextUp ranks bumped
+	// by 1<<20 to keep them strictly after the entire Resume list when
+	// both are dateless - belt-and-suspenders against an unrealistic
+	// overfetch overflow.
+	mergeOne(resumeItems, 0)
+	mergeOne(nextUpItems, 1<<20)
+
+	// Visibility filter: drop series the profile has hidden / not
+	// categorized. Pass the pre-sort id list to keep batching simple;
+	// the dedupe map carries the sort metadata so we can re-sort post-
+	// filter.
+	visible, err := b.filterVisible(order)
 	if err != nil {
 		return nil, err
 	}
+
+	// Sort by LastPlayedDate desc; ties / dateless entries fall back
+	// to source-response order (Jellyfin's own recency ranking).
+	sort.SliceStable(visible, func(i, j int) bool {
+		ei, ej := merged[visible[i]], merged[visible[j]]
+		switch {
+		case ei.hasWhen && ej.hasWhen:
+			return ei.when.After(ej.when)
+		case ei.hasWhen && !ej.hasWhen:
+			return true
+		case !ei.hasWhen && ej.hasWhen:
+			return false
+		default:
+			return ei.fallback < ej.fallback
+		}
+	})
+
 	return []ResolvedRow{newRow(row, "Continue Watching", "", capItems(visible, max))}, nil
 }
 

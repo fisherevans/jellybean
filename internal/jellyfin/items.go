@@ -403,3 +403,42 @@ func (c *Client) StreamURLWithAudio(itemID, userToken string, audioStreamIndex i
 	}
 	return fmt.Sprintf("%s/Videos/%s/master.m3u8?%s", c.baseURL, url.PathEscape(itemID), q.Encode())
 }
+
+// GetNextUpForUser returns the user's full next-up list across all series,
+// newest activity first. Same shape as Resume but covers a different gap:
+// once an episode is finished it falls out of /Items/Resume immediately,
+// so a kid who completes E7 of a series stops seeing that series in
+// Continue Watching even though E8 is the obvious next thing to watch.
+// /Shows/NextUp surfaces "the next unwatched episode after the most-
+// recently-completed one," which is exactly the missing case.
+//
+// Note: Jellyfin's NextUp returns only Episode entries. Movies don't
+// surface here - the resume path remains canonical for those. limit
+// caps the response (Jellyfin's own default is 20). Per-user token is
+// required so the watched-set is the kid's, not the service account's.
+func (c *Client) GetNextUpForUser(ctx context.Context, userID, userToken string, limit int) (*ItemsResult, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("userID required")
+	}
+	if userToken == "" {
+		return nil, fmt.Errorf("userToken required")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	q := url.Values{}
+	q.Set("UserId", userID)
+	q.Set("Limit", strconv.Itoa(limit))
+	q.Set("Fields", "Genres,Studios,OfficialRating,ProductionYear,RunTimeTicks,UserData")
+	path := "/Shows/NextUp?" + q.Encode()
+
+	req, err := c.newRequestWithToken(ctx, http.MethodGet, path, nil, userToken)
+	if err != nil {
+		return nil, err
+	}
+	var out ItemsResult
+	if err := c.do(req, &out); err != nil {
+		return nil, fmt.Errorf("get next up for user: %w", err)
+	}
+	return &out, nil
+}
