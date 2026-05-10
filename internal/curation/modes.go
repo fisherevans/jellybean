@@ -47,6 +47,22 @@ type ActiveMode struct {
 	Mode              *Mode     `json:"mode,omitempty"`
 	Source            string    `json:"source"` // "schedule" | "override" | "none"
 	OverrideExpiresAt time.Time `json:"overrideExpiresAt,omitempty"`
+	// Available is the set of modes configured for this profile.
+	// Populated unconditionally (independent of which one - if any -
+	// is active right now). The kid override modal reads this to
+	//   1. tell whether the profile has any modes at all (empty list
+	//      means "Turn on a mode" should render disabled with a
+	//      "No modes configured" status, not a tap-into-dead-end), and
+	//   2. drive the mode picker without an extra fetch.
+	Available []ModeRef `json:"available,omitempty"`
+}
+
+// ModeRef is the trimmed shape of a mode used in ActiveMode.Available.
+// Only the fields the kid override picker needs.
+type ModeRef struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	ThemeKey string `json:"themeKey"`
 }
 
 func (s *Store) ListModes(ctx context.Context, profileID int64) ([]Mode, error) {
@@ -228,7 +244,25 @@ func (s *Store) DeleteMode(ctx context.Context, id int64) error {
 // ResolveActiveMode picks the active mode for the given kid + clock.
 // Override (when present + unexpired) wins; otherwise the
 // alphabetically-first mode whose schedule contains `now`.
+//
+// Always populates Available with every mode configured for the
+// profile so the kid override modal can both render the picker and
+// detect the "no modes configured" empty state without an extra
+// round-trip.
 func (s *Store) ResolveActiveMode(ctx context.Context, kidID int64, profileID int64, now time.Time) (*ActiveMode, error) {
+	modes, err := s.ListModes(ctx, profileID)
+	if err != nil {
+		return nil, err
+	}
+	available := make([]ModeRef, 0, len(modes))
+	for _, m := range modes {
+		available = append(available, ModeRef{
+			ID:       m.ID,
+			Name:     m.Name,
+			ThemeKey: m.ThemeKey,
+		})
+	}
+
 	// Check override first.
 	row := s.db.QueryRowContext(ctx, `
 		SELECT override_mode_id, override_mode_until
@@ -249,13 +283,10 @@ func (s *Store) ResolveActiveMode(ctx context.Context, kidID int64, profileID in
 			Mode:              mode,
 			Source:            "override",
 			OverrideExpiresAt: unixToTime(ovUntil.Int64),
+			Available:         available,
 		}, nil
 	}
 
-	modes, err := s.ListModes(ctx, profileID)
-	if err != nil {
-		return nil, err
-	}
 	candidates := make([]Mode, 0, len(modes))
 	for _, m := range modes {
 		if m.ScheduleDays == 0 {
@@ -266,13 +297,13 @@ func (s *Store) ResolveActiveMode(ctx context.Context, kidID int64, profileID in
 		}
 	}
 	if len(candidates) == 0 {
-		return &ActiveMode{Source: "none"}, nil
+		return &ActiveMode{Source: "none", Available: available}, nil
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].Name < candidates[j].Name
 	})
 	chosen := candidates[0]
-	return &ActiveMode{Mode: &chosen, Source: "schedule"}, nil
+	return &ActiveMode{Mode: &chosen, Source: "schedule", Available: available}, nil
 }
 
 // SetModeOverride forces a mode (or "no mode" via id == 0) for a TTL.

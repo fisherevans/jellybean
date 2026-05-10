@@ -320,10 +320,16 @@ export function useEffectiveBodyBreakStatus(
 //               effect right now is "no effect").
 //   status:     short human string the menu shows under the
 //               action label. "Off" when nothing is happening.
+//   disabled:   the feature has nothing to act on, so the menu row
+//               should render non-interactive. Today only set by
+//               summarizeMode when the profile has zero modes
+//               configured (tapping the row would lead to an empty
+//               picker - dead-end).
 export type FeatureSummary = {
     status: string;
     isOn: boolean;
     isOverride: boolean;
+    disabled?: boolean;
 };
 
 function formatTimeShort(iso: string): string {
@@ -482,6 +488,12 @@ export function summarizeViewingPercent(
 
 // summarizeMode: status line for the mode row. Server reports a
 // scheduled mode; override can disable or swap.
+//
+// When the profile has zero modes configured (server-reported
+// `available` is empty AND nothing is currently active) the row is
+// flagged disabled so MenuSections can render it non-interactive
+// with "No modes configured" as the status. Tapping in would land
+// on an empty picker, which is a dead-end the menu should avoid.
 export function summarizeMode(
     server: ActiveMode | null,
     override: overrides.ModeOverride | null,
@@ -511,6 +523,20 @@ export function summarizeMode(
             status: `${serverMode.name} mode`,
             isOn: true,
             isOverride: false,
+        };
+    }
+    // No active mode + no override. If the profile has no modes
+    // configured at all, surface that as a disabled row instead of
+    // letting the parent tap into an empty picker. Treat a missing
+    // `available` list (e.g. server hasn't responded yet) as
+    // "still loading" - do NOT mark disabled in that case so the
+    // row stays usable once the response arrives.
+    if (server && Array.isArray(server.available) && server.available.length === 0) {
+        return {
+            status: "No modes configured",
+            isOn: false,
+            isOverride: false,
+            disabled: true,
         };
     }
     return { status: "Off", isOn: false, isOverride: false };

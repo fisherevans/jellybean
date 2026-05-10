@@ -4409,3 +4409,18 @@ body[data-perf="slow"] .kids-keyboard-key {
     border-color: rgba(255, 255, 255, 0.7);
     background: rgba(255, 255, 255, 0.08);
 }
+
+/* ===== Override polish (t12) ===== */
+
+/* Disabled menu row: rendered as a static <div> so D-pad skips it
+   entirely. Halved opacity reads as inert; no hover / focus styles
+   so it can't be confused for an interactive control. */
+.override-row-disabled {
+    cursor: default;
+    opacity: 0.5;
+    background: #1c1c1c;
+    border-color: #2a2a2a;
+}
+.override-row-disabled:hover {
+    background: #1c1c1c;
+}
