@@ -212,15 +212,6 @@ const REPEAT_GAP_MS = 250;
 
 type RGB = [number, number, number];
 
-function hexToRgb(hex: string): RGB {
-    const h = hex.replace("#", "");
-    return [
-        parseInt(h.slice(0, 2), 16),
-        parseInt(h.slice(2, 4), 16),
-        parseInt(h.slice(4, 6), 16),
-    ];
-}
-
 function rgbToCss(rgb: RGB, alpha = 1): string {
     const [r, g, b] = rgb.map((v) => Math.round(Math.max(0, Math.min(255, v))));
     return alpha === 1
@@ -228,34 +219,61 @@ function rgbToCss(rgb: RGB, alpha = 1): string {
         : `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-// Two-corner palettes for each color zone. Yellow is intentionally
-// absent across both pools - low contrast on white. The two pools are
-// disjoint hue families so a randomly-paired (zoneA, zoneC) pick still
-// reads as visibly distinct zones rather than two slices of the same
-// gradient.
-const ZONE_A_PALETTES: [string, string][] = [
-    ["#0066ff", "#aa00ff"], // blue → violet
-    ["#0099ff", "#3300cc"], // cyan-blue → deep-purple
-    ["#3a00d6", "#c300ff"], // indigo → magenta
-    ["#0048d6", "#ff006a"], // deep-blue → hot-pink
-    ["#0073ff", "#7a00e6"], // azure → violet
-    ["#00b3ff", "#0048d6"], // sky → deep-blue
-];
-const ZONE_C_PALETTES: [string, string][] = [
-    ["#ff5722", "#d10031"], // orange → red
-    ["#00b86b", "#00b3ff"], // green → cyan
-    ["#ff8a00", "#e60053"], // orange → magenta
-    ["#00c853", "#00875a"], // green → forest
-    ["#ff4a1f", "#aa00ff"], // red-orange → violet
-    ["#00b896", "#3300cc"], // teal → deep-purple
-];
+// HSL -> RGB. h in degrees [0, 360), s/l in [0, 1]. Standard formula;
+// kept inline so we don't pull in a color lib for this one use.
+function hslToRgb(h: number, s: number, l: number): RGB {
+    const hh = (((h % 360) + 360) % 360) / 60;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((hh % 2) - 1));
+    let r1 = 0, g1 = 0, b1 = 0;
+    if (hh < 1) [r1, g1, b1] = [c, x, 0];
+    else if (hh < 2) [r1, g1, b1] = [x, c, 0];
+    else if (hh < 3) [r1, g1, b1] = [0, c, x];
+    else if (hh < 4) [r1, g1, b1] = [0, x, c];
+    else if (hh < 5) [r1, g1, b1] = [x, 0, c];
+    else [r1, g1, b1] = [c, 0, x];
+    const m = l - c / 2;
+    return [(r1 + m) * 255, (g1 + m) * 255, (b1 + m) * 255];
+}
+
+// ----- Per-zone hue arcs (~120° spread each) -----
+//
+// Each zone picks a random start hue inside its arc-start range and
+// interpolates linearly to start+120° (always +1 direction; sign flip
+// is folded into the start ranges below by reversing the anchor pair
+// at render time). The ranges are chosen so the [start, start+120]
+// arc never crosses the yellow band (~40-75° hue) which reads as low
+// contrast on the white card.
+//
+// Zone A (letters): cool-leaning arc - starts in teal/blue, ends in
+// magenta/pink. Hue traverses cyan → blue → indigo → purple → magenta.
+//
+// Zone C (digits + punctuation): warm-leaning arc - starts in
+// indigo/purple, ends in red/orange. Hue traverses purple → magenta →
+// pink → red → orange.
+//
+// The two arcs overlap in the purple band but end on opposite ends of
+// the color wheel (pink vs orange), so a randomly-paired (zoneA, zoneC)
+// pick still reads as two distinct gradients.
+const ZONE_A_START_MIN = 180; // teal
+const ZONE_A_START_MAX = 220; // blue
+const ZONE_C_START_MIN = 250; // indigo
+const ZONE_C_START_MAX = 280; // purple
+const HUE_SPAN = 120; // ~1/3 of the color wheel per zone
+
+// Fixed saturation + lightness for readable, harmonious cells. S high
+// enough to stay vivid against the white card; L picked so focused
+// fills carry weight without going neon. Tweak together: bumping S
+// past ~0.75 starts to look garish on the Skyworth panel.
+const ZONE_SATURATION = 0.72;
+const ZONE_LIGHTNESS = 0.48;
 
 // Zone B (SPACE row) has no palette - it's rendered with a fixed
 // black/white treatment via a CSS class branch in the render code.
 
 type ZoneTheme = {
-    cA: RGB; // top-left anchor of the zone
-    cB: RGB; // bottom-right anchor of the zone
+    hueA: number; // hue at the top-left anchor of the zone
+    hueB: number; // hue at the bottom-right anchor of the zone
 };
 
 type Theme = {
@@ -263,20 +281,22 @@ type Theme = {
     zoneC: ZoneTheme; // digits + punctuation, rows 7-8
 };
 
-function pickZoneTheme(palettes: [string, string][]): ZoneTheme {
-    const palette = palettes[Math.floor(Math.random() * palettes.length)];
-    // Randomize which color anchors which corner. Two permutations.
+function pickZoneTheme(startMin: number, startMax: number): ZoneTheme {
+    const start = startMin + Math.random() * (startMax - startMin);
+    const end = start + HUE_SPAN;
+    // Randomize which hue anchors which corner. Two permutations - same
+    // visual span, different corner-to-corner direction.
     const flip = Math.random() < 0.5;
     return {
-        cA: hexToRgb(flip ? palette[1] : palette[0]),
-        cB: hexToRgb(flip ? palette[0] : palette[1]),
+        hueA: flip ? end : start,
+        hueB: flip ? start : end,
     };
 }
 
 function pickTheme(): Theme {
     return {
-        zoneA: pickZoneTheme(ZONE_A_PALETTES),
-        zoneC: pickZoneTheme(ZONE_C_PALETTES),
+        zoneA: pickZoneTheme(ZONE_A_START_MIN, ZONE_A_START_MAX),
+        zoneC: pickZoneTheme(ZONE_C_START_MIN, ZONE_C_START_MAX),
     };
 }
 
@@ -290,11 +310,13 @@ function zoneForRow(row: number): Zone {
 }
 
 // Compute a cell's color inside its zone via diagonal interpolation
-// from the zone's top-left anchor (cA) to its bottom-right anchor
-// (cB). Coords (row, col) are 1-indexed grid positions; we normalize
-// to the zone's local row range so each zone's cascade fills its
-// rectangle. Zone B (SPACE) returns black; the render branches on
-// zone before reading the color.
+// in HSL hue space from the zone's top-left anchor (hueA) to its
+// bottom-right anchor (hueB). Saturation + lightness are fixed
+// constants so cells stay readable + harmonious; only hue varies.
+// Coords (row, col) are 1-indexed grid positions; we normalize to the
+// zone's local row range so each zone's cascade fills its rectangle.
+// Zone B (SPACE) returns black; the render branches on zone before
+// reading the color.
 function cellColor(theme: Theme, row: number, col: number): RGB {
     const zone = zoneForRow(row);
     if (zone === "B") return [0, 0, 0];
@@ -309,10 +331,8 @@ function cellColor(theme: Theme, row: number, col: number): RGB {
     // Diagonal blend: t=0 at top-left, t=1 at bottom-right of the
     // zone. Average of u and v gives a clean corner-to-corner cascade.
     const t = (u + v) / 2;
-    const r = palette.cA[0] * (1 - t) + palette.cB[0] * t;
-    const g = palette.cA[1] * (1 - t) + palette.cB[1] * t;
-    const b = palette.cA[2] * (1 - t) + palette.cB[2] * t;
-    return [r, g, b];
+    const hue = palette.hueA * (1 - t) + palette.hueB * t;
+    return hslToRgb(hue, ZONE_SATURATION, ZONE_LIGHTNESS);
 }
 
 type Props = {

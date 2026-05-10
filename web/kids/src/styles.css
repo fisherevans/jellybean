@@ -4802,14 +4802,23 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
 }
 
 /* The 6 x 8 inner grid takes all remaining height in the card and
-   stretches its rows evenly (1fr each). Cells grow / shrink with the
-   panel, so the kid sees the keyboard fill the column instead of a
-   short panel hugging the bottom edge. */
+   stretches its rows evenly. Cells grow / shrink with the panel, so
+   the kid sees the keyboard fill the column instead of a short panel
+   hugging the bottom edge.
+
+   minmax(0, 1fr) (not bare 1fr) on the row template is load-bearing.
+   With bare 1fr, the implicit `auto` minimum lets a track grow past
+   its share if its cell content's intrinsic height exceeds the
+   fractional allotment. That's exactly what was happening: rows 3
+   and 4 (CLEAR / DONE single-cell icons at 1.9em) were stretching
+   taller than rows 1-2 (which are constrained by BACK's row-span:2
+   sharing the same content vertically across two tracks). Forcing a
+   0 minimum makes every row honor its 1fr share strictly. */
 .library.keyboard-open .kids-keyboard-grid {
     flex: 1 1 auto;
     min-height: 0;
     grid-template-columns: repeat(6, 1fr);
-    grid-template-rows: repeat(8, 1fr);
+    grid-template-rows: repeat(8, minmax(0, 1fr));
     grid-auto-rows: unset;
     gap: 0.5rem;
 }
@@ -5327,18 +5336,19 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
     will-change: transform;
 }
 
-/* (4) SPACE label size: 1.1em was too dominant inside the keycap.
-       0.9em with the existing 0.22em letter-spacing keeps the legend
-       readable but lets the bracket-bar share visual weight. */
+/* (4) SPACE label size: t24 dialed back to 0.9em; t28 drops further
+       to 0.7em so the legend sits comfortably inside the bracket-bar's
+       visual lane instead of dominating the keycap. Letter-spacing
+       holds steady so the word still reads as a label, not a run of
+       cramped glyphs. */
 .kids-keyboard-key-space .kids-keyboard-space-label {
-    font-size: 0.9em;
+    font-size: 0.7em;
     letter-spacing: 0.22em;
 }
 @media (max-height: 800px) {
-    /* 720p: keep the slightly smaller label so it doesn't crowd the
-       narrower bracket-bar. 0.85em sits a touch below the desktop
-       0.9em to match the cell density on this screen. */
+    /* 720p: proportionally smaller again (~0.65em) so the legend stays
+       balanced against the narrower bracket-bar on the Skyworth panel. */
     .kids-keyboard-key-space .kids-keyboard-space-label {
-        font-size: 0.85em;
+        font-size: 0.65em;
     }
 }
