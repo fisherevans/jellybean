@@ -302,6 +302,13 @@ type Props = {
      *  hands focus to the search input above. The keyboard itself
      *  stays open. */
     onExitUp: () => void;
+    /** Optional initial cursor position. Lets the parent restore the
+     *  kid to the cell they last had focused across keyboard open /
+     *  close cycles. Defaults to row 1 col 1 ("A") on first open. */
+    initialPos?: { row: number; col: number };
+    /** Fired when the internal cursor moves. The parent can stash
+     *  this in a ref so the next open restores the kid's place. */
+    onPosChange?: (pos: { row: number; col: number }) => void;
 };
 
 export default function Keyboard({
@@ -312,15 +319,28 @@ export default function Keyboard({
     focused,
     onExitRight,
     onExitUp,
+    initialPos,
+    onPosChange,
 }: Props) {
     // Default focus: row 1 col 1 = "A". Track by key index for cheap
-    // refs; `pos` is the (row, col) we use for navigation math.
-    const [pos, setPos] = useState<{ row: number; col: number }>({
-        row: 1,
-        col: 1,
+    // refs; `pos` is the (row, col) we use for navigation math. The
+    // parent can seed this with a remembered position (initialPos)
+    // and observe changes (onPosChange) so the kid returns to where
+    // they left off after closing + reopening the keyboard.
+    const [pos, setPos] = useState<{ row: number; col: number }>(() => {
+        if (initialPos) {
+            const idx = OCCUPANCY[initialPos.row - 1]?.[initialPos.col - 1];
+            if (idx !== undefined && idx >= 0) return initialPos;
+        }
+        return { row: 1, col: 1 };
     });
     const posRef = useRef(pos);
     posRef.current = pos;
+    const onPosChangeRef = useRef(onPosChange);
+    onPosChangeRef.current = onPosChange;
+    useEffect(() => {
+        onPosChangeRef.current?.(pos);
+    }, [pos]);
     const valueRef = useRef(value);
     valueRef.current = value;
     const onChangeRef = useRef(onChange);
@@ -588,7 +608,17 @@ export default function Keyboard({
             <div className="kids-keyboard-card">
                 <div className="kids-keyboard-grid">
                     {KEYS.map((k, idx) => {
-                        const focusedCell = focusedKey.id === k.id;
+                        // Gate the per-cell `.focused` class on the
+                        // keyboard pane being the active focus zone.
+                        // Without this gate the previously-focused cell
+                        // (e.g. BACKSPACE) stays lit after the kid
+                        // arrows right into the grid, producing the
+                        // double-highlight reported in t17. The
+                        // internal cursor (`pos`) is still preserved so
+                        // ArrowRight from the grid (or ArrowDown from
+                        // search) returns to the same cell.
+                        const focusedCell =
+                            focused && focusedKey.id === k.id;
                         const style = keyStyles[idx];
                         return (
                             <KeyboardKey

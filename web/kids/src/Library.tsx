@@ -279,6 +279,29 @@ export default function Library() {
     const searchWrapRef = useRef<HTMLDivElement | null>(null);
     const searchInputRef = useRef<HTMLInputElement | null>(null);
     const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+    // Per-pane "last focused position" so ArrowDown from search (or
+    // ArrowRight/ArrowLeft pane crossings) restores the kid to where
+    // they were instead of slamming them back to (0, 0). The keyboard
+    // already preserves its own internal `pos` as long as it stays
+    // mounted, so we don't mirror that here - we only need this for
+    // the grid. lastContentPaneRef remembers which pane below the
+    // controls row was last in use; ArrowDown from search returns
+    // there. Defaults to "keyboard" when the keyboard is open (it
+    // sits directly below the controls), "grid" otherwise.
+    const lastGridFocusRef = useRef<{ section: number; item: number }>({
+        section: 0,
+        item: 0,
+    });
+    const lastKeyboardPosRef = useRef<{ row: number; col: number }>({
+        row: 1,
+        col: 1,
+    });
+    // null = "no history yet, fall back to keyboard if open, grid
+    // otherwise" (the kid hasn't been below the controls row this
+    // session). Set to "grid" or "keyboard" once focus visits one
+    // of those panes.
+    const lastContentPaneRef = useRef<"grid" | "keyboard" | null>(null);
     const [override, setOverride] = useState<{
         itemId: string;
         itemName: string;
@@ -554,10 +577,24 @@ export default function Library() {
     // grid case (focus + scroll on cell change) on its own; the
     // Keyboard owns its internal cursor / DOM focus, so we skip
     // both here.
+    //
+    // When focus leaves "search" for keyboard / grid, we actively
+    // blur the search wrap. The CSS rule `.library-search-wrap:focus`
+    // keeps the white ring visible while the DOM holds focus on the
+    // wrap; without an explicit blur the WebView leaves it there and
+    // the kid sees the search ring AND the keyboard cell highlighted
+    // simultaneously (the t17 stale-highlight bug).
     useEffect(() => {
         if (tabFocused) return;
-        if (focus.kind === "grid") return;
-        if (focus.kind === "keyboard") return;
+        if (focus.kind === "grid" || focus.kind === "keyboard") {
+            if (
+                searchWrapRef.current &&
+                document.activeElement === searchWrapRef.current
+            ) {
+                searchWrapRef.current.blur();
+            }
+            return;
+        }
         if (focus.kind === "search") {
             searchWrapRef.current?.focus({ preventScroll: true });
             stack.scrollToTop();
@@ -570,6 +607,23 @@ export default function Library() {
         if (el) el.focus({ preventScroll: true });
         stack.scrollToTop();
     }, [focus, tabFocused, stack]);
+
+    // Position-memory tracking. Save the grid cursor whenever focus
+    // is on a tile so we can restore it on re-entry from search /
+    // keyboard. lastContentPaneRef records which pane below the
+    // controls row was last used so ArrowDown from search returns
+    // there (rather than always picking keyboard when open).
+    useEffect(() => {
+        if (focus.kind === "grid") {
+            lastGridFocusRef.current = {
+                section: focus.section,
+                item: focus.item,
+            };
+            lastContentPaneRef.current = "grid";
+        } else if (focus.kind === "keyboard") {
+            lastContentPaneRef.current = "keyboard";
+        }
+    }, [focus]);
 
     const wasTabFocused = useRef(true);
     useEffect(() => {
@@ -650,6 +704,15 @@ export default function Library() {
                         openSearch: () => setKeyboardOpen(true),
                     },
                     keyboardOpen,
+                    {
+                        // ArrowDown from search returns to whichever
+                        // content pane the kid was last in. Grid wins
+                        // even when the keyboard is open if they were
+                        // in the grid most recently. Falls back to
+                        // keyboard (when open) or grid (when closed).
+                        lastContentPane: lastContentPaneRef.current,
+                        lastGridFocus: lastGridFocusRef.current,
+                    },
                 ),
             );
         };
@@ -972,17 +1035,30 @@ export default function Library() {
                         setFocus({ kind: "search" });
                     }}
                     focused={focus.kind === "keyboard"}
+                    initialPos={lastKeyboardPosRef.current}
+                    onPosChange={(p) => {
+                        lastKeyboardPosRef.current = p;
+                    }}
                     onExitRight={() => {
                         // ArrowRight off the keyboard's rightmost
-                        // column hands focus to the leftmost grid
-                        // tile. When the grid is empty (no results
-                        // for the current search), there's nothing to
-                        // focus - stay put. The keyboard's own listener
-                        // is gated on `focused`, so once focus.kind
-                        // flips out of "keyboard" we stop intercepting.
+                        // column hands focus into the grid at the
+                        // last-remembered cell (defaulting to (0, 0)
+                        // on first crossover). When the grid is empty
+                        // (no results for the current search), there's
+                        // nothing to focus - stay put. The keyboard's
+                        // own listener is gated on `focused`, so once
+                        // focus.kind flips out of "keyboard" we stop
+                        // intercepting.
                         if (sections.length === 0) return;
                         if (sections[0].items.length === 0) return;
-                        setFocus({ kind: "grid", section: 0, item: 0 });
+                        const m = lastGridFocusRef.current;
+                        const sec = sections[m.section];
+                        const valid = sec && m.item < sec.items.length;
+                        setFocus({
+                            kind: "grid",
+                            section: valid ? m.section : 0,
+                            item: valid ? m.item : 0,
+                        });
                     }}
                     onExitUp={() => {
                         // ArrowUp from the keyboard's top row hands
@@ -1101,19 +1177,30 @@ type ActivateHandlers = {
     openSearch: () => void;
 };
 
+type PositionMemory = {
+    /** null means "the kid hasn't visited a content pane yet this
+     *  session." ArrowDown from search then falls back to keyboard
+     *  (when open) or first grid cell. */
+    lastContentPane: "grid" | "keyboard" | null;
+    lastGridFocus: { section: number; item: number };
+};
+
 // moveControls handles arrow nav within the controls row only. Down
-// from search hands off to the keyboard when open (re-engaging it
-// after the kid arrowed up to the search bar) or to the first grid
-// cell otherwise. Down from filter/sort/jump still goes to the grid -
-// the keyboard isn't to their visual left, so steering them into it
-// would feel arbitrary. Up off the row is handled by the page's
-// keydown listener separately.
+// from search hands off to the pane the kid was last in (grid or
+// keyboard), at the position they last had focused there. When there
+// is no history yet, default to keyboard when it's open (sits directly
+// below the controls row) and to the first grid cell otherwise. Down
+// from filter/sort/jump still goes to the grid - the keyboard isn't
+// to their visual left, so steering them into it would feel
+// arbitrary. Up off the row is handled by the page's keydown listener
+// separately.
 function moveControls(
     f: Focus,
     key: string,
     sections: GridSection<LibraryItem>[],
     h: ActivateHandlers,
     keyboardOpen: boolean,
+    mem: PositionMemory,
 ): Focus {
     if (key === "Enter" || key === " ") {
         if (f.kind === "filter") h.setFilterOpen(true);
@@ -1129,34 +1216,57 @@ function moveControls(
         }
         return f;
     }
-    const firstGrid: Focus | null =
-        sections.length > 0 && sections[0].items.length > 0
-            ? { kind: "grid", section: 0, item: 0 }
-            : null;
+    // Build the "first grid" / "remembered grid" candidate, clamped
+    // against the current sections shape so a stale memory from a
+    // previous filter/sort doesn't overshoot.
+    const rememberedGrid = ((): Focus | null => {
+        if (sections.length === 0) return null;
+        const m = mem.lastGridFocus;
+        const sec = sections[m.section];
+        if (sec && m.item < sec.items.length) {
+            return { kind: "grid", section: m.section, item: m.item };
+        }
+        if (sections[0].items.length === 0) return null;
+        return { kind: "grid", section: 0, item: 0 };
+    })();
     switch (f.kind) {
         case "search":
             if (key === "ArrowLeft") return f;
             if (key === "ArrowRight") return { kind: "filter" };
             if (key === "ArrowDown") {
-                // Re-engage the keyboard if it's open; otherwise fall
-                // through to the grid.
+                // Return to the pane the kid was last in. The
+                // keyboard's own internal `pos` state is preserved
+                // while it stays mounted, so just flipping focus.kind
+                // back to "keyboard" lands them on the same cell they
+                // left. Grid restoration goes through rememberedGrid.
+                //
+                // When there's no history yet (mem.lastContentPane is
+                // null), prefer the keyboard if it's open since it
+                // sits directly below the controls row; fall back to
+                // the first grid cell otherwise.
+                if (mem.lastContentPane === "grid" && rememberedGrid) {
+                    return rememberedGrid;
+                }
+                if (mem.lastContentPane === "keyboard" && keyboardOpen) {
+                    return { kind: "keyboard" };
+                }
                 if (keyboardOpen) return { kind: "keyboard" };
-                return firstGrid ?? f;
+                return rememberedGrid ?? f;
             }
             return f;
         case "filter":
             if (key === "ArrowLeft") return { kind: "search" };
             if (key === "ArrowRight") return { kind: "sort" };
-            if (key === "ArrowDown") return firstGrid ?? f;
+            if (key === "ArrowDown") return rememberedGrid ?? f;
             return f;
         case "sort":
             if (key === "ArrowLeft") return { kind: "filter" };
             if (key === "ArrowRight") return { kind: "alphaBtn" };
-            if (key === "ArrowDown") return firstGrid ?? f;
+            if (key === "ArrowDown") return rememberedGrid ?? f;
             return f;
         case "alphaBtn":
             if (key === "ArrowLeft") return { kind: "sort" };
-            if (key === "ArrowDown") return firstGrid ?? f;
+            if (key === "ArrowDown") return rememberedGrid ?? f;
             return f;
         case "grid":
             // grid arrows are owned by TileGrid; this case never

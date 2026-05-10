@@ -4847,10 +4847,12 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
 }
 
-/* Faint dim on the keyboard while the kid has arrowed out into the
-   grid. Visual cue that the keyboard is parked, not the active focus
-   surface. Subtle (~0.7 opacity) so it stays legible if the kid
-   wants to glance back at what they typed. */
+/* Very faint dim on the keyboard while the kid has arrowed out into
+   the grid. Visual cue that the keyboard is parked, not the active
+   focus surface. t17 raised this from 0.7 to 0.85 - at 0.7 the cells
+   read as "disabled" and the kid loses track of what they typed.
+   0.85 stays legible while still feeling slightly recessed against
+   the focused grid. */
 .library.keyboard-open .kids-keyboard-wrap:not(.kids-keyboard-focused) {
-    opacity: 0.7;
+    opacity: 0.85;
 }
