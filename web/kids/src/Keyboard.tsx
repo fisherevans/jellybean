@@ -6,7 +6,6 @@ import {
     useRef,
     useState,
 } from "react";
-import { createPortal } from "react-dom";
 import {
     Backspace as BackspaceIcon,
     CheckCircle,
@@ -290,6 +289,19 @@ type Props = {
     onChange: (next: string) => void;
     onSubmit: (final: string) => void;
     onClose: () => void;
+    /** When false, the keyboard's window keydown listener stops
+     *  intercepting nav / activation keys (the page or TileGrid owns
+     *  them). The keyboard still renders + shows its current cursor
+     *  position so the kid sees where they'll return to on
+     *  ArrowLeft from the leftmost grid column. */
+    focused: boolean;
+    /** Fired on ArrowRight from the rightmost column (col 6). The
+     *  parent typically hands focus to the leftmost grid tile. */
+    onExitRight: () => void;
+    /** Fired on ArrowUp from the top row (row 1). The parent typically
+     *  hands focus to the search input above. The keyboard itself
+     *  stays open. */
+    onExitUp: () => void;
 };
 
 export default function Keyboard({
@@ -297,6 +309,9 @@ export default function Keyboard({
     onChange,
     onSubmit,
     onClose,
+    focused,
+    onExitRight,
+    onExitUp,
 }: Props) {
     // Default focus: row 1 col 1 = "A". Track by key index for cheap
     // refs; `pos` is the (row, col) we use for navigation math.
@@ -314,6 +329,12 @@ export default function Keyboard({
     onSubmitRef.current = onSubmit;
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
+    const onExitRightRef = useRef(onExitRight);
+    onExitRightRef.current = onExitRight;
+    const onExitUpRef = useRef(onExitUp);
+    onExitUpRef.current = onExitUp;
+    const focusedRef = useRef(focused);
+    focusedRef.current = focused;
 
     // Theme is captured once per keyboard open via useRef so it stays
     // stable through re-renders. New random pick on next open (when
@@ -340,11 +361,14 @@ export default function Keyboard({
     // Move within the grid. dRow/dCol are the desired step; we walk
     // the occupancy matrix until we leave the current key's footprint
     // (so ArrowDown from BACK skips its row-2 cell and lands on
-    // CLEAR). Clamp at edges. The (row, col) tracked here is the
-    // kid's logical cursor: preserving col across span keys (SPACE
-    // covers all 6 cols of row 6) means ArrowDown from "W" lands on
-    // SPACE then on "3", not on "1". The focused-cell render still
-    // highlights the entire span.
+    // CLEAR). On edge: ArrowRight off col 6 hands off to onExitRight,
+    // ArrowUp off row 1 hands off to onExitUp, and the rest clamp
+    // (ArrowLeft / ArrowDown stay inside the keyboard - there's
+    // nothing on those sides of the panel). The (row, col) tracked
+    // here is the kid's logical cursor: preserving col across span
+    // keys (SPACE covers all 6 cols of row 6) means ArrowDown from
+    // "W" lands on SPACE then on "3", not on "1". The focused-cell
+    // render still highlights the entire span.
     const move = useCallback((dRow: number, dCol: number) => {
         const cur = posRef.current;
         const curIdx = OCCUPANCY[cur.row - 1][cur.col - 1];
@@ -354,7 +378,13 @@ export default function Keyboard({
             r += dRow;
             c += dCol;
             if (r < 1 || r > ROWS || c < 1 || c > COLS) {
-                // Edge: clamp and bail.
+                // Edge. Hand off to the parent on right + up; clamp
+                // on left + down.
+                if (dCol > 0) {
+                    onExitRightRef.current();
+                } else if (dRow < 0) {
+                    onExitUpRef.current();
+                }
                 return;
             }
             const idx = OCCUPANCY[r - 1][c - 1];
@@ -408,8 +438,16 @@ export default function Keyboard({
     // Window-level capture-phase listener. Handles every navigation +
     // activation key. preventDefault + stopPropagation across the
     // board so the underlying read-only <input> can't see anything.
+    //
+    // Gated on `focused`: when the kid has arrowed out of the keyboard
+    // (right into the grid, or up into the search input), this
+    // listener becomes a no-op so Library / TileGrid own the keys.
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
+            // Idle when not focused. The keyboard still renders and
+            // shows its current cursor, but doesn't intercept keys -
+            // grid / chrome handlers run instead.
+            if (!focusedRef.current) return;
             const k = e.key;
             // Escape closes the keyboard (desktop testing path).
             // Hardware Back is wired through useProgressiveBack below.
@@ -509,12 +547,14 @@ export default function Keyboard({
         };
     }, [move, activate, commitBackspace]);
 
-    // Route hardware Back through onClose. The Library's own back
-    // handler runs after this one returns false, so the page falls
-    // through to its existing back ladder once we've consumed the
-    // keyboard close.
+    // Route hardware Back through onClose, but only when the kid is
+    // focused on the keyboard. When focus has moved into the grid
+    // (keyboard still open, sitting as a sibling pane), Library's back
+    // handler should fire instead - it returns focus to the search
+    // input rather than closing the keyboard.
     useProgressiveBack(
         useCallback(() => {
+            if (!focusedRef.current) return false;
             onCloseRef.current();
             return true;
         }, []),
@@ -537,12 +577,18 @@ export default function Keyboard({
         });
     }, [theme]);
 
-    return createPortal(
-        <div className="kids-keyboard-wrap" role="dialog" aria-label="Keyboard">
+    // Render inline (no portal). The keyboard is now a real layout
+    // child of Library: it sits in its own column and pushes the grid
+    // to the right rather than overlaying it. The parent positions
+    // the wrap; we just render the card + cells.
+    const wrapClass =
+        "kids-keyboard-wrap" + (focused ? " kids-keyboard-focused" : "");
+    return (
+        <div className={wrapClass} role="dialog" aria-label="Keyboard">
             <div className="kids-keyboard-card">
                 <div className="kids-keyboard-grid">
                     {KEYS.map((k, idx) => {
-                        const focused = focusedKey.id === k.id;
+                        const focusedCell = focusedKey.id === k.id;
                         const style = keyStyles[idx];
                         return (
                             <KeyboardKey
@@ -555,14 +601,13 @@ export default function Keyboard({
                                 colSpan={k.colSpan}
                                 color={style.color}
                                 colorMuted={style.colorMuted}
-                                focused={focused}
+                                focused={focusedCell}
                             />
                         );
                     })}
                 </div>
             </div>
-        </div>,
-        document.body,
+        </div>
     );
 }
 

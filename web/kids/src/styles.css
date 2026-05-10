@@ -4730,3 +4730,127 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
 .library.keyboard-open .library-stack .grid {
     grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
 }
+
+/* ===== Keyboard layout integration (t16) =====
+   Reframes the on-screen keyboard from a position:fixed overlay into
+   a real layout column. When open, the keyboard fills the full
+   vertical space between the search row and the bottom of the
+   viewport, and pushes the grid into the right ~70vw rather than
+   sliding under it. Focus flows between the keyboard and the grid
+   (ArrowLeft / ArrowRight cross the boundary) so the keyboard reads
+   as part of the page rather than a modal that has to be dismissed.
+
+   Earlier blocks (t8 / t13 / t15) above set position:fixed + bottom-
+   left anchoring on .kids-keyboard-wrap. This block is later in the
+   file so its rules win for the .library.keyboard-open path.
+
+   Layout shape:
+     .library                       (position: relative, overflow:hidden)
+       .library-stack               (controls + grid; padding-left
+                                    pushed when keyboard-open)
+       .kids-keyboard-wrap          (sibling of .library-stack,
+                                    absolutely positioned to fill the
+                                    left column from below the search
+                                    row to the viewport bottom)
+
+   The keyboard does NOT scroll with the stack transform - it's
+   anchored to the viewport via position: absolute relative to the
+   library box. The grid scrolls "around" it via the stack's
+   transform, in the right pane. */
+
+.library {
+    position: relative;
+}
+
+/* Override the t8 base rule + the t15 wrap geometry. The wrap is now
+   a layout child of .library, not portaled to body, and stretches
+   from below the controls row to the viewport bottom. */
+.library.keyboard-open .kids-keyboard-wrap {
+    position: absolute;
+    /* Anchor below the controls row. .library-stack's top padding
+       clears the TabPill (~114px); the controls row + its bottom
+       margin add another ~85px. The +0.5rem fudge clears the
+       search-wrap's :focused outline (3px solid + 4px offset) so the
+       keyboard never visually crowds the search ring. */
+    top: calc(var(--kids-tabpill-height, 90px) + 1.5rem + 5.5rem);
+    bottom: 1.5rem;
+    left: 2rem;
+    right: auto;
+    /* ~30vw matches the spec; min-width keeps cells legible on
+       narrower TVs. */
+    width: min(32vw, 600px);
+    min-width: 380px;
+    max-width: none;
+    /* Reset the t8 / t15 paddings - the absolute box owns its own
+       inset spacing now. */
+    padding: 0;
+    z-index: 5;
+    pointer-events: auto;
+}
+
+/* The card stretches to fill the wrap so the cells use the full
+   vertical real estate. Remove the wrap-level inset; the card itself
+   carries the visual padding. */
+.library.keyboard-open .kids-keyboard-card {
+    height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    padding: 1rem;
+    gap: 0;
+}
+
+/* The 6 x 8 inner grid takes all remaining height in the card and
+   stretches its rows evenly (1fr each). Cells grow / shrink with the
+   panel, so the kid sees the keyboard fill the column instead of a
+   short panel hugging the bottom edge. */
+.library.keyboard-open .kids-keyboard-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    grid-template-columns: repeat(6, 1fr);
+    grid-template-rows: repeat(8, 1fr);
+    grid-auto-rows: unset;
+    gap: 0.5rem;
+}
+
+/* Push only the post-controls children of the stack into the right
+   pane. The search row stays full-width across the top per the
+   spec - the keyboard is below it, not under it - and the grid +
+   state messages get a left margin large enough to clear the
+   keyboard column.
+
+   Margin (not padding) is used here so the shifted children inherit
+   the stack's existing padding-left (2rem) as their visual gutter
+   from the page edge, and the margin then adds the keyboard's width
+   on top. Targeting direct children with :not(.library-controls)
+   skips the search row without needing a wrapper div. */
+.library.keyboard-open .library-stack > *:not(.library-controls) {
+    margin-left: calc(min(32vw, 600px) + 1rem);
+}
+
+/* Zero out the t15 padding-left on the same direct-child set (line
+   ~4718). Those rules were trying to do the same job but used
+   padding, which would double up with our margin shift. */
+.library.keyboard-open .library-stack > .library-state,
+.library.keyboard-open .library-stack > .error,
+.library.keyboard-open .library-stack > .kids-offline-pill,
+.library.keyboard-open .library-stack > .library-refresh-error {
+    padding-left: 0;
+}
+
+/* The grid inside the right pane gets the natural auto-fill column
+   count for ~70vw (lands on 4-5 on 1080p). Override the t13 fixed
+   3-col template and the t15 minmax(170px) restate so this single
+   rule is canonical. */
+.library.keyboard-open .library-stack .grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+/* Faint dim on the keyboard while the kid has arrowed out into the
+   grid. Visual cue that the keyboard is parked, not the active focus
+   surface. Subtle (~0.7 opacity) so it stays legible if the kid
+   wants to glance back at what they typed. */
+.library.keyboard-open .kids-keyboard-wrap:not(.kids-keyboard-focused) {
+    opacity: 0.7;
+}
