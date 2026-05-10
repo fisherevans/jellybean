@@ -6,6 +6,11 @@ import {
     useState,
 } from "react";
 import { createPortal } from "react-dom";
+import {
+    Backspace as BackspaceIcon,
+    CheckCircle,
+    Eraser,
+} from "@phosphor-icons/react";
 import { useProgressiveBack } from "./useProgressiveBack";
 
 // Keyboard is a D-pad-driven on-screen keyboard for the kids app.
@@ -13,6 +18,15 @@ import { useProgressiveBack } from "./useProgressiveBack";
 // so search input on Library uses this instead. The component is
 // stateless / controlled - the parent owns `value` and the keyboard
 // only emits changes via the callbacks.
+//
+// Layout (t13):
+//   Rows 0-3: 6 letters each (A-F, G-L, M-R, S-X).
+//   Row 4   : Y Z Space Backspace Clear Done (Space gets flex:2 so it
+//             reads as a wider spacebar; the action keys are icon-only
+//             via Phosphor).
+//   Row 5   : digits 0-9 on their own row.
+// Letters first because kids don't know QWERTY; alphabetical gets them
+// to the right key faster.
 //
 // Navigation:
 //   - ArrowLeft / ArrowRight clamp horizontally within a row (no wrap).
@@ -46,16 +60,19 @@ type KeyKind =
 type Row = KeyKind[];
 
 const ROWS: Row[] = [
-    "QWERTYUIOP".split("").map((c) => ({ kind: "char", label: c, value: c })),
-    "ASDFGHJKL".split("").map((c) => ({ kind: "char", label: c, value: c })),
-    "ZXCVBNM".split("").map((c) => ({ kind: "char", label: c, value: c })),
-    "0123456789".split("").map((c) => ({ kind: "char", label: c, value: c })),
+    "ABCDEF".split("").map((c) => ({ kind: "char", label: c, value: c })),
+    "GHIJKL".split("").map((c) => ({ kind: "char", label: c, value: c })),
+    "MNOPQR".split("").map((c) => ({ kind: "char", label: c, value: c })),
+    "STUVWX".split("").map((c) => ({ kind: "char", label: c, value: c })),
     [
+        { kind: "char", label: "Y", value: "Y" },
+        { kind: "char", label: "Z", value: "Z" },
         { kind: "space" },
         { kind: "backspace" },
         { kind: "clear" },
         { kind: "done" },
     ],
+    "0123456789".split("").map((c) => ({ kind: "char", label: c, value: c })),
 ];
 
 // Held-Backspace repeat: 150ms throttle, time-since-last-event based
@@ -117,8 +134,8 @@ export default function Keyboard({
         let col = cur.col + dCol;
         const targetRow = ROWS[row];
         // When stepping vertically, the source col may be past the
-        // target row's length (e.g. col 9 jumping from "QWERTYUIOP"
-        // into the 4-key controls row). Snap to last valid col.
+        // target row's length (e.g. col 9 from the digits row jumping
+        // up into the 6-key letter rows). Snap to last valid col.
         if (dRow !== 0) {
             col = cur.col;
             if (col >= targetRow.length) col = targetRow.length - 1;
@@ -287,18 +304,14 @@ export default function Keyboard({
         }, []),
     );
 
+    // Suppress lint for unused `value` (we keep it as a controlled
+    // prop so the parent owns truth; the keyboard reads it via
+    // valueRef inside the listener).
+    void value;
+
     return createPortal(
         <div className="kids-keyboard-wrap" role="dialog" aria-label="Keyboard">
             <div className="kids-keyboard-card">
-                <div className="kids-keyboard-preview" aria-live="polite">
-                    {value.length === 0 ? (
-                        <span className="kids-keyboard-preview-placeholder">
-                            Type to search
-                        </span>
-                    ) : (
-                        value
-                    )}
-                </div>
                 <div className="kids-keyboard-rows">
                     {ROWS.map((row, rIdx) => (
                         <div key={rIdx} className="kids-keyboard-row">
@@ -364,7 +377,7 @@ type KeyProps = {
 // Each key is React.memo'd on (kind, label, focused). Callback
 // identity is intentionally absent from the props - clicks go
 // nowhere (D-pad only) and all activation flows through the window
-// keydown handler. With ~50 keys this gates re-render cost to only
+// keydown handler. With ~40 keys this gates re-render cost to only
 // the two keys whose focus state flipped on each arrow press, which
 // matters on the slow Skyworth WebView.
 const KeyboardKey = memo(
@@ -375,7 +388,7 @@ const KeyboardKey = memo(
             (focused ? " focused" : "");
         return (
             <span className={cls} aria-label={label} aria-selected={focused}>
-                {label}
+                {renderKeyContent(kind, label)}
             </span>
         );
     },
@@ -384,3 +397,36 @@ const KeyboardKey = memo(
         prev.label === next.label &&
         prev.focused === next.focused,
 );
+
+// Render the visible content of a key. Char + digit cells show the
+// label; action keys show a Phosphor icon (no text label) sized to
+// the key. Space is a special case: a horizontal bracket-bar shape
+// drawn in CSS with the word "space" inside, mimicking the standard
+// `⎵` glyph at TV scale.
+function renderKeyContent(kind: KeyKind["kind"], label: string) {
+    switch (kind) {
+        case "char":
+            return label;
+        case "space":
+            return (
+                <span className="kids-keyboard-space-glyph" aria-hidden>
+                    <span className="kids-keyboard-space-bar" />
+                    <span className="kids-keyboard-space-label">space</span>
+                </span>
+            );
+        case "backspace":
+            return (
+                <BackspaceIcon
+                    weight="bold"
+                    size="1.6em"
+                    aria-hidden
+                />
+            );
+        case "clear":
+            return <Eraser weight="bold" size="1.6em" aria-hidden />;
+        case "done":
+            return (
+                <CheckCircle weight="fill" size="1.6em" aria-hidden />
+            );
+    }
+}

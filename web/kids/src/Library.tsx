@@ -724,10 +724,24 @@ export default function Library() {
         ]),
     );
 
+    // When the keyboard opens or closes the page reflows (controls +
+    // grid get pushed into the right half). Fire a synthetic resize
+    // so TileGrid's useGridColumns picks up the new computed
+    // grid-template-columns track count instead of staying stuck on
+    // the pre-toggle value.
+    useEffect(() => {
+        // requestAnimationFrame so the class transition + reflow
+        // settle before useGridColumns reads computed style.
+        const id = requestAnimationFrame(() => {
+            window.dispatchEvent(new Event("resize"));
+        });
+        return () => cancelAnimationFrame(id);
+    }, [keyboardOpen]);
+
     if (admin === undefined) return <div className="screen">Loading...</div>;
 
     return (
-        <div className="library">
+        <div className={`library ${keyboardOpen ? "keyboard-open" : ""}`}>
             {adminProfileId && !session && <AdminPreviewBanner />}
             <div ref={stack.stackRef} className="kids-stack library-stack">
 

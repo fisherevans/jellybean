@@ -4415,3 +4415,149 @@ body[data-perf="slow"] .kids-keyboard-key {
 .override-row-disabled:hover {
     background: #1c1c1c;
 }
+
+/* ===== Keyboard refinements (t13) =====
+   Six connected fixes to the on-screen keyboard:
+   1. Solid background so letters stop fighting the rainbow page bg.
+   2. ABCDEF letter layout (kids don't know QWERTY).
+   3. Phosphor icons on action keys (Backspace / Clear / Done).
+   4. Drop the in-keyboard typed-value preview (the search bar above
+      already shows it - redundant clutter).
+   5. Visible borders on every cell so the kid can count cells when
+      D-padding right.
+   6. When open, the keyboard pins to the bottom-LEFT (~42vw) and the
+      page content reflows into the right half with fewer grid cols
+      so tiles stay readable. */
+
+/* Wrap pinned to bottom-left when open, stretched across when closed
+   doesn't matter (it's not rendered). The fixed positioning + width
+   cap leaves the right ~58vw free for the search input + grid. */
+.kids-keyboard-wrap {
+    /* Override the centered flex layout from the t8 base rule: pin
+       to the left edge so the keyboard occupies the left half of
+       the viewport. */
+    justify-content: flex-start;
+    /* Trim right padding - the right half is owned by the page
+       content, not by the keyboard wrap. */
+    padding: 1.5rem 1rem 2rem 2rem;
+    width: 45vw;
+    max-width: 900px;
+    right: auto;
+}
+.kids-keyboard-card {
+    /* Solid panel - the kid's eye should land on the keys, not on
+       the rainbow bleeding through. Slight transparency keeps it
+       feeling layered without sacrificing readability. */
+    background: rgba(20, 18, 30, 0.97);
+    /* Subtle border + shadow for depth against the dark panel. */
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+    /* Keyboard fills the wrap's width when reflow is active. */
+    width: 100%;
+    max-width: none;
+    padding: 1.2rem 1.2rem 1.4rem;
+    gap: 0.55rem;
+}
+.kids-keyboard-rows {
+    gap: 0.55rem;
+}
+.kids-keyboard-row {
+    /* Equal-width cells per row. Letter rows have 6 cells; the mixed
+       row has 6 with Space taking flex:2; the digit row has 10
+       cells. Each cell gets flex:1 so cells distribute evenly inside
+       their own row - rows are slightly different cell widths but
+       borders are independent per cell so the kid still reads them
+       as discrete targets. */
+    gap: 0.55rem;
+}
+
+/* Every key gets a visible border at all times. 25% white opacity
+   reads as a quiet outline against the dark card; the focused-state
+   outline (3px solid white at 95% opacity from .filter-pill.focused)
+   stays the dominant cue. Border lives on the cell, not on a
+   pseudo-element, so paint cost stays close to zero on slow perf. */
+.kids-keyboard-key {
+    flex: 1 1 0;
+    /* The base rule from t8 sets min-width: 4.6rem; that keeps the
+       cell from collapsing to icon-only width when the row has many
+       siblings. We lower it to 0 so the digit row's 10 cells fit
+       cleanly inside the ~45vw wrap. */
+    min-width: 0;
+    padding: 0.85rem 0.5rem;
+    /* Slightly smaller than the t8 1.5rem to leave room for the
+       digit row to fit 10 cells within a 45vw panel. */
+    font-size: 1.35rem;
+    border: 1.5px solid rgba(255, 255, 255, 0.32);
+    /* Solid bg behind each key so the dark panel doesn't bleed
+       through. Subtle tint reads as a button without competing
+       with the focus ring. */
+    background: rgba(255, 255, 255, 0.04);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+/* Wider Space key. flex:2 doubles the cell relative to siblings;
+   the row's flex weights sum to 7 (Y,Z,Space=2,Backspace,Clear,Done)
+   vs 6 for letter rows, which is close enough that the borders
+   read as "in the same column family" without explicit alignment.
+   The bracket-bar glyph below makes the wider cell read as a
+   spacebar even when not perfectly aligned with letter rows. */
+.kids-keyboard-key-space {
+    flex: 2 2 0;
+    min-width: 0;
+}
+/* Reset the t8-era min-widths on backspace/clear/done so they fall
+   back to flex:1 sizing along with letters. */
+.kids-keyboard-key-backspace,
+.kids-keyboard-key-clear,
+.kids-keyboard-key-done {
+    min-width: 0;
+}
+
+/* Standard `⎵` spacebar glyph: a flat bar dropping below a "space"
+   label. Text + icon stack inside the cell; the bar uses currentColor
+   so it inherits the key's white text. */
+.kids-keyboard-space-glyph {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.2rem;
+    width: 100%;
+}
+.kids-keyboard-space-label {
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: lowercase;
+    line-height: 1;
+}
+.kids-keyboard-space-bar {
+    /* Horizontal bracket bar: a thick line with vertical end-caps
+       drawn via border-bottom + left/right borders.  */
+    display: block;
+    width: 65%;
+    height: 0.45rem;
+    border-left: 2px solid currentColor;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    border-top: 0;
+    border-radius: 0 0 3px 3px;
+}
+
+/* Side-by-side reflow: when the keyboard is open the library page's
+   content shifts into the right half. The keyboard wrap is
+   position: fixed so it doesn't push DOM siblings; we reproduce the
+   visual reflow by left-padding the .library-stack to match the
+   keyboard's width + a gap. The grid column count drops to 3 so
+   tiles stay readable in the narrower available width. */
+.library.keyboard-open .library-stack {
+    padding-left: calc(45vw + 1rem);
+}
+/* Override .grid's auto-fill template inside the library stack
+   while the keyboard is open. Three fixed columns reads cleanly
+   in the ~55vw the right side has, and keeps tile faces large
+   enough that posters stay legible. */
+.library.keyboard-open .library-stack .grid {
+    grid-template-columns: repeat(3, 1fr);
+}
