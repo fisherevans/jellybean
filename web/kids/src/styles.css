@@ -5027,3 +5027,155 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
         gap: 0.4rem;
     }
 }
+
+/* ===== Responsive 720p (t20) =====
+   The Skyworth Android TV runs at 1280x720 CSS px. At that size, the
+   default tile + chrome metrics (tuned for desktop dev at 1440-1920+)
+   leave only ~5-6 tiles per row and a fat hero panel that pushes the
+   first row off-screen. Everything below is height-gated so desktop
+   browsers (typically >800px tall) keep the original sizing.
+
+   Height-based detection beats width-based here: most desktop displays
+   are >800px tall, while every TV target we care about is 720p or
+   lower. A 1280x900 laptop window stays on the desktop path; a 1280x720
+   TV gets the dense path.
+
+   Targets at 720p:
+     - Library/TagDetail grid: 7-8 tiles per row (was 6).
+     - Browse rows: ~7 tile widths visible in the row track.
+     - BrowseHero: shorter min-height + slightly smaller text so the
+       first row peeks above the fold.
+     - Tags landscape cards: 2 per row at 1280px wide. */
+@media (max-height: 800px) {
+    :root {
+        /* Tile + cursor metrics. Drops tile-width ~17%, gap ~26%,
+           cursor-x ~30%. Combined: more tiles fit per row, and the
+           focused tile's peek-of-previous still reads at ~33% of the
+           shrunken tile width (matching the desktop ratio). */
+        --browse-tile-width: 150px;
+        --browse-tile-gap: 1.4rem;
+        --browse-cursor-x: 3.5rem;
+    }
+
+    /* Library / TagDetail grid: minmax 170px -> 145px. At 1280px
+       viewport, 1216px stack inner width / 145 ~= 8.3, lands on 8
+       columns. The default + keyboard-open paths both shrink so the
+       grid stays dense even when the keyboard takes the left ~32vw. */
+    .grid {
+        grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+        gap: 1.6rem var(--browse-tile-gap, 1.4rem);
+        padding: 0.75rem 0.75rem 1rem;
+    }
+    .library.keyboard-open .library-stack .grid {
+        /* Right pane ~70vw of 1280 ~= 900px; minmax(140px) lands on 5
+           tracks. Match the default path here too (the earlier
+           keyboard-open block above this media query forces 180/170;
+           override both). */
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    }
+
+    /* Tile titles: dial down to keep the under-poster label tight at
+       smaller widths. */
+    .tile-title {
+        font-size: 1rem;
+    }
+
+    /* BrowseHero: shrink the min-height and fonts so the page chrome
+       (TabPill + hero) leaves room for the first row above the fold.
+       The clamp helpers above already cap line counts, so a lower
+       min-height is safe - empty + full hero variants both fit. */
+    .browse-hero,
+    .browse-hero.browse-hero-empty {
+        min-height: 11rem;
+        padding: 0.5rem var(--browse-cursor-x, 1rem) 0.85rem;
+    }
+    .browse-hero-title {
+        font-size: 2rem;
+    }
+    .browse-hero-meta {
+        font-size: 0.95rem;
+        margin: 0 0 0.4rem;
+    }
+    .browse-hero-overview {
+        font-size: 0.9rem;
+    }
+    .browse-hero-next-ep {
+        margin: 0.45rem 0 0;
+        padding: 0.4rem 0 0;
+    }
+    .browse-hero-next-ep-headline {
+        font-size: 1.05rem;
+    }
+    .browse-hero-next-ep-label {
+        font-size: 0.78rem;
+    }
+
+    /* Browse row titles: smaller so they don't dominate the row. */
+    .browse-row-title {
+        font-size: 1.5rem;
+        margin: 0.5rem 0 0.4rem;
+    }
+
+    /* Tags landscape cards: drop the min-card-width so 2 fit at 1280px
+       (was 700px -> 1 card per row at 1280). The poster strip thumbs
+       also shrink so 3-4 still visible in the right column. */
+    .kids-tags-list {
+        grid-template-columns: repeat(auto-fill, minmax(560px, 1fr));
+        gap: 1rem;
+    }
+    .kids-tag-card {
+        padding: 1rem 1.15rem;
+        gap: 1rem;
+    }
+    .kids-tag-card-title {
+        font-size: 1.5rem;
+        margin: 0 0 0.35rem;
+    }
+    .kids-tag-card-desc {
+        font-size: 0.9rem;
+        margin: 0 0 0.5rem;
+    }
+    .kids-tag-card-poster {
+        width: 68px;
+    }
+
+    /* TagDetail header: smaller title so it doesn't eat as much
+       vertical space above the grid. */
+    .kids-tag-detail-title {
+        font-size: 2rem;
+    }
+    .kids-tag-detail-desc {
+        font-size: 0.95rem;
+    }
+
+    /* Library + Tags stack top padding: tighten so the first row of
+       content lands closer to the TabPill. */
+    .library-stack,
+    .kids-tags-stack,
+    .kids-tag-detail-stack {
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
+    }
+
+    /* TabPill: trim padding + font so the chrome above the grid is
+       smaller. The bottom-margin shrink lets the first row sit higher. */
+    .kids-tabpill {
+        margin: 0 0 0.5rem;
+        padding: 0.5rem 1rem 0;
+    }
+    .kids-tabpill-tab {
+        padding: 0.4rem 1.1rem;
+        font-size: 1rem;
+    }
+    .kids-tabpill-icon {
+        width: 1.3em;
+        height: 1.3em;
+    }
+
+    /* Row title in non-browse contexts (cw strip, library sections). */
+    .row-title {
+        font-size: 1.15rem;
+        margin: 0.75rem 0 0.5rem;
+    }
+}
+
