@@ -65,6 +65,12 @@ func (c *Client) getItemsWith(ctx context.Context, f ItemsFilter, userToken stri
 	if userToken != "" {
 		fields += ",UserData"
 	}
+	// Per-call opt-ins (e.g. Overview for the watch menu). De-duped
+	// trivially since the default set never includes any ExtraFields
+	// values today, but a duplicate would just be a no-op on Jellyfin.
+	if len(f.ExtraFields) > 0 {
+		fields += "," + strings.Join(f.ExtraFields, ",")
+	}
 	q.Set("Fields", fields)
 
 	path := "/Items"

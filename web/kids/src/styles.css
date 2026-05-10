@@ -172,7 +172,8 @@ h2,
 .play-titles h1,
 .kids-empty h1,
 .alpha-picker-title,
-.kids-menu-title {
+.kids-menu-title,
+.watch-season-tab-label {
     font-family: "DynaPuff", "Cause", -apple-system, BlinkMacSystemFont,
         "Segoe UI", Roboto, sans-serif;
     /* DynaPuff has a slightly tighter natural line-height; loosen
@@ -2929,33 +2930,30 @@ body.browse-active {
 .watch-screen {
     position: relative;
     color: var(--fg);
-    /* Let the page fit its actual content. min-height: 100vh was
-       creating an empty bottom band on movies (no accordion to fill
-       below the hero). For series the accordion provides plenty of
-       height; for movies, the page now ends right after the hero. */
+    /* Movies fall through with natural document flow; series lock
+       the viewport so the hero zone (back / poster / actions /
+       next-up / season tabs) can sit pinned at the top while the
+       episode list scrolls beneath via useStackScroll. */
     padding: 1.5rem 2rem 2rem;
 }
-.watch-backdrop {
-    position: absolute;
-    /* Cover the whole .watch-screen, not just the top 60vh - the
-       blurred backdrop becomes the page background instead of fading
-       into a hard-edged grey/black band partway down. */
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    z-index: 0;
-    filter: blur(20px) brightness(0.4);
-    transform: scale(1.05);
+.watch-screen.is-series {
+    padding: 0;
+    height: 100vh;
+    max-height: 100vh;
+    overflow: hidden;
+    /* Three-row grid: hero zone + sticky season tab strip +
+       scrolling episode list. The episode list lives inside a
+       .kids-stack whose translate3d only moves the list itself
+       (the grid rows above stay pinned). */
+    display: grid;
+    grid-template-rows: auto auto 1fr;
 }
-.watch-backdrop-fallback {
-    background: linear-gradient(135deg, #2a2a2a, #111);
-}
-/* Back arrow at the top-left of the watch screen. Same circle
-   visual as the player's .play-back; absolute-positioned over the
-   blurred backdrop so the hero composition isn't pushed down by
-   header chrome. D-pad: ArrowRight reaches the favorite heart;
-   ArrowDown drops to the first hero action. */
+/* Back arrow at the top-left of the watch screen. White-on-dark
+   circle to match .kids-tag-detail-back so the kid sees one
+   consistent "back out of a deep view" affordance across the
+   app. Absolute-positioned over the rainbow bg; D-pad: ArrowRight
+   reaches the favorite heart; ArrowDown drops to the first hero
+   action. */
 .watch-back-btn {
     position: absolute;
     top: 1.25rem;
@@ -2964,24 +2962,26 @@ body.browse-active {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 48px;
-    height: 48px;
+    width: 56px;
+    height: 56px;
     border-radius: 50%;
     background: rgba(0, 0, 0, 0.55);
-    color: var(--fg);
-    border: 1px solid var(--border);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.25);
     cursor: pointer;
     padding: 0;
     transition: background-color 160ms ease, color 160ms ease,
         transform 120ms ease;
 }
+.watch-back-btn svg {
+    width: 1.6em;
+    height: 1.6em;
+}
 .watch-back-btn:focus,
-.watch-back-btn:hover {
-    outline: none;
-    background: var(--accent);
-    color: var(--accent-fg);
-    border-color: transparent;
-    transform: scale(1.05);
+.watch-back-btn.focused {
+    outline: 3px solid rgba(255, 255, 255, 0.95);
+    outline-offset: 4px;
+    background: rgba(0, 0, 0, 0.7);
 }
 
 /* Favorite heart, rendered above the title in the watch hero. Empty
@@ -3025,7 +3025,16 @@ body.browse-active {
     gap: 2rem;
     align-items: end;
     padding-bottom: 2rem;
+}
+.watch-screen.is-movie .watch-hero {
     min-height: 40vh;
+}
+.watch-screen.is-series .watch-hero {
+    /* Pinned at the top of the viewport for the series layout. The
+       episode list scrolls beneath via useStackScroll. */
+    padding: 1.5rem 2rem 1rem;
+    align-items: start;
+    box-sizing: border-box;
 }
 /* Movies have no accordion below the hero, so the screen looked
    top-heavy with the hero crammed into the top-left and a tall
@@ -3134,7 +3143,8 @@ body.browse-active {
     border-color: var(--accent);
     font-weight: 700;
 }
-.watch-action:focus {
+.watch-action:focus,
+.watch-action.focused {
     outline: 3px solid var(--accent);
     outline-offset: 3px;
 }
@@ -3143,85 +3153,53 @@ body.browse-active {
     cursor: progress;
 }
 
-.watch-accordion {
-    position: relative;
-    z-index: 1;
-    margin-top: 1.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-    background: rgba(0, 0, 0, 0.35);
-    border-radius: 12px;
-    padding: 1rem 1.25rem;
-}
-.watch-accordion .muted {
-    color: var(--muted);
-}
-.watch-season {
-    border-bottom: 1px solid var(--border);
-}
-.watch-season:last-child {
-    border-bottom: none;
-}
-.watch-season-head {
-    width: 100%;
-    background: transparent;
-    color: var(--fg);
-    border: none;
-    text-align: left;
-    padding: 0.85rem 0.25rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 1.1rem;
-    cursor: pointer;
-}
-.watch-season-head:focus {
-    outline: 3px solid var(--accent);
-    outline-offset: 2px;
-    border-radius: 6px;
-}
-.watch-season-head.open {
-    color: var(--accent);
-}
-.watch-season-count {
-    color: var(--muted);
-    font-size: 0.9rem;
-}
+/* Episode list: vertical stack of 3-column cards
+   (thumbnail | title+desc | runtime). Thumbnails ~300px wide so
+   the kid can see the artwork at TV viewing distance; descriptions
+   clamp to 3 lines to keep cards uniform. The list lives inside
+   the .kids-stack so useStackScroll's translate3d drives scroll
+   without per-frame full-viewport repaints. */
 .watch-episode-list {
     list-style: none;
     margin: 0;
-    padding: 0;
+    padding: 0 2rem 4rem;
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    padding-bottom: 0.85rem;
+    gap: 0.85rem;
+}
+.watch-episode-empty {
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 1rem;
+    padding: 1rem 0.5rem;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
 }
 .watch-episode {
     width: 100%;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--fg);
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    color: #ffffff;
     text-align: left;
-    padding: 0.6rem;
+    padding: 0.75rem;
     display: grid;
-    grid-template-columns: 160px 1fr;
-    gap: 0.85rem;
+    grid-template-columns: 300px 1fr auto;
+    gap: 1.1rem;
     align-items: center;
     cursor: pointer;
     position: relative;
     overflow: hidden;
+    contain: layout;
 }
-.watch-episode:focus {
-    outline: 3px solid var(--accent);
-    outline-offset: 2px;
+.watch-episode:focus,
+.watch-episode.focused {
+    outline: 3px solid rgba(255, 255, 255, 0.95);
+    outline-offset: 4px;
 }
 .watch-episode-thumb {
-    width: 160px;
+    width: 300px;
     aspect-ratio: 16 / 9;
     object-fit: cover;
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--bg);
 }
 .watch-episode-thumb.placeholder {
@@ -3230,12 +3208,13 @@ body.browse-active {
 .watch-episode-info {
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
+    gap: 0.35rem;
     min-width: 0;
 }
 .watch-episode-title {
-    font-size: 1rem;
+    font-size: 1.15rem;
     line-height: 1.25;
+    color: #ffffff;
     overflow: hidden;
     text-overflow: ellipsis;
     display: -webkit-box;
@@ -3243,10 +3222,28 @@ body.browse-active {
     -webkit-box-orient: vertical;
 }
 .watch-episode-badge {
-    color: var(--muted);
+    color: rgba(255, 255, 255, 0.7);
     font-size: 0.85rem;
     font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
     margin-right: 0.25rem;
+}
+.watch-episode-desc {
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.95rem;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+.watch-episode-runtime {
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.95rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    align-self: center;
+    padding: 0 0.25rem 0 0.5rem;
 }
 /* Watched-state for an episode thumb: dim the artwork like the kid
    tile + stamp a green check in the corner, so a kid scanning the
@@ -3757,26 +3754,17 @@ body[data-perf="slow"] .watch-back-btn,
 body[data-perf="slow"] .watch-fav,
 body[data-perf="slow"] .watch-action,
 body[data-perf="slow"] .watch-episode,
-body[data-perf="slow"] .watch-season-head,
+body[data-perf="slow"] .watch-season-tab-label,
 body[data-perf="slow"] .play-back,
 body[data-perf="slow"] .play-fav {
     transition: none;
 }
 body[data-perf="slow"] .watch-back-btn:focus,
-body[data-perf="slow"] .watch-back-btn:hover,
+body[data-perf="slow"] .watch-back-btn.focused,
 body[data-perf="slow"] .watch-fav:focus,
 body[data-perf="slow"] .watch-fav.focused,
 body[data-perf="slow"] .play-fav:focus,
 body[data-perf="slow"] .play-fav:hover {
-    transform: none;
-}
-/* The watch backdrop's blur is paint-time. On the kid TV that's
-   one chunky frame on mount, but if we're in a particularly
-   degraded state (perf-overlay caught fps < 30), drop the blur
-   entirely - the backdrop becomes a flat dimmed image, which
-   reads as deliberate rather than broken. */
-body[data-perf="slow"] .watch-backdrop {
-    filter: brightness(0.4);
     transform: none;
 }
 
@@ -3927,4 +3915,135 @@ body[data-perf="slow"] .up-next-btn {
     font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
     font-size: 0.8rem;
     color: #e8e8ea;
+}
+
+/* ===== Watch interstitial (t1) =====
+   Sticky season-tab strip + scrolling episode list under the
+   pinned hero zone. The strip lives outside the transformed
+   stack so it stays visible while episodes translate beneath it
+   (position: sticky inside a translate3d parent doesn't work on
+   the kid TV's WebView).
+
+   Layout for the series variant:
+     .watch-screen.is-series  (height:100vh, overflow:hidden)
+       .kids-home-bg
+       .watch-back-btn        (absolute, top-left)
+       .watch-hero            (relative, top of page)
+       .watch-season-tabs     (relative, below hero)
+       .kids-stack            (absolute, fills remaining viewport)
+         .watch-episode-list  (translates inside stack)
+*/
+/* Hero next-up details / movie overview block. Read-only display
+   under the hero actions. Inherits Cause for the body copy;
+   white-on-bg with the same text-shadow halo the rest of the hero
+   uses. */
+.watch-hero-next {
+    margin-top: 1rem;
+    color: #ffffff;
+    max-width: 720px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+}
+.watch-hero-next-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    font-size: 0.95rem;
+    color: rgba(255, 255, 255, 0.85);
+}
+.watch-hero-next-label {
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.95);
+}
+.watch-hero-next-runtime {
+    font-variant-numeric: tabular-nums;
+    color: rgba(255, 255, 255, 0.85);
+}
+.watch-hero-next-title {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #ffffff;
+    line-height: 1.3;
+}
+.watch-hero-next-desc {
+    margin: 0;
+    font-size: 0.95rem;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.9);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+/* Sticky season-tab strip. Horizontally scrolling row of pills,
+   scroll-snap so the active tab can be center-aligned via
+   element.scrollIntoView({inline:"center"}) on focus change.
+   Lives in its own grid row above the episode-list stack, so
+   the strip is naturally pinned without needing position:sticky
+   (which doesn't work inside a translate3d parent on the kid
+   TV's WebView). */
+.watch-season-tabs {
+    position: relative;
+    z-index: 1;
+    padding: 0.25rem 0 0.5rem;
+}
+.watch-season-tabs-scroll {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+    padding: 0.25rem 2rem;
+    /* The focus ring on .filter-pill extends 7px past the pill
+       edge (3px outline + 4px offset). Bottom padding gives that
+       ring breathing room without clipping. */
+    padding-bottom: 0.75rem;
+}
+.watch-season-tabs-scroll::-webkit-scrollbar {
+    display: none;
+}
+.watch-season-tabs-scroll .filter-pill {
+    scroll-snap-align: center;
+    flex: 0 0 auto;
+    /* Slightly tighter than Library's filter pill so a
+       6+ season strip doesn't feel cramped. */
+    padding: 0.5rem 1.1rem;
+    font-size: 1rem;
+}
+
+/* Episode-list scrolling stack. The outer .watch-episode-stack is
+   the third grid row; it clips the translated .kids-stack child
+   so episodes that translate above the row's top edge disappear
+   beneath the season tab strip instead of bleeding into row 2.
+   The .kids-stack-wrapped .watch-episode-stack-inner is what
+   useStackScroll's translate3d() drives. */
+.watch-episode-stack {
+    position: relative;
+    overflow: hidden;
+    min-height: 0;
+}
+.watch-episode-stack-inner {
+    /* The stack is translated; will-change:transform inherited
+       from .kids-stack. */
+}
+.watch-episode-stack-inner .watch-episode-list {
+    padding-top: 0.5rem;
+}
+
+/* DynaPuff'd season tab labels. The selector is included in the
+   global DynaPuff list above; this block tightens the per-pill
+   sizing inside the strip so 6+ seasons fit comfortably. */
+.watch-season-tab-label {
+    /* Inherit color/background from .filter-pill; this rule only
+       exists so the DynaPuff selector list has a clean hook and
+       slow-mode disables transitions on it. */
 }
