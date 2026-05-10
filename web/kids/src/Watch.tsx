@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+    useCallback,
+    useEffect,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import {
     Link,
     useLocation,
@@ -25,13 +32,14 @@ import {
 } from "./auth";
 import { getHomeTab } from "./kidNav";
 import OverrideModal, { useLongPressEnter } from "./OverrideModal";
-import { scrollWindowToCenter, scrollWindowToTop } from "./smoothScroll";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { useKidsResource } from "./useKidsResource";
+import { useStackScroll } from "./useStackScroll";
 
 // Watch menu (M7). Pre-playback interstitial that surfaces a hero
-// (poster + title + Play / Resume / Restart) over a blurred backdrop.
-// Series additionally render an episode-accordion below the hero.
+// (poster + title + Play / Resume / Restart) over the kid app's
+// shared rainbow background. Series get a sticky horizontal season-
+// tab strip + scrolling episode list below the hero.
 //
 // Routing rule (used by Browse + Library tile clicks):
 //   - Series: always /watch/:id (lets the kid pick an episode).
@@ -42,6 +50,18 @@ import { useKidsResource } from "./useKidsResource";
 //
 // Back from /play always lands on /watch (hardware back + the
 // player's onBack share the same handler in Play.tsx).
+//
+// Layout note (series):
+//   .watch-screen.is-series is a 3-row grid (auto / auto / 1fr). The
+//   hero zone (back arrow + poster + title + actions + next-up
+//   details) sits in row 1, the season-tab strip in row 2, and the
+//   .kids-stack-wrapped episode list in row 3 (overflow:hidden).
+//   The episode list translates inside its grid row via
+//   useStackScroll's translate3d - hero + tabs stay naturally
+//   pinned because they're in different grid rows. position:sticky
+//   inside a translate3d parent doesn't work on the kid TV's
+//   WebView, so the grid sibling layout is what keeps the tab
+//   strip "sticky" without sticky semantics.
 
 type Item = Pick<
     SharedItem,
@@ -55,12 +75,13 @@ type Item = Pick<
     | "IsFavorite"
     | "SeriesId"
     | "SeriesName"
->;
+> & { Overview?: string };
 
 type SeriesEpisode = {
     id: string;
     indexNumber?: number;
     name: string;
+    overview?: string;
     runtimeTicks?: number;
     imageTag?: string;
     userData?: ItemUserData;
@@ -75,6 +96,18 @@ type EpisodesResponse = {
 };
 
 const TICKS_PER_MINUTE = 60 * 10_000_000;
+
+// Focus zones for the D-pad state machine. Maintained in component
+// state so cross-zone moves (Down from hero -> episode list, Up from
+// episode 0 -> active season tab) can pick the correct landing index
+// without hunting the DOM. The actual element focus (`focus()`) is
+// applied via refs in a useLayoutEffect.
+type Focus =
+    | { kind: "back" }
+    | { kind: "favorite" }
+    | { kind: "hero"; index: number }
+    | { kind: "seasonTab"; index: number }
+    | { kind: "episode"; index: number };
 
 export default function Watch() {
     const { itemId } = useParams<{ itemId: string }>();
@@ -99,6 +132,7 @@ export default function Watch() {
         itemType?: string;
         productionYear?: number;
         runtimeTicks?: number;
+        overview?: string;
         userData?: ItemUserData;
         seriesId?: string;
         isFavorite?: boolean;
@@ -116,11 +150,6 @@ export default function Watch() {
             `/api/kids/items/${encodeURIComponent(itemId)}`,
             window.location.origin,
         );
-        // Always send adminProfileId when present. The server
-        // prefers admin cookie auth over the bearer token, so a
-        // stale kid session in localStorage doesn't help the admin
-        // preview path - the query param is what tells the server
-        // which profile to scope to.
         if (adminProfileId) {
             url.searchParams.set("profileId", adminProfileId);
         }
@@ -140,6 +169,7 @@ export default function Watch() {
             UserData: itemBody.userData,
             ImageTags: {},
             IsFavorite: itemBody.isFavorite ?? false,
+            Overview: itemBody.overview,
         });
     }, [itemBody]);
 
@@ -155,17 +185,79 @@ export default function Watch() {
         url: episodesURL,
     });
 
+    // Resume target + the season that contains it. Recomputed when
+    // episodes change. The default-selected season tab tracks this.
+    const resumeTarget = useMemo(() => pickResumeTarget(episodes), [episodes]);
+    const resumeSeasonIdx = useMemo(() => {
+        if (!episodes || !resumeTarget) return 0;
+        const idx = episodes.seasons.findIndex((s) =>
+            s.episodes.some((e) => e.id === resumeTarget.episode.id),
+        );
+        return idx >= 0 ? idx : 0;
+    }, [episodes, resumeTarget]);
+
+    // Selected-season tab. Initialized to the resume target's season
+    // once episodes load; the kid can override by D-padding to a
+    // different tab and pressing Enter, at which point the manual
+    // pick wins until they back out and re-enter the page.
+    const [selectedSeasonIdx, setSelectedSeasonIdx] = useState<number>(0);
+    const seasonInitRef = useRef(false);
+    useEffect(() => {
+        if (!episodes || seasonInitRef.current) return;
+        if (episodes.seasons.length === 0) return;
+        setSelectedSeasonIdx(resumeSeasonIdx);
+        seasonInitRef.current = true;
+    }, [episodes, resumeSeasonIdx]);
+
+    const selectedSeason: Season | null =
+        episodes?.seasons[selectedSeasonIdx] ?? null;
+
+    // The default landing episode within the currently-selected
+    // season. If the resume target lives in this season, use its
+    // index; otherwise land on episode 0. Used by the
+    // hero-Down / tab-Down transitions.
+    const defaultEpisodeIdx = useMemo(() => {
+        if (!selectedSeason) return 0;
+        if (
+            resumeTarget &&
+            selectedSeasonIdx === resumeSeasonIdx &&
+            episodes
+        ) {
+            const idx = selectedSeason.episodes.findIndex(
+                (e) => e.id === resumeTarget.episode.id,
+            );
+            if (idx >= 0) return idx;
+        }
+        return 0;
+    }, [
+        selectedSeason,
+        selectedSeasonIdx,
+        resumeSeasonIdx,
+        resumeTarget,
+        episodes,
+    ]);
+
+    const [focus, setFocus] = useState<Focus>({ kind: "hero", index: 0 });
+
+    // Per-page random rainbow-bg offset. Matches Browse / Library /
+    // TagDetail's --kids-bg-offset-y pattern so /watch sits on the
+    // same shared bg layer.
+    useEffect(() => {
+        const offset = Math.floor(Math.random() * 2 * window.innerHeight);
+        document.documentElement.style.setProperty(
+            "--kids-bg-offset-y",
+            `${offset}px`,
+        );
+        document.documentElement.dataset.kidsBgOffsetY = String(offset);
+        document.documentElement.style.removeProperty("--kids-bg-pos-y");
+        return () => {
+            document.documentElement.style.removeProperty("--kids-bg-offset-y");
+            delete document.documentElement.dataset.kidsBgOffsetY;
+        };
+    }, []);
+
     // Adult override gesture (M9): long-press Enter (D-pad center)
-    // on /watch targets the watched item itself - the kid is
-    // reading its details so that's clearly what they'd want to
-    // edit. Hook intercepts Enter via capture-phase listeners and
-    // dispatches: short press = hand-off to the page's normal Enter
-    // handling (Watch's Play button click), long press = open
-    // override. We don't pass onShortPress so the hook's keyup
-    // ends without firing - but that ALSO means the page's own
-    // Enter wouldn't fire either while the hook is enabled. So
-    // for Watch we only want the long-press behavior; short press
-    // should still trigger the focused button. Re-fire that here.
+    // on /watch targets the watched item itself.
     const [override, setOverride] = useState<{
         itemId: string;
         itemName: string;
@@ -177,10 +269,6 @@ export default function Watch() {
     useLongPressEnter({
         enabled: !!item && !!session && override === null,
         onShortPress: () => {
-            // Synthesize a click on whatever button currently has
-            // DOM focus (the Play button, Continue, episode tile,
-            // etc) since the hook's preventDefault suppressed the
-            // browser's natural button-click-on-keyup.
             const el = document.activeElement;
             if (el instanceof HTMLElement) {
                 el.click();
@@ -203,12 +291,7 @@ export default function Watch() {
 
     // Where Back should land: the home tab the kid was last on
     // (browse or library), tracked in sessionStorage by kidNav.ts.
-    // Independent of browser history so this works for refresh,
-    // bookmarks, and Android WebView's flaky goBack(). location.search
-    // is preserved so the admin preview tab stays scoped to the
-    // same profile across the back-nav.
     const backHref = `/${getHomeTab()}${location.search}`;
-    // The error-fallback Link below uses the same target.
     const browseHref = backHref;
     useEffect(() => {
         if (!session && !adminProfileId) {
@@ -216,24 +299,108 @@ export default function Watch() {
         }
     }, [session, adminProfileId, nav]);
 
-    // Zone-aware D-pad nav. Buttons opt into zones via data-zone:
-    //   - "back"      : the back arrow at the top-left.
-    //   - "favorite"  : the heart button above the title.
-    //   - "hero"      : the hero action buttons (Resume / Restart /
-    //                   Next / Random for shows; Play / Restart for
-    //                   movies). Left/Right cycles within. Down
-    //                   crosses to the first accordion item.
-    //   - "accordion" : season heads + visible episode buttons. Up/Down
-    //                   walks them in DOM order.
-    //
-    // Cross-zone transitions:
-    //   back      Right       -> favorite
-    //   back      Down        -> hero[0]
-    //   favorite  Left / Up   -> back
-    //   favorite  Down        -> hero[0]
-    //   hero      Up          -> favorite
-    //   hero      Down        -> accordion[0]
-    //   accordion[0] Up       -> hero[0]
+    // Refs the focus state machine drives. Series has lazily-allocated
+    // arrays for each visible focusable; movies use just the back +
+    // favorite + hero arrays.
+    const backRef = useRef<HTMLButtonElement | null>(null);
+    const favoriteRef = useRef<HTMLButtonElement | null>(null);
+    const heroBtnRefs = useRef<(HTMLButtonElement | null)[]>([]);
+    const seasonTabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+    const episodeRefs = useRef<(HTMLButtonElement | null)[]>([]);
+    const heroPrimaryRef = useRef<HTMLButtonElement | null>(null);
+
+    // Stack scroll for the series episode list. Movies don't use it
+    // (no list to scroll); we still allocate the hook so its
+    // body-class effect fires consistently. The .kids-stack only
+    // wraps the episode list; hero stays outside.
+    const stack = useStackScroll();
+
+    const isSeries = item?.Type === "Series";
+
+    // Reset stack when switching seasons or items.
+    useLayoutEffect(() => {
+        stack.setStackY(0, true);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [item?.Id, selectedSeasonIdx]);
+
+    // Apply the focus state to the DOM. This is the single place
+    // we call element.focus().
+    useLayoutEffect(() => {
+        let el: HTMLElement | null = null;
+        switch (focus.kind) {
+            case "back":
+                el = backRef.current;
+                break;
+            case "favorite":
+                el = favoriteRef.current;
+                break;
+            case "hero":
+                el = heroBtnRefs.current[focus.index] ?? null;
+                if (!el) el = heroPrimaryRef.current;
+                break;
+            case "seasonTab":
+                el = seasonTabRefs.current[focus.index] ?? null;
+                break;
+            case "episode":
+                el = episodeRefs.current[focus.index] ?? null;
+                break;
+        }
+        if (el) el.focus({ preventScroll: true });
+
+        // Per-focus visual scroll. Tabs / hero / back / favorite
+        // pin to the top of the stack (they live outside it, so the
+        // stack only matters for landing back at the top of the
+        // episode list). Episode focus centers the focused row in
+        // the visible episode-list viewport.
+        if (focus.kind === "episode" && el) {
+            stack.scrollToCenter(el);
+        } else if (
+            focus.kind === "back" ||
+            focus.kind === "favorite" ||
+            focus.kind === "hero" ||
+            focus.kind === "seasonTab"
+        ) {
+            stack.scrollToTop(true);
+        }
+
+        // Horizontal: keep focused season tab centered in the strip.
+        if (focus.kind === "seasonTab" && el) {
+            try {
+                el.scrollIntoView({ inline: "center", block: "nearest" });
+            } catch {
+                /* older WebViews */
+            }
+        }
+    }, [focus, stack]);
+
+    // Mount-time focus: land on the primary hero action once item
+    // (and, for series, episodes) have loaded.
+    const initFocusRef = useRef(false);
+    useEffect(() => {
+        if (!item) return;
+        if (item.Type === "Series" && !episodes) return;
+        if (initFocusRef.current) return;
+        initFocusRef.current = true;
+        setFocus({ kind: "hero", index: 0 });
+    }, [item, episodes]);
+
+    // Reset the init guard if the kid navigates to a different
+    // /watch/:id without unmounting (rare, but defensive).
+    useEffect(() => {
+        initFocusRef.current = false;
+    }, [item?.Id]);
+
+    // D-pad state machine. Cross-zone transitions:
+    //   back: Right -> favorite; Down -> hero[0]
+    //   favorite: Left/Up -> back; Down -> hero[0]
+    //   hero: Left/Right within bounds; Up -> favorite;
+    //         Down -> episode[defaultEpisodeIdx] (skip past tabs)
+    //   seasonTab: Left/Right within tabs; Up -> hero[primaryIdx];
+    //              Down -> episode[defaultEpisodeIdx];
+    //              Enter -> select that season (Down then auto-moves)
+    //   episode: Up at idx 0 -> seasonTab[selectedSeasonIdx];
+    //            Up at idx >0 -> episode[idx-1];
+    //            Down -> episode[idx+1] (clamped)
     useEffect(() => {
         if (override) return;
         const handler = (e: KeyboardEvent) => {
@@ -248,132 +415,153 @@ export default function Watch() {
                 return;
             }
             e.preventDefault();
-            const root = document.querySelector(".watch-screen");
-            if (!root) return;
-            const active = document.activeElement as HTMLElement | null;
-            const zone = active?.getAttribute("data-zone") ?? null;
 
             if (e.key === "Enter" || e.key === " ") {
+                if (focus.kind === "seasonTab") {
+                    setSelectedSeasonIdx(focus.index);
+                    return;
+                }
+                const active = document.activeElement as HTMLElement | null;
                 active?.click?.();
                 return;
             }
 
-            const heroBtns = Array.from(
-                root.querySelectorAll<HTMLElement>('[data-zone="hero"]'),
-            ).filter((el) => el.offsetParent !== null);
-            const accBtns = Array.from(
-                root.querySelectorAll<HTMLElement>('[data-zone="accordion"]'),
-            ).filter((el) => el.offsetParent !== null);
-            const favBtn = root.querySelector<HTMLElement>(
-                '[data-zone="favorite"]',
-            );
-            const backBtn = root.querySelector<HTMLElement>(
-                '[data-zone="back"]',
-            );
+            const heroCount = heroBtnRefs.current.filter(Boolean).length;
+            const seasonCount = episodes?.seasons.length ?? 0;
+            const epCount = selectedSeason?.episodes.length ?? 0;
 
-            let next: HTMLElement | null = null;
-
-            if (zone === "back") {
-                if (e.key === "ArrowRight") next = favBtn ?? heroBtns[0] ?? null;
-                else if (e.key === "ArrowDown") next = heroBtns[0] ?? null;
-            } else if (zone === "favorite") {
-                if (e.key === "ArrowLeft") next = backBtn ?? null;
-                else if (e.key === "ArrowUp") next = backBtn ?? null;
-                else if (e.key === "ArrowDown") next = heroBtns[0] ?? null;
-            } else if (zone === "hero") {
-                const idx = active ? heroBtns.indexOf(active) : -1;
-                if (e.key === "ArrowLeft") {
-                    next = heroBtns[Math.max(0, idx - 1)] ?? null;
-                } else if (e.key === "ArrowRight") {
-                    next = heroBtns[Math.min(heroBtns.length - 1, idx + 1)] ?? null;
-                } else if (e.key === "ArrowUp") {
-                    next = favBtn ?? backBtn ?? null;
-                } else if (e.key === "ArrowDown") {
-                    next = accBtns[0] ?? null;
-                }
-            } else if (zone === "accordion") {
-                const idx = active ? accBtns.indexOf(active) : -1;
-                if (e.key === "ArrowUp") {
-                    if (idx <= 0) next = heroBtns[0] ?? null;
-                    else next = accBtns[idx - 1] ?? null;
-                } else if (e.key === "ArrowDown") {
-                    if (idx >= 0 && idx < accBtns.length - 1) {
-                        next = accBtns[idx + 1] ?? null;
+            switch (focus.kind) {
+                case "back": {
+                    if (e.key === "ArrowRight") {
+                        setFocus({ kind: "favorite" });
+                    } else if (e.key === "ArrowDown") {
+                        setFocus({ kind: "hero", index: 0 });
                     }
+                    return;
                 }
-            } else {
-                // No active zone yet (e.g. body-focused). Land on the
-                // primary hero button.
-                next = heroBtns[0] ?? null;
-            }
-
-            if (next) {
-                next.focus({ preventScroll: true });
-                const nextZone = next.getAttribute("data-zone");
-                if (
-                    nextZone === "hero" ||
-                    nextZone === "favorite" ||
-                    nextZone === "back"
-                ) {
-                    scrollWindowToTop();
-                } else {
-                    scrollWindowToCenter(next);
+                case "favorite": {
+                    if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                        setFocus({ kind: "back" });
+                    } else if (e.key === "ArrowDown") {
+                        setFocus({ kind: "hero", index: 0 });
+                    }
+                    return;
+                }
+                case "hero": {
+                    const idx = focus.index;
+                    if (e.key === "ArrowLeft") {
+                        setFocus({ kind: "hero", index: Math.max(0, idx - 1) });
+                    } else if (e.key === "ArrowRight") {
+                        setFocus({
+                            kind: "hero",
+                            index: Math.min(heroCount - 1, idx + 1),
+                        });
+                    } else if (e.key === "ArrowUp") {
+                        setFocus({ kind: "favorite" });
+                    } else if (e.key === "ArrowDown") {
+                        if (isSeries && epCount > 0) {
+                            setFocus({
+                                kind: "episode",
+                                index: Math.min(epCount - 1, defaultEpisodeIdx),
+                            });
+                        }
+                    }
+                    return;
+                }
+                case "seasonTab": {
+                    const idx = focus.index;
+                    if (e.key === "ArrowLeft") {
+                        setFocus({
+                            kind: "seasonTab",
+                            index: Math.max(0, idx - 1),
+                        });
+                    } else if (e.key === "ArrowRight") {
+                        setFocus({
+                            kind: "seasonTab",
+                            index: Math.min(seasonCount - 1, idx + 1),
+                        });
+                    } else if (e.key === "ArrowUp") {
+                        setFocus({ kind: "hero", index: 0 });
+                    } else if (e.key === "ArrowDown") {
+                        // Treat Down as commit-then-descend: pick this
+                        // season first, then drop into its episode list
+                        // at the season's default index.
+                        setSelectedSeasonIdx(idx);
+                        // We don't know the new season's epCount until
+                        // it renders; setting episode focus to 0 is
+                        // safe because every season has at least one
+                        // episode (otherwise it wouldn't be in the
+                        // tab list).
+                        setFocus({ kind: "episode", index: 0 });
+                    }
+                    return;
+                }
+                case "episode": {
+                    const idx = focus.index;
+                    if (e.key === "ArrowUp") {
+                        if (idx <= 0) {
+                            setFocus({
+                                kind: "seasonTab",
+                                index: selectedSeasonIdx,
+                            });
+                        } else {
+                            setFocus({
+                                kind: "episode",
+                                index: idx - 1,
+                            });
+                        }
+                    } else if (e.key === "ArrowDown") {
+                        if (idx < epCount - 1) {
+                            setFocus({
+                                kind: "episode",
+                                index: idx + 1,
+                            });
+                        }
+                    }
+                    // Left/Right within the episode list is a no-op;
+                    // tabs are reached only by Up.
+                    return;
                 }
             }
         };
         window.addEventListener("keydown", handler);
         return () => window.removeEventListener("keydown", handler);
-    }, [override]);
+    }, [
+        focus,
+        episodes,
+        selectedSeason,
+        selectedSeasonIdx,
+        defaultEpisodeIdx,
+        isSeries,
+        override,
+    ]);
 
-    // Hardware Back: explicit nav to wherever the kid came from
-    // (?from=browse|library). Same reasoning as handleBackClick.
+    // Hardware Back ladder. Order matters:
+    //   1. Override modal -> close it.
+    //   2. Inside episode list / on a season tab -> climb back to
+    //      the primary hero action (so Back from episodes feels like
+    //      "back to the top of this page" instead of "back to the
+    //      previous page").
+    //   3. Otherwise -> navigate to backHref (browse/library).
     useProgressiveBack(
         useCallback(() => {
             if (override) {
                 setOverride(null);
                 return true;
             }
+            if (focus.kind === "episode" || focus.kind === "seasonTab") {
+                setFocus({ kind: "hero", index: 0 });
+                return true;
+            }
             nav(backHref);
             return true;
-        }, [override, nav, backHref]),
+        }, [override, focus, nav, backHref]),
     );
-
-    // On mount, defensively focus the primary hero button + scroll
-    // to top. We wait for both `item` AND (for series) `episodes`
-    // because the primary hero button only renders once episodes
-    // have loaded for series - waiting for item alone landed focus
-    // on a still-disabled "Loading episodes..." button or fell
-    // through to the last accordion episode in DOM order, scrolling
-    // the page to the bottom.
-    useEffect(() => {
-        if (!item) return;
-        if (item.Type === "Series" && !episodes) return;
-        const id = requestAnimationFrame(() => {
-            const root = document.querySelector(".watch-screen");
-            if (!root) return;
-            const heroBtn = root.querySelector<HTMLElement>(
-                '[data-zone="hero"]:not([disabled])',
-            );
-            heroBtn?.focus({ preventScroll: true });
-            scrollWindowToTop();
-        });
-        return () => cancelAnimationFrame(id);
-    }, [item?.Id, episodes]);
-
-    // No auto-skip: /watch always renders the menu. Earlier we tried
-    // to keep the "tile click -> play immediately" UX for fresh
-    // movies by auto-pushing /play, but every approach to "remember
-    // we already skipped this entry on the back-visit" was unreliable
-    // on Android WebView (state.skipDone was dropped on goBack(),
-    // location.key wasn't always preserved either). The result was a
-    // /watch -> /play loop on Back. Keeping the menu in the forward
-    // path costs the kid one extra tap on fresh movies but makes
-    // navigation predictable: Back always lands on /watch with the
-    // menu, Back again lands on Browse.
 
     if (error) {
         return (
             <div className="kids-page kids-error">
+                <div className="kids-home-bg" aria-hidden />
                 <p className="error">{error}</p>
                 <Link to={browseHref}>Back home</Link>
             </div>
@@ -382,6 +570,7 @@ export default function Watch() {
     if (!item) {
         return (
             <div className="kids-page kids-loading">
+                <div className="kids-home-bg" aria-hidden />
                 <p>Loading…</p>
             </div>
         );
@@ -394,17 +583,14 @@ export default function Watch() {
         nav(`/play/${encodeURIComponent(id)}${qs ? "?" + qs : ""}`);
     };
 
-    const isSeries = item.Type === "Series";
     const pct = item.UserData?.PlayedPercentage ?? 0;
     const inProgress = pct >= 5 && pct < 90;
     const completed = pct >= 90 || (item.UserData?.Played ?? false);
 
     const isFavorite = item.IsFavorite ?? false;
     const toggleFavorite = async () => {
-        if (!session) return; // admin preview - server returns 403 anyway
+        if (!session) return;
         const next = !isFavorite;
-        // Optimistic update so the heart flips immediately on the cheap
-        // WebView. Roll back on server error.
         setItem((prev) => (prev ? { ...prev, IsFavorite: next } : prev));
         try {
             const res = await withAuthRetry(() =>
@@ -430,23 +616,18 @@ export default function Watch() {
     };
 
     const handleBackClick = () => {
-        // Forward-nav to wherever the kid came from (?from=browse|
-        // library). nav(-1) was unreliable on Android WebView's
-        // goBack() history (back from /watch sometimes no-oped,
-        // sometimes landed on /play). Explicit nav is consistent;
-        // the destination's sessionStorage cache restores focus +
-        // scroll across the new entry.
         nav(backHref);
     };
 
     return (
         <div className={`watch-screen ${isSeries ? "is-series" : "is-movie"}`}>
-            <BackdropImage itemId={item.Id} />
+            <div className="kids-home-bg" aria-hidden />
             <button
                 type="button"
-                className="watch-back-btn"
+                ref={backRef}
+                className={`watch-back-btn ${focus.kind === "back" ? "focused" : ""}`}
                 onClick={handleBackClick}
-                data-zone="back"
+                onFocus={() => setFocus({ kind: "back" })}
                 aria-label="Back"
             >
                 <ArrowLeft weight="fill" size={32} aria-hidden />
@@ -456,10 +637,15 @@ export default function Watch() {
                 <div className="watch-hero-text">
                     <button
                         type="button"
-                        className={`watch-fav ${isFavorite ? "active" : ""}`}
+                        ref={favoriteRef}
+                        className={`watch-fav ${isFavorite ? "active" : ""} ${focus.kind === "favorite" ? "focused" : ""}`}
                         onClick={toggleFavorite}
-                        data-zone="favorite"
-                        aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+                        onFocus={() => setFocus({ kind: "favorite" })}
+                        aria-label={
+                            isFavorite
+                                ? "Remove from favorites"
+                                : "Add to favorites"
+                        }
                         aria-pressed={isFavorite}
                     >
                         <Heart
@@ -477,10 +663,16 @@ export default function Watch() {
                     <div className="watch-actions">
                         {!isSeries && inProgress && (
                             <button
-                                className="watch-action primary"
+                                ref={(el) => {
+                                    heroBtnRefs.current[0] = el;
+                                    heroPrimaryRef.current = el;
+                                }}
+                                type="button"
+                                className={`watch-action primary ${focus.kind === "hero" && focus.index === 0 ? "focused" : ""}`}
                                 onClick={() => goPlay(item.Id)}
-                                autoFocus
-                                data-zone="hero"
+                                onFocus={() =>
+                                    setFocus({ kind: "hero", index: 0 })
+                                }
                             >
                                 <Play weight="fill" aria-hidden />
                                 Resume
@@ -488,21 +680,36 @@ export default function Watch() {
                         )}
                         {!isSeries && completed && (
                             <button
-                                className="watch-action primary"
+                                ref={(el) => {
+                                    heroBtnRefs.current[0] = el;
+                                    heroPrimaryRef.current = el;
+                                }}
+                                type="button"
+                                className={`watch-action primary ${focus.kind === "hero" && focus.index === 0 ? "focused" : ""}`}
                                 onClick={() => goPlay(item.Id, true)}
-                                autoFocus
-                                data-zone="hero"
+                                onFocus={() =>
+                                    setFocus({ kind: "hero", index: 0 })
+                                }
                             >
-                                <ArrowCounterClockwise weight="fill" aria-hidden />
+                                <ArrowCounterClockwise
+                                    weight="fill"
+                                    aria-hidden
+                                />
                                 Watch again
                             </button>
                         )}
                         {!isSeries && !inProgress && !completed && (
                             <button
-                                className="watch-action primary"
+                                ref={(el) => {
+                                    heroBtnRefs.current[0] = el;
+                                    heroPrimaryRef.current = el;
+                                }}
+                                type="button"
+                                className={`watch-action primary ${focus.kind === "hero" && focus.index === 0 ? "focused" : ""}`}
                                 onClick={() => goPlay(item.Id)}
-                                autoFocus
-                                data-zone="hero"
+                                onFocus={() =>
+                                    setFocus({ kind: "hero", index: 0 })
+                                }
                             >
                                 <Play weight="fill" aria-hidden />
                                 Play
@@ -510,31 +717,106 @@ export default function Watch() {
                         )}
                         {!isSeries && (inProgress || completed) && (
                             <button
-                                className="watch-action"
+                                ref={(el) => {
+                                    heroBtnRefs.current[1] = el;
+                                }}
+                                type="button"
+                                className={`watch-action ${focus.kind === "hero" && focus.index === 1 ? "focused" : ""}`}
                                 onClick={() => goPlay(item.Id, true)}
-                                data-zone="hero"
+                                onFocus={() =>
+                                    setFocus({ kind: "hero", index: 1 })
+                                }
                             >
-                                <ArrowCounterClockwise weight="fill" aria-hidden />
+                                <ArrowCounterClockwise
+                                    weight="fill"
+                                    aria-hidden
+                                />
                                 Restart
                             </button>
                         )}
                         {isSeries && (
                             <SeriesHeroActions
-                                series={item}
                                 episodes={episodes}
+                                resumeTarget={resumeTarget}
+                                heroBtnRefs={heroBtnRefs}
+                                heroPrimaryRef={heroPrimaryRef}
+                                focus={focus}
+                                setFocus={setFocus}
                                 onPlay={(epID, opts) =>
                                     goPlay(epID, opts?.restart ?? false)
                                 }
                             />
                         )}
                     </div>
+                    {/* Movie variant: read-only details block under the
+                        actions. Mirrors the series next-up details
+                        styling for visual consistency. */}
+                    {!isSeries && (
+                        <DetailsBlock
+                            label={
+                                item.RunTimeTicks
+                                    ? formatRuntime(item.RunTimeTicks)
+                                    : ""
+                            }
+                            description={item.Overview}
+                        />
+                    )}
+                    {/* Series next-up details: episode label + runtime
+                        + synopsis for the resume target. Only renders
+                        when there's a target (always true once
+                        episodes have loaded for any non-empty series). */}
+                    {isSeries && resumeTarget && (
+                        <DetailsBlock
+                            label={
+                                resumeTarget.episode.indexNumber !== undefined
+                                    ? `Episode ${resumeTarget.episode.indexNumber}`
+                                    : "Up next"
+                            }
+                            secondary={
+                                resumeTarget.episode.runtimeTicks
+                                    ? formatRuntime(
+                                          resumeTarget.episode.runtimeTicks,
+                                      )
+                                    : ""
+                            }
+                            title={resumeTarget.episode.name}
+                            description={resumeTarget.episode.overview}
+                        />
+                    )}
                 </div>
             </div>
-            {isSeries && (
-                <EpisodeAccordion
-                    response={episodes}
-                    onPlay={(epID) => goPlay(epID)}
+            {isSeries && episodes && episodes.seasons.length > 0 && (
+                <SeasonTabStrip
+                    seasons={episodes.seasons}
+                    selectedIdx={selectedSeasonIdx}
+                    focusedIdx={
+                        focus.kind === "seasonTab" ? focus.index : null
+                    }
+                    onTabFocus={(idx) =>
+                        setFocus({ kind: "seasonTab", index: idx })
+                    }
+                    onTabClick={(idx) => {
+                        setSelectedSeasonIdx(idx);
+                        setFocus({ kind: "seasonTab", index: idx });
+                    }}
+                    tabRefs={seasonTabRefs}
                 />
+            )}
+            {isSeries && (
+                <div className="watch-episode-stack">
+                    <div
+                        ref={stack.stackRef}
+                        className="kids-stack watch-episode-stack-inner"
+                    >
+                        <EpisodeList
+                            season={selectedSeason}
+                            focus={focus}
+                            setFocus={setFocus}
+                            episodeRefs={episodeRefs}
+                            onPlay={(epID) => goPlay(epID)}
+                        />
+                    </div>
+                </div>
             )}
             {override && (
                 <OverrideModal
@@ -551,29 +833,11 @@ export default function Watch() {
     );
 }
 
-function BackdropImage({ itemId }: { itemId: string }) {
-    const [failed, setFailed] = useState(false);
-    if (failed) {
-        return <div className="watch-backdrop watch-backdrop-fallback" aria-hidden />;
-    }
-    return (
-        <img
-            className="watch-backdrop"
-            src={`/api/kids/items/${encodeURIComponent(itemId)}/image?type=Backdrop&width=1920${imageAuthSuffix()}`}
-            alt=""
-            aria-hidden
-            onError={() => setFailed(true)}
-        />
-    );
-}
-
 // Poster renders the hero image for the watch screen. Movies get the
 // vertical Primary poster (Jellyfin's standard 2:3); series get the
-// landscape Backdrop so the hero is shorter and the episode accordion
-// gets more vertical real estate. Backdrop is always available for
-// series in our library (BackdropImage above already relies on it).
-// On Backdrop fetch failure (rare - admin uploaded only Primary?),
-// we fall back to Primary so the kid still sees something.
+// landscape Backdrop so the hero is shorter. On Backdrop fetch
+// failure (rare - admin uploaded only Primary?), we fall back to
+// Primary so the kid still sees something.
 function Poster({ id, isSeries }: { id: string; isSeries: boolean }) {
     const type = isSeries ? "Backdrop" : "Primary";
     const width = isSeries ? 720 : 480;
@@ -597,24 +861,34 @@ function Poster({ id, isSeries }: { id: string; isSeries: boolean }) {
 }
 
 type SeriesHeroActionsProps = {
-    series: Item;
     episodes: EpisodesResponse | null;
+    resumeTarget: { episode: SeriesEpisode; label: string } | null;
+    heroBtnRefs: React.MutableRefObject<(HTMLButtonElement | null)[]>;
+    heroPrimaryRef: React.MutableRefObject<HTMLButtonElement | null>;
+    focus: Focus;
+    setFocus: (f: Focus) => void;
     onPlay: (id: string, opts?: { restart?: boolean }) => void;
 };
 
-// Series hero shows up to three buttons:
-//   - Resume / Continue / Watch again (primary)
-//   - Restart (secondary, only when there's a "where the kid left off"
-//     position to restart - i.e., in-progress or completed)
-//   - Next (secondary, plays the episode AFTER the resume target so
-//     the kid can skip past whatever's currently in-progress)
-function SeriesHeroActions({ episodes, onPlay }: SeriesHeroActionsProps) {
-    const target = useMemo(() => pickResumeTarget(episodes), [episodes]);
+// Series hero shows up to four buttons (in this order):
+//   - Play / Resume / Watch again (primary, index 0)
+//   - Restart (secondary, index 1) when there's a position to restart
+//   - Next (secondary) when a strict-next episode exists
+//   - Random (secondary) always
+function SeriesHeroActions({
+    episodes,
+    resumeTarget,
+    heroBtnRefs,
+    heroPrimaryRef,
+    focus,
+    setFocus,
+    onPlay,
+}: SeriesHeroActionsProps) {
     const next = useMemo(
-        () => pickNextEpisode(episodes, target?.episode.id),
-        [episodes, target?.episode.id],
+        () => pickNextEpisode(episodes, resumeTarget?.episode.id),
+        [episodes, resumeTarget?.episode.id],
     );
-    if (!target) {
+    if (!resumeTarget) {
         return (
             <button className="watch-action primary" disabled>
                 Loading episodes…
@@ -631,45 +905,86 @@ function SeriesHeroActions({ episodes, onPlay }: SeriesHeroActionsProps) {
         const pick = flat[Math.floor(Math.random() * flat.length)];
         onPlay(pick.id);
     };
+    const heroFocused = (idx: number) =>
+        focus.kind === "hero" && focus.index === idx;
+    let i = 0;
+    const primaryIdx = i++;
+    const restartIdx = i++;
+    const nextIdx = next ? i++ : -1;
+    const randomIdx = i++;
     return (
         <>
             <button
-                className="watch-action primary"
-                onClick={() => onPlay(target.episode.id)}
-                autoFocus
-                data-zone="hero"
+                ref={(el) => {
+                    heroBtnRefs.current[primaryIdx] = el;
+                    heroPrimaryRef.current = el;
+                }}
+                type="button"
+                className={`watch-action primary ${heroFocused(primaryIdx) ? "focused" : ""}`}
+                onClick={() => onPlay(resumeTarget.episode.id)}
+                onFocus={() => setFocus({ kind: "hero", index: primaryIdx })}
             >
                 <Play weight="fill" aria-hidden />
-                {target.label}
+                {expandResumeLabel(resumeTarget)}
             </button>
             <button
-                className="watch-action"
-                onClick={() => onPlay(target.episode.id, { restart: true })}
-                data-zone="hero"
+                ref={(el) => {
+                    heroBtnRefs.current[restartIdx] = el;
+                }}
+                type="button"
+                className={`watch-action ${heroFocused(restartIdx) ? "focused" : ""}`}
+                onClick={() => onPlay(resumeTarget.episode.id, { restart: true })}
+                onFocus={() => setFocus({ kind: "hero", index: restartIdx })}
             >
                 <ArrowCounterClockwise weight="fill" aria-hidden />
                 Restart
             </button>
-            {next && (
+            {next && nextIdx >= 0 && (
                 <button
-                    className="watch-action"
+                    ref={(el) => {
+                        heroBtnRefs.current[nextIdx] = el;
+                    }}
+                    type="button"
+                    className={`watch-action ${heroFocused(nextIdx) ? "focused" : ""}`}
                     onClick={() => onPlay(next.id)}
-                    data-zone="hero"
+                    onFocus={() => setFocus({ kind: "hero", index: nextIdx })}
                 >
                     <SkipForward weight="fill" aria-hidden />
                     Next ({epLabel(next)})
                 </button>
             )}
             <button
-                className="watch-action"
+                ref={(el) => {
+                    heroBtnRefs.current[randomIdx] = el;
+                }}
+                type="button"
+                className={`watch-action ${heroFocused(randomIdx) ? "focused" : ""}`}
                 onClick={playRandom}
-                data-zone="hero"
+                onFocus={() => setFocus({ kind: "hero", index: randomIdx })}
             >
                 <Shuffle weight="fill" aria-hidden />
                 Random
             </button>
         </>
     );
+}
+
+// expandResumeLabel turns the resume target's terse label into the
+// expanded "Play Episode 2" / "Resume Episode 2" form for the hero
+// CTA. Card badges still use the abbreviated "S1E03" form via
+// epLabel().
+function expandResumeLabel(target: {
+    episode: SeriesEpisode;
+    label: string;
+}): string {
+    const idx = target.episode.indexNumber;
+    if (target.label.startsWith("Resume")) {
+        return idx !== undefined ? `Resume Episode ${idx}` : "Resume";
+    }
+    if (target.label.startsWith("Play")) {
+        return idx !== undefined ? `Play Episode ${idx}` : "Play";
+    }
+    return target.label; // "Watch again"
 }
 
 function pickNextEpisode(
@@ -690,10 +1005,6 @@ function pickResumeTarget(
     response: EpisodesResponse | null,
 ): { episode: SeriesEpisode; label: string } | null {
     if (!response) return null;
-    // Pick the first in-progress episode (5-90% played) when there is
-    // one. Else pick the first unwatched - that's a "Play" since it
-    // has no progress on the target itself. Else (every episode
-    // completed), default to "Watch again" on the first.
     const flat: SeriesEpisode[] = [];
     for (const s of response.seasons) {
         for (const e of s.episodes) flat.push(e);
@@ -725,160 +1036,244 @@ function epLabel(e: SeriesEpisode): string {
     return `E${(e.indexNumber ?? 0).toString().padStart(2, "0")}`;
 }
 
-type EpisodeAccordionProps = {
-    response: EpisodesResponse | null;
-    onPlay: (id: string) => void;
-};
-
-function EpisodeAccordion({ response, onPlay }: EpisodeAccordionProps) {
-    const [openSeason, setOpenSeason] = useState<number | null>(null);
-    // userToggled tracks whether the kid has manually clicked a season
-    // head. Once they have, the auto-pick effect bails so closing a
-    // season doesn't immediately spring it back open. Without this
-    // gate, the auto-open effect re-fired any time openSeason became
-    // null (which is exactly what closing does).
-    const [userToggled, setUserToggled] = useState(false);
-
-    // Pick the season containing the resume target as the default-
-    // open one when episodes load. Only runs before the kid has
-    // interacted - their manual choice wins after that.
-    useEffect(() => {
-        if (!response || userToggled || openSeason !== null) return;
-        const target = pickResumeTarget(response);
-        if (!target) {
-            setOpenSeason(response.seasons[0]?.seasonNumber ?? null);
-            return;
-        }
-        const season = response.seasons.find((s) =>
-            s.episodes.some((e) => e.id === target.episode.id),
-        );
-        setOpenSeason(season?.seasonNumber ?? response.seasons[0]?.seasonNumber ?? null);
-    }, [response, openSeason, userToggled]);
-
-    if (!response) {
-        return (
-            <div className="watch-accordion">
-                <p className="muted">Loading episodes…</p>
-            </div>
-        );
-    }
-    if (response.seasons.length === 0) {
-        return (
-            <div className="watch-accordion">
-                <p className="muted">No episodes available.</p>
-            </div>
-        );
-    }
-
+// DetailsBlock renders a read-only "next up" / movie-overview block
+// under the hero actions. Not focusable.
+function DetailsBlock({
+    label,
+    secondary,
+    title,
+    description,
+}: {
+    label?: string;
+    secondary?: string;
+    title?: string;
+    description?: string;
+}) {
+    if (!label && !secondary && !title && !description) return null;
     return (
-        <section className="watch-accordion">
-            {response.seasons.map((s) => {
-                const isOpen = openSeason === s.seasonNumber;
-                const label =
-                    s.seasonNumber === 0
-                        ? "Specials"
-                        : s.seasonNumber === -1
-                          ? "Other"
-                          : `Season ${s.seasonNumber}`;
-                return (
-                    <div key={s.seasonNumber} className="watch-season">
-                        <button
-                            type="button"
-                            className={`watch-season-head ${isOpen ? "open" : ""}`}
-                            data-zone="accordion"
-                            onClick={() => {
-                                setUserToggled(true);
-                                setOpenSeason(isOpen ? null : s.seasonNumber);
-                            }}
-                        >
-                            <span>{label}</span>
-                            <span className="watch-season-count">
-                                {s.episodes.length} episode
-                                {s.episodes.length === 1 ? "" : "s"}
-                            </span>
-                        </button>
-                        {isOpen && (
-                            <ul className="watch-episode-list">
-                                {s.episodes.map((e) => {
-                                    const pct = e.userData?.PlayedPercentage ?? 0;
-                                    const watched =
-                                        (e.userData?.Played ?? false) ||
-                                        pct >= 90;
-                                    const inProgress = pct >= 5 && pct < 90;
-                                    // One progress bar per episode:
-                                    //   in-progress -> overlay on the thumb at
-                                    //                  bottom-edge with width
-                                    //                  matching pct.
-                                    //   watched     -> full strip below thumb,
-                                    //                  visually marks "done."
-                                    //   unwatched   -> no bar.
-                                    return (
-                                        <li key={e.id}>
-                                            <button
-                                                type="button"
-                                                className={`watch-episode ${watched ? "watched" : ""}`}
-                                                data-zone="accordion"
-                                                onClick={() => onPlay(e.id)}
-                                            >
-                                                <div
-                                                    className={`watch-episode-thumb-wrap${watched ? " is-watched" : ""}`}
-                                                >
-                                                    <EpisodeThumb episode={e} />
-                                                    {inProgress && (
-                                                        <div
-                                                            className="watch-episode-thumb-progress"
-                                                            style={{ width: `${pct}%` }}
-                                                            aria-hidden
-                                                        />
-                                                    )}
-                                                    {watched && (
-                                                        <span
-                                                            className="watch-episode-thumb-watched"
-                                                            aria-label="Watched"
-                                                        >
-                                                            <Check
-                                                                size={16}
-                                                                weight="bold"
-                                                            />
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <div className="watch-episode-info">
-                                                    <div className="watch-episode-title">
-                                                        <span className="watch-episode-badge">
-                                                            S
-                                                            {s.seasonNumber}
-                                                            {epLabel(e)}
-                                                        </span>{" "}
-                                                        {e.name}
-                                                    </div>
-                                                    <div className="watch-episode-meta">
-                                                        {e.runtimeTicks
-                                                            ? formatRuntime(e.runtimeTicks)
-                                                            : ""}
-                                                    </div>
-                                                </div>
-                                            </button>
-                                        </li>
-                                    );
-                                })}
-                            </ul>
-                        )}
-                    </div>
-                );
-            })}
-        </section>
+        <div className="watch-hero-next" aria-hidden={false}>
+            {(label || secondary) && (
+                <div className="watch-hero-next-meta">
+                    {label && (
+                        <span className="watch-hero-next-label">{label}</span>
+                    )}
+                    {secondary && (
+                        <span className="watch-hero-next-runtime">
+                            {secondary}
+                        </span>
+                    )}
+                </div>
+            )}
+            {title && <p className="watch-hero-next-title">{title}</p>}
+            {description && (
+                <p className="watch-hero-next-desc">{description}</p>
+            )}
+        </div>
     );
 }
 
-function EpisodeThumb({ episode }: { episode: SeriesEpisode }) {
-    if (!episode.imageTag) {
-        return <div className="watch-episode-thumb placeholder" aria-hidden />;
+type SeasonTabStripProps = {
+    seasons: Season[];
+    selectedIdx: number;
+    focusedIdx: number | null;
+    onTabFocus: (idx: number) => void;
+    onTabClick: (idx: number) => void;
+    tabRefs: React.MutableRefObject<(HTMLButtonElement | null)[]>;
+};
+
+function SeasonTabStrip({
+    seasons,
+    selectedIdx,
+    focusedIdx,
+    onTabFocus,
+    onTabClick,
+    tabRefs,
+}: SeasonTabStripProps) {
+    return (
+        <nav
+            className="watch-season-tabs"
+            role="tablist"
+            aria-label="Seasons"
+        >
+            <div className="watch-season-tabs-scroll">
+                {seasons.map((s, idx) => {
+                    const label = seasonLabel(s.seasonNumber);
+                    const active = idx === selectedIdx;
+                    const focused = idx === focusedIdx;
+                    return (
+                        <button
+                            key={s.seasonNumber}
+                            ref={(el) => {
+                                tabRefs.current[idx] = el;
+                            }}
+                            type="button"
+                            role="tab"
+                            aria-selected={active}
+                            tabIndex={focused ? 0 : -1}
+                            className={`filter-pill watch-season-tab-label ${active ? "active" : ""} ${focused ? "focused" : ""}`}
+                            onClick={() => onTabClick(idx)}
+                            onFocus={() => onTabFocus(idx)}
+                        >
+                            {label}
+                        </button>
+                    );
+                })}
+            </div>
+        </nav>
+    );
+}
+
+function seasonLabel(n: number): string {
+    if (n === 0) return "Specials";
+    if (n === -1) return "Other";
+    return `Season ${n}`;
+}
+
+type EpisodeListProps = {
+    season: Season | null;
+    focus: Focus;
+    setFocus: (f: Focus) => void;
+    episodeRefs: React.MutableRefObject<(HTMLButtonElement | null)[]>;
+    onPlay: (id: string) => void;
+};
+
+function EpisodeList({
+    season,
+    focus,
+    setFocus,
+    episodeRefs,
+    onPlay,
+}: EpisodeListProps) {
+    // Trim the refs array to the current season's episode count.
+    // Without this, leftover slots from a longer prior season can
+    // trip up focus lookups on Down arrows past the new season's
+    // last episode (the focus state machine clamps to epCount, but
+    // a stale slot would still satisfy episodeRefs.current[idx] !=
+    // null). Run after each render via useLayoutEffect so the
+    // truncation happens AFTER React's ref callbacks populated
+    // the array for the new mount.
+    useLayoutEffect(() => {
+        if (!season) {
+            episodeRefs.current = [];
+            return;
+        }
+        episodeRefs.current.length = season.episodes.length;
+    }, [season, episodeRefs]);
+
+    if (!season) {
+        return (
+            <ul className="watch-episode-list">
+                <li className="watch-episode-empty">Loading episodes…</li>
+            </ul>
+        );
+    }
+    if (season.episodes.length === 0) {
+        return (
+            <ul className="watch-episode-list">
+                <li className="watch-episode-empty">
+                    No episodes in this season.
+                </li>
+            </ul>
+        );
+    }
+    const focusedEpIdx =
+        focus.kind === "episode" ? focus.index : -1;
+    return (
+        <ul className="watch-episode-list">
+            {season.episodes.map((e, idx) => {
+                const pct = e.userData?.PlayedPercentage ?? 0;
+                const watched =
+                    (e.userData?.Played ?? false) || pct >= 90;
+                const inProgress = pct >= 5 && pct < 90;
+                const isFocused = idx === focusedEpIdx;
+                // Image priority gating: render <img> only for
+                // episodes within ±5 of the focused index. Others
+                // render a placeholder div so the kid TV doesn't
+                // decode 30+ thumbnails on a season with that
+                // many episodes.
+                const showImg =
+                    focusedEpIdx < 0 ||
+                    Math.abs(idx - focusedEpIdx) <= 5;
+                return (
+                    <li key={e.id}>
+                        <button
+                            ref={(el) => {
+                                episodeRefs.current[idx] = el;
+                            }}
+                            type="button"
+                            tabIndex={isFocused ? 0 : -1}
+                            className={`watch-episode ${watched ? "watched" : ""} ${isFocused ? "focused" : ""}`}
+                            onClick={() => onPlay(e.id)}
+                            onFocus={() =>
+                                setFocus({ kind: "episode", index: idx })
+                            }
+                        >
+                            <div
+                                className={`watch-episode-thumb-wrap${watched ? " is-watched" : ""}`}
+                            >
+                                <EpisodeThumb
+                                    episode={e}
+                                    showImg={showImg}
+                                />
+                                {inProgress && (
+                                    <div
+                                        className="watch-episode-thumb-progress"
+                                        style={{ width: `${pct}%` }}
+                                        aria-hidden
+                                    />
+                                )}
+                                {watched && (
+                                    <span
+                                        className="watch-episode-thumb-watched"
+                                        aria-label="Watched"
+                                    >
+                                        <Check size={16} weight="bold" />
+                                    </span>
+                                )}
+                            </div>
+                            <div className="watch-episode-info">
+                                <div className="watch-episode-title">
+                                    <span className="watch-episode-badge">
+                                        S{season.seasonNumber}
+                                        {epLabel(e)}
+                                    </span>{" "}
+                                    {e.name}
+                                </div>
+                                {e.overview && (
+                                    <div className="watch-episode-desc">
+                                        {e.overview}
+                                    </div>
+                                )}
+                            </div>
+                            <div className="watch-episode-runtime">
+                                {e.runtimeTicks
+                                    ? formatRuntime(e.runtimeTicks)
+                                    : ""}
+                            </div>
+                        </button>
+                    </li>
+                );
+            })}
+        </ul>
+    );
+}
+
+function EpisodeThumb({
+    episode,
+    showImg,
+}: {
+    episode: SeriesEpisode;
+    showImg: boolean;
+}) {
+    if (!episode.imageTag || !showImg) {
+        return (
+            <div className="watch-episode-thumb placeholder" aria-hidden />
+        );
     }
     return (
         <img
             className="watch-episode-thumb"
-            src={`/api/kids/items/${encodeURIComponent(episode.id)}/image?type=Primary&width=240${imageAuthSuffix()}`}
+            src={`/api/kids/items/${encodeURIComponent(episode.id)}/image?type=Primary&width=320${imageAuthSuffix()}`}
             alt=""
             loading="lazy"
         />
@@ -894,4 +1289,3 @@ function formatRuntime(ticks: number): string {
     }
     return `${minutes}m`;
 }
-

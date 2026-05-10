@@ -51,6 +51,12 @@ type Item struct {
 	// MediaStreams is populated when Fields=MediaStreams is requested.
 	// Used to surface the primary audio language for the curation UI.
 	MediaStreams []MediaStream `json:"MediaStreams,omitempty"`
+	// Overview is the long-form description Jellyfin returns when
+	// Fields=Overview is requested. Episode synopses + movie overviews
+	// surface in the M7 watch menu under the hero actions. Kept opt-in
+	// via ItemsFilter.ExtraFields so we don't bloat every list-page
+	// payload with prose copy that's only consumed in detail views.
+	Overview string `json:"Overview,omitempty"`
 }
 
 // MediaStream is the audio/video/subtitle stream metadata Jellyfin
@@ -174,4 +180,10 @@ type ItemsFilter struct {
 	// scopes the query server-side so we don't have to filter
 	// 10000-row payloads client-side.
 	ParentID string
+	// ExtraFields appends additional Jellyfin Fields entries on top of
+	// the always-on default set. Use this for one-off opt-ins that
+	// only specific endpoints need (e.g. Overview for the watch menu)
+	// rather than expanding the global Fields list and bloating every
+	// list-page response.
+	ExtraFields []string
 }

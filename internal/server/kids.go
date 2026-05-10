@@ -1014,6 +1014,10 @@ type kidsItemResponse struct {
 	SeriesName     string                 `json:"seriesName,omitempty"`
 	ProductionYear int                    `json:"productionYear,omitempty"`
 	RunTimeTicks   int64                  `json:"runtimeTicks,omitempty"`
+	// Overview is the movie / series synopsis Jellyfin surfaces. Used
+	// by the watch menu's read-only details block under the hero
+	// actions; opt-in via Jellyfin Fields=Overview.
+	Overview       string                 `json:"overview,omitempty"`
 	UserData       *jellyfin.ItemUserData `json:"userData,omitempty"`
 	// IsFavorite is the kid's per-(kid, item) favorite flag from
 	// SQLite. The watch menu reads it to render the heart icon's
@@ -1034,12 +1038,21 @@ func (s *Server) handleKidsItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// ExtraFields=Overview surfaces the long-form description under
+	// the M7 watch-menu hero (read-only block for movies; series get
+	// the per-episode overview from handleKidsSeriesEpisodes). Both
+	// auth paths request the same shape so admin preview matches the
+	// kid view.
+	filter := jellyfin.ItemsFilter{
+		IDs:         []string{id},
+		ExtraFields: []string{"Overview"},
+	}
 	var (
 		item *jellyfin.Item
 		err  error
 	)
 	if kc.JellyfinToken != "" {
-		res, ferr := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{IDs: []string{id}}, kc.JellyfinToken)
+		res, ferr := s.jellyfin.GetItemsAsUser(ctx, filter, kc.JellyfinToken)
 		if ferr == nil && len(res.Items) == 0 {
 			err = jellyfin.ErrNotFound
 		} else if ferr == nil {
@@ -1048,7 +1061,14 @@ func (s *Server) handleKidsItem(w http.ResponseWriter, r *http.Request) {
 			err = ferr
 		}
 	} else {
-		item, err = s.jellyfin.GetItem(ctx, id)
+		res, ferr := s.jellyfin.GetItems(ctx, filter)
+		if ferr == nil && len(res.Items) == 0 {
+			err = jellyfin.ErrNotFound
+		} else if ferr == nil {
+			item = &res.Items[0]
+		} else {
+			err = ferr
+		}
 	}
 	if err != nil {
 		s.logger.Error().Err(err).Str("id", id).Msg("kids item resolve")
@@ -1063,6 +1083,7 @@ func (s *Server) handleKidsItem(w http.ResponseWriter, r *http.Request) {
 		SeriesName:     item.SeriesName,
 		ProductionYear: item.ProductionYear,
 		RunTimeTicks:   item.RunTimeTicks,
+		Overview:       item.Overview,
 		UserData:       item.UserData,
 	}
 	if kc.KidID > 0 {
@@ -1163,7 +1184,10 @@ func (s *Server) handleKidsSeriesEpisodes(w http.ResponseWriter, r *http.Request
 
 	// Pull every episode of the series via Jellyfin's items endpoint,
 	// scoped to the series id server-side via ParentId so the
-	// payload is tight even for large libraries.
+	// payload is tight even for large libraries. ExtraFields=Overview
+	// surfaces the per-episode synopsis under the watch-menu hero;
+	// scoped to this one endpoint so the global list payloads stay
+	// lean.
 	epRes, err := fetch(jellyfin.ItemsFilter{
 		IncludeItemTypes: []string{"Episode"},
 		Recursive:        true,
@@ -1171,6 +1195,7 @@ func (s *Server) handleKidsSeriesEpisodes(w http.ResponseWriter, r *http.Request
 		Limit:            10_000,
 		SortBy:           "ParentIndexNumber,IndexNumber",
 		SortOrder:        "Ascending",
+		ExtraFields:      []string{"Overview"},
 	})
 	if err != nil {
 		s.logger.Error().Err(err).Msg("episodes: list")
@@ -1193,6 +1218,7 @@ func (s *Server) handleKidsSeriesEpisodes(w http.ResponseWriter, r *http.Request
 		ID           string                 `json:"id"`
 		IndexNumber  *int                   `json:"indexNumber,omitempty"`
 		Name         string                 `json:"name"`
+		Overview     string                 `json:"overview,omitempty"`
 		RuntimeTicks int64                  `json:"runtimeTicks,omitempty"`
 		ImageTag     string                 `json:"imageTag,omitempty"`
 		UserData     *jellyfin.ItemUserData `json:"userData,omitempty"`
@@ -1218,6 +1244,7 @@ func (s *Server) handleKidsSeriesEpisodes(w http.ResponseWriter, r *http.Request
 			ID:           ep.ID,
 			IndexNumber:  ep.IndexNumber,
 			Name:         ep.Name,
+			Overview:     ep.Overview,
 			RuntimeTicks: ep.RunTimeTicks,
 			ImageTag:     ep.ImageTags.Primary,
 			UserData:     ep.UserData,
