@@ -5179,3 +5179,98 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
     }
 }
 
+/* ===== Browse layout retry (t22) =====
+   t18 attempted to fix two problems with CSS-only edits and t20
+   immediately partially undid the fix #1 inside its 720p media
+   query (raised min-height back to 11rem, didn't restate the
+   max-height clamp). Live testing on the 720p TV showed the hero
+   is still much taller than intended and the gradient scrim t18
+   added on .kids-tabpill-slot is too transparent to actually mask
+   tiles passing under it.
+
+   Fixes here are at the bottom of the file so they win the
+   source-order tiebreaker against everything earlier (matching
+   specificity) AND against the t20 media query (the t22 rules
+   below are NOT inside a media query, so they apply
+   unconditionally; the 720p path inherits them too).
+
+   Strategy:
+   - Hero: hard-clamp min/max-height to a small range and turn off
+     anything that could stretch the panel (align-self: start,
+     overflow: hidden). The hero's content (title + meta + 1-2
+     overview lines, optionally a 1-line next-ep block) genuinely
+     fits in ~6rem; we set 5rem floor / 7rem ceiling so layout
+     below it doesn't jitter on focus changes but the hero never
+     turns into the half-screen empty box the user reported.
+   - TabPill scrim: replace the soft gradient (alpha 0.55 at top
+     fading to 0) with a near-opaque dark band that fully masks
+     tiles. The transition out of the band uses a short fade only
+     at the bottom edge so the seam against the rainbow bg below
+     doesn't read as a hard line. */
+
+/* Bug 1 fix: hero height. Re-states min-height + max-height
+   without a media-query gate so it overrides both t18's base rule
+   AND t20's @media min-height: 11rem. The selector list matches
+   .browse-hero (spec 0,1,0) AND .browse-hero.browse-hero-empty
+   (spec 0,2,0) so the empty-hero variant is covered too. */
+.browse-hero,
+.browse-hero.browse-hero-empty {
+    /* 5rem floor: title (1.6rem) + meta (~0.9rem) + one overview
+       line (~0.9rem * 1.3) + paddings ~ 4.5rem. 5rem leaves a
+       small visual gutter without the panel feeling cramped. */
+    min-height: 5rem;
+    /* 7rem ceiling: hero is allowed to grow a bit when the next-ep
+       block lands (series with progress) but never past the
+       reserve the row layout below it expects. Combined with the
+       1-line overview clamp from t18 + overflow: hidden, content
+       reliably fits inside this cap. */
+    max-height: 7rem;
+    /* In case any flex/grid parent ever tries to stretch the
+       hero, lock it to its natural block size. .browse-stack is a
+       block container today so this is belt-and-suspenders. */
+    align-self: start;
+    /* Defensive: make sure overflow stays clipped even if a
+       future change accidentally drops it from the t18 block
+       above. */
+    overflow: hidden;
+}
+
+/* Bug 2 fix: TabPill scrim. The previous gradient (alpha 0.55
+   -> 0.45 -> 0) was visibly too thin at 720p; tiles passing
+   under the pill were still readable through the scrim. Switch
+   to a high-opacity dark band that fully masks the underlying
+   tiles, with a short alpha-falloff at the very bottom of the
+   slot so the seam against the rainbow bg below stays soft.
+
+   Color choice: rgba(20, 12, 32, 0.92) matches the rainbow's
+   darkest stops (deep purple) so the band reads as part of the
+   page chrome rather than a foreign black bar. The 0.92 alpha is
+   enough to fully mask saturated tile content while still
+   letting a hint of rainbow color bleed through if we ever
+   relax it.
+
+   The previous t18 block sets `background:` directly on the
+   slot, which we're overriding by re-stating it here (later in
+   source, equal specificity).
+
+   z-index stays at 2 (set in the base .kids-tabpill-slot rule
+   at the top of the file) so the scrim sits above
+   .kids-home-content (z-index 1) where the tiles render. The
+   TabPill text itself is a child of the slot, so it draws on top
+   of its own background - no z-index fight needed. */
+.kids-tabpill-slot {
+    background: linear-gradient(
+        to bottom,
+        rgba(20, 12, 32, 0.92) 0%,
+        rgba(20, 12, 32, 0.92) 78%,
+        rgba(20, 12, 32, 0) 100%
+    );
+    /* Extend the slot ~12px past the TabPill content so the
+       fade-out region at the bottom doesn't eat into the
+       opaque area where tiles would otherwise show through.
+       The TabPill is ~65px tall in flow; the slot already
+       reserves 90px via min-height. We bump that to ~100px so
+       the 22% fade-out region (~22px) starts AFTER the
+       TabPill ends, not behind it. */
+    min-height: calc(var(--kids-tabpill-height, 90px) + 12px);
+}
