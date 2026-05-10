@@ -245,13 +245,25 @@ export function MenuView({
             : undefined,
     });
 
+    // When the server has no auto-off configured, "Enable auto-off"
+    // sends the parent straight to the one-time absolute-time
+    // picker - the relative-shift picker is meaningless without a
+    // baseline and was the source of the "+1065233659 min" bug
+    // (delta math computed against an epoch-zero baseline). When
+    // the server has a configured time, push the stage menu so the
+    // parent can choose between "Disable until tomorrow" and
+    // "Shift the time".
+    const autoOffConfigured = !!viewing?.sleepTimerAt;
     system.push({
         key: "autoOff",
         icon: <IconAutoOff />,
-        label: viewing?.sleepTimerAt
-            ? "Override auto-off"
-            : "Set one-time auto-off",
-        onActivate: () => ctx.push({ kind: "autoOff", token }),
+        label: autoOffConfigured ? "Adjust auto-off" : "Enable auto-off",
+        onActivate: () =>
+            ctx.push(
+                autoOffConfigured
+                    ? { kind: "autoOff", token }
+                    : { kind: "autoOffOneTime", token },
+            ),
         reset: autoOffOv
             ? {
                   label: "Reset auto-off override",
