@@ -46,7 +46,11 @@ import { ModeDurationStage } from "./override/ModeDuration";
 import { DimSetupStage } from "./override/DimSetup";
 import { WarmSetupStage } from "./override/WarmSetup";
 import { BodyBreaksStage } from "./override/BodyBreaks";
-import { AutoOffStage, AutoOffShiftStage } from "./override/AutoOff";
+import {
+    AutoOffStage,
+    AutoOffShiftStage,
+    AutoOffOneTimeStage,
+} from "./override/AutoOff";
 import { QrStage } from "./override/QR";
 
 type Props = {
@@ -489,6 +493,10 @@ export default function OverrideModal({
 
     if (stage.kind === "autoOffShift") {
         return <AutoOffShiftStage ctx={ctx} />;
+    }
+
+    if (stage.kind === "autoOffOneTime") {
+        return <AutoOffOneTimeStage ctx={ctx} />;
     }
 
     // stage.kind === "menu"

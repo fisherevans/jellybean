@@ -35,6 +35,14 @@ export type TimeOverride = {
     /** ISO timestamp; if in the future, the limit is suspended
      *  ("no limit until..."). */
     disabledUntil?: string;
+    /** Absolute minutes-remaining cap to apply *today* even when
+     *  no server-side limit is configured. Lets the parent
+     *  introduce a one-off daily budget (e.g. "30 min for the rest
+     *  of today") without flipping the global feature on. The
+     *  effective-status merge treats this as the floor when the
+     *  server reports `enabled=false`; ignored once the server
+     *  itself reports a smaller remaining budget. */
+    setMinutesRemaining?: number;
     /** When this override stops applying (defaults to next midnight
      *  if absent). */
     expiresAt?: string;
@@ -52,7 +60,7 @@ export type ViewingOverride = {
 
 export type BodyBreaksOverride = {
     /** Body breaks suppressed until this ISO timestamp. */
-    disabledUntil: string;
+    disabledUntil?: string;
 };
 
 export type AutoOffOverride = {
@@ -61,6 +69,11 @@ export type AutoOffOverride = {
     /** Signed minutes to shift the configured auto-off time today.
      *  Negative = earlier; positive = later. */
     shiftMinutes?: number;
+    /** Absolute ISO timestamp at which auto-off should fire today.
+     *  Used when no server-side auto-off is configured but the
+     *  parent wants a one-time cutoff (e.g. "TV off at 8pm
+     *  tonight"). The merge prefers this when present. */
+    oneTimeAt?: string;
     /** When this override stops applying (next local midnight). */
     expiresAt: string;
 };
@@ -223,7 +236,9 @@ export function clearWarm(): void {
 export function getBodyBreaks(): BodyBreaksOverride | null {
     const v = readJSON<BodyBreaksOverride>(KEY_BODY_BREAKS);
     if (!v) return null;
-    if (isExpired(v.disabledUntil)) {
+    // No disabledUntil = nothing to enforce; treat as cleared so a
+    // partially-shaped record can't linger forever.
+    if (!v.disabledUntil || isExpired(v.disabledUntil)) {
         removeKey(KEY_BODY_BREAKS);
         return null;
     }

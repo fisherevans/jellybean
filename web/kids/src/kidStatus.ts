@@ -228,7 +228,14 @@ export function useEffectiveActiveMode(): ActiveMode | null {
 //   - local `disabledUntil` in future -> minutesRemaining is
 //     effectively unlimited (we report a large sentinel) and
 //     `locked` is false.
-//   - local `addedMinutes` -> add to minutesRemaining.
+//   - local `setMinutesRemaining` (when server reports
+//     `enabled=false`) -> surface as an enabled budget so the kid
+//     gets a one-off daily cap even when no server-side limit
+//     exists.
+//   - local `addedMinutes` -> add to minutesRemaining; when the
+//     server reports no global limit we still surface the bonus
+//     as the effective budget so the override-only path produces
+//     a visible cap.
 //   - else: server unchanged.
 export function useEffectiveTimeStatus(): TimeStatus | null {
     const server = useTimeStatus();
@@ -246,10 +253,31 @@ export function useEffectiveTimeStatus(): TimeStatus | null {
             locked: false,
         };
     }
-    if (override.addedMinutes && override.addedMinutes > 0) {
+    // Override-only path: server has no daily limit, but the
+    // parent set one for today. Treat the override as the
+    // authoritative budget.
+    if (!server.enabled && override.setMinutesRemaining !== undefined) {
+        const total =
+            override.setMinutesRemaining +
+            (override.addedMinutes && override.addedMinutes > 0
+                ? override.addedMinutes
+                : 0);
         return {
             ...server,
-            minutesRemaining: server.minutesRemaining + override.addedMinutes,
+            enabled: true,
+            minutesRemaining: total,
+            locked: total <= 0,
+        };
+    }
+    if (override.addedMinutes && override.addedMinutes > 0) {
+        // When the server has no limit, surface the bonus as the
+        // effective budget so a "+30m" override still produces a
+        // visible cap for today.
+        const base = server.enabled ? server.minutesRemaining : 0;
+        return {
+            ...server,
+            enabled: server.enabled || override.addedMinutes > 0,
+            minutesRemaining: base + override.addedMinutes,
             locked: false,
         };
     }
@@ -266,7 +294,7 @@ export function useEffectiveBodyBreakStatus(
     const server = useBodyBreakStatus(activelyPlaying);
     const override = useParentOverride(() => overrides.getBodyBreaks());
     if (!server) return null;
-    if (!override) return server;
+    if (!override || !override.disabledUntil) return server;
     if (Date.parse(override.disabledUntil) > Date.now()) {
         return {
             ...server,
@@ -299,6 +327,12 @@ export function useEffectiveViewingState(): ViewingState | null {
         // Skip auto-off entirely until tomorrow.
         autoOffActive = false;
         sleepTimerAt = undefined;
+    } else if (autoOff?.oneTimeAt) {
+        // Override-only path: server has no auto-off configured,
+        // but the parent set a one-time absolute fire time. Use
+        // it as the effective sleep-timer.
+        sleepTimerAt = autoOff.oneTimeAt;
+        autoOffActive = Date.parse(autoOff.oneTimeAt) <= Date.now();
     } else if (autoOff?.shiftMinutes && sleepTimerAt) {
         // Shift the sleep-timer fire time. Negative = earlier.
         const shifted = new Date(
