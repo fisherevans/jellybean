@@ -22,6 +22,7 @@
 // Jellyfin's session view sees the right device identity even on
 // admin-driven calls (e.g. preview at /kids/library?profileId=N).
 
+import type { KidLoginResponse } from "jellybean-shared";
 import { clear as clearLibraryCache } from "./libraryCache";
 
 const TOKEN_KEY = "jellybean.kids.token";
@@ -299,6 +300,24 @@ export async function withAuthRetry(
     if (first.status !== 401) return first;
     await new Promise((r) => setTimeout(r, 800));
     return doFetch();
+}
+
+// sealSessionFromKidPayload writes a Session derived from a
+// KidLoginResponse into local storage. Single source of truth shared
+// by every login surface (password, Quick Connect, phone-pair); the
+// Login component should call this on whatever payload its chosen
+// flow produces. Keeps the field-mapping centralized so adding a new
+// session field doesn't fan out to every login path.
+export function sessionFromKidPayload(kid: KidLoginResponse): Session {
+    return {
+        token: kid.token,
+        userId: kid.userId,
+        userName: kid.userName,
+        profileId: kid.profileId,
+        profileName: kid.profileName,
+        kidName: kid.kidName,
+        kidId: kid.kidId,
+    };
 }
 
 // imageAuthSuffix builds the &token=...&userId=... fragment to append to

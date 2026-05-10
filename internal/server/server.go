@@ -32,6 +32,10 @@ type Server struct {
 	curation *curation.Store
 	router   *mux.Router
 	qc       *qcStore
+	// pairLimiter throttles unauthenticated POSTs to
+	// /pair/<code>/submit so a brute-forcer can't spray Jellyfin
+	// passwords through Jellybean. Per-IP, sliding window.
+	pairLimiter *pairSubmitLimiter
 
 	jellyfinVersion string
 	adminAssets     fs.FS
@@ -70,6 +74,7 @@ func New(opts Options) *Server {
 		curation:        curStore,
 		router:          mux.NewRouter(),
 		qc:              newQCStore(),
+		pairLimiter:     newPairSubmitLimiter(),
 		jellyfinVersion: opts.JellyfinVersion,
 		adminAssets:     opts.AdminAssets,
 		kidsAssets:      opts.KidsAssets,
@@ -124,6 +129,12 @@ func (s *Server) routes() {
 	api.HandleFunc("/kids/auth/quickconnect/enabled", s.handleQuickConnectEnabled).Methods(http.MethodGet)
 	api.HandleFunc("/kids/auth/quickconnect/start", s.handleKidsQuickConnectStart).Methods(http.MethodPost)
 	api.HandleFunc("/kids/auth/quickconnect/poll", s.handleKidsQuickConnectPoll).Methods(http.MethodGet)
+	// Phone-pairing login: TV mints a session, parent enters
+	// Jellyfin credentials on their phone via /pair/<code>, TV
+	// polls. Unlike Quick Connect this does NOT require an
+	// existing Jellyfin session on the parent's device.
+	api.HandleFunc("/kids/auth/pair/start", s.handleKidsPairStart).Methods(http.MethodPost)
+	api.HandleFunc("/kids/auth/pair/poll", s.handleKidsPairPoll).Methods(http.MethodGet)
 	kids := api.PathPrefix("/kids").Subrouter()
 	kids.Use(s.auth.OptionalMiddleware)
 	kids.Use(s.kidsMiddleware)
@@ -134,6 +145,15 @@ func (s *Server) routes() {
 	s.kidsViewingRoutes(kids)
 	s.kidsModeRoutes(kids)
 	s.kidsChannelRoutes(kids)
+
+	// Phone-pairing landing page. Lives outside /api because it's
+	// HTML the parent loads directly via a QR scan; lives outside
+	// /player because the parent's phone may not have the kid SPA
+	// cached and we want this to be one self-contained page. The
+	// short_code is path-scoped here (not query-scoped) so the QR
+	// is short and easy to scan.
+	s.router.HandleFunc("/pair/{shortCode}", s.handleKidsPairPage).Methods(http.MethodGet)
+	s.router.HandleFunc("/pair/{shortCode}/submit", s.handleKidsPairSubmit).Methods(http.MethodPost)
 
 	// Static SPAs. Two distinct apps live under two distinct prefixes:
 	//   /player/*  - the kid streaming client (was /kids/*)

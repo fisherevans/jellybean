@@ -6,12 +6,25 @@ import {
     type FormEvent,
 } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, DeviceMobile, KeyReturn } from "@phosphor-icons/react";
+import {
+    ArrowLeft,
+    DeviceMobile,
+    KeyReturn,
+    QrCode,
+} from "@phosphor-icons/react";
+import { QRCodeSVG } from "qrcode.react";
 import type {
     KidLoginResponse,
+    PairPollResponse,
+    PairStartResponse,
     QuickConnectPollResponse,
 } from "jellybean-shared";
-import { clearSession, getSession, setSession, type Session } from "./auth";
+import {
+    clearSession,
+    getSession,
+    sessionFromKidPayload,
+    setSession,
+} from "./auth";
 import { prefetchLibrary } from "./prefetch";
 import {
     QuickConnectError,
@@ -44,27 +57,37 @@ function consumeDevCreds(): { user: string; pass: string } | null {
     return { user, pass };
 }
 
-// Login (kid TV). Two paths:
+// Login (kid TV). Three sign-in surfaces:
 //
 // 1. Quick Connect (default when the upstream Jellyfin admin has it
 //    enabled): the TV displays a 6-digit code; the parent enters it
-//    on a Jellyfin client they're already signed into (phone, web,
-//    laptop). The TV polls our backend; the backend forwards each
-//    poll to Jellyfin and exchanges the secret for a real bearer
-//    once approval lands.
+//    on a Jellyfin client they're already signed into. Requires an
+//    existing Jellyfin session somewhere.
 //
-// 2. Password fallback: same form as before, kept available even
-//    when QC is enabled (some users prefer it; some Jellyfin
-//    deployments leave QC off).
+// 2. Phone pairing (new): the TV displays a QR code linking to
+//    /pair/<short_code> on this Jellybean instance. The parent
+//    scans it, enters the kid's Jellyfin credentials in their phone
+//    browser (password manager friendly), and the TV's poll lifts
+//    the resulting Jellyfin auth out of SQLite. Distinct from QC -
+//    no existing Jellyfin session needed on the parent's device.
 //
-// Both paths converge on the same /api/kids/auth/login response
-// shape, so the post-login hydration is identical.
+// 3. Password fallback: the original form, kept available because
+//    not every parent has a phone handy and not every Jellyfin
+//    deployment has QC enabled.
+//
+// All three paths converge on the same KidLoginResponse shape and
+// sessionFromKidPayload, so the post-login hydration is identical.
 
 // Shared with the server's kidAuthResponse struct
 // (internal/server/quickconnect.go + internal/server/kids.go).
 // Kid-side QC poll embeds the same LoginResponse under `kid`.
 type LoginResponse = KidLoginResponse;
 type QCPollResponse = QuickConnectPollResponse<LoginResponse>;
+
+// PAIR_POLL_INTERVAL_MS is the cadence the TV polls
+// /api/kids/auth/pair/poll. Matches Jellyfin's QC poll cadence so
+// the spinner feels consistent across login paths.
+const PAIR_POLL_INTERVAL_MS = 2500;
 
 // Fetchers normalize the kid app's /api/kids/auth/quickconnect/* shapes
 // into the QuickConnectError vocabulary the shared hook speaks.
@@ -112,6 +135,12 @@ const qcFetchers = {
     },
 };
 
+// Card type drives which sub-card shows on the login screen. The
+// existing useQuickConnect hook owns the qc / password split via its
+// own Mode; pair is the new third surface this component layers on
+// top.
+type Card = "loading" | "qc" | "password" | "pair";
+
 export default function Login() {
     const nav = useNavigate();
     useEffect(() => {
@@ -127,26 +156,23 @@ export default function Login() {
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
 
+    // Card-level override for the QC hook's mode. null = follow QC
+    // hook (loading / qc / password); set to "pair" when the user
+    // taps "Sign in with phone." The hook's mode is left alone so
+    // flipping back to QC reuses an in-flight pairing.
+    const [overrideCard, setOverrideCard] = useState<Card | null>(null);
+
     useEffect(() => {
         if (getSession()) nav("/browse", { replace: true });
     }, [nav]);
 
     // completeLogin mints the local session from a /login or /poll
     // success payload and bounces to /browse. Shared by the password
-    // submit + the QC poll's authorized branch so both paths land
-    // identically.
+    // submit + the QC poll's authorized branch + the pair poll's
+    // complete branch so all three paths land identically.
     const completeLogin = useCallback(
         (kid: LoginResponse) => {
-            const session: Session = {
-                token: kid.token,
-                userId: kid.userId,
-                userName: kid.userName,
-                profileId: kid.profileId,
-                profileName: kid.profileName,
-                kidName: kid.kidName,
-                kidId: kid.kidId,
-            };
-            setSession(session);
+            setSession(sessionFromKidPayload(kid));
             prefetchLibrary();
             nav("/browse", { replace: true });
         },
@@ -250,6 +276,11 @@ export default function Login() {
         await performLogin(username, password);
     }
 
+    // Effective card: overrideCard wins so "Sign in with phone" pulls
+    // the user out of whatever default the QC hook landed on. Cleared
+    // when the user backs out of pair mode.
+    const card: Card = overrideCard ?? (qc.mode as Card);
+
     const error = submitError ?? qc.error;
 
     return (
@@ -262,10 +293,10 @@ export default function Login() {
                 height={96}
             />
             <h1>Sign in</h1>
-            {qc.mode === "loading" && (
+            {card === "loading" && (
                 <p className="kid-login-blurb">Getting things ready…</p>
             )}
-            {qc.mode === "qc" && (
+            {card === "qc" && (
                 <QCCard
                     code={qc.code}
                     expired={qc.expired}
@@ -275,9 +306,14 @@ export default function Login() {
                         qc.setError(null);
                         qc.setMode("password");
                     }}
+                    onSwitchToPair={() => {
+                        setSubmitError(null);
+                        qc.setError(null);
+                        setOverrideCard("pair");
+                    }}
                 />
             )}
-            {qc.mode === "password" && (
+            {card === "password" && (
                 <PasswordCard
                     username={username}
                     password={password}
@@ -291,6 +327,29 @@ export default function Login() {
                         qc.setError(null);
                         qc.setMode("qc");
                     }}
+                    onSwitchToPair={() => {
+                        setSubmitError(null);
+                        qc.setError(null);
+                        setOverrideCard("pair");
+                    }}
+                />
+            )}
+            {card === "pair" && (
+                <PairCard
+                    onAuthorized={completeLogin}
+                    onSwitchToPassword={() => {
+                        setSubmitError(null);
+                        qc.setError(null);
+                        setOverrideCard(null);
+                        qc.setMode("password");
+                    }}
+                    onSwitchToQC={() => {
+                        setSubmitError(null);
+                        qc.setError(null);
+                        setOverrideCard(null);
+                        qc.setMode("qc");
+                    }}
+                    qcAvailable={qc.mode === "qc" || qc.mode === "loading"}
                 />
             )}
             {error && <p className="kid-login-error">{error}</p>}
@@ -307,11 +366,13 @@ function QCCard({
     expired,
     onRetry,
     onSwitchToPassword,
+    onSwitchToPair,
 }: {
     code: string | null;
     expired: boolean;
     onRetry: () => void;
     onSwitchToPassword: () => void;
+    onSwitchToPair: () => void;
 }) {
     const switchRef = useRef<HTMLButtonElement | null>(null);
     const retryRef = useRef<HTMLButtonElement | null>(null);
@@ -370,6 +431,14 @@ function QCCard({
                 ref={switchRef}
                 type="button"
                 className="kid-login-link"
+                onClick={onSwitchToPair}
+            >
+                <QrCode size={16} weight="bold" aria-hidden /> Sign in with
+                phone
+            </button>
+            <button
+                type="button"
+                className="kid-login-link"
                 onClick={onSwitchToPassword}
             >
                 <KeyReturn size={16} weight="bold" aria-hidden /> Use password
@@ -393,6 +462,7 @@ function PasswordCard({
     onSubmit,
     showQCBack,
     onSwitchToQC,
+    onSwitchToPair,
 }: {
     username: string;
     password: string;
@@ -402,6 +472,7 @@ function PasswordCard({
     onSubmit: (e: FormEvent) => void;
     showQCBack: boolean;
     onSwitchToQC: () => void;
+    onSwitchToPair: () => void;
 }) {
     return (
         <div className="kid-login-card">
@@ -437,7 +508,216 @@ function PasswordCard({
                     {submitting ? "Signing in…" : "Sign in"}
                 </button>
             </form>
+            <button
+                type="button"
+                className="kid-login-link"
+                onClick={onSwitchToPair}
+            >
+                <QrCode size={16} weight="bold" aria-hidden /> Sign in with
+                phone
+            </button>
             {showQCBack && (
+                <button
+                    type="button"
+                    className="kid-login-link"
+                    onClick={onSwitchToQC}
+                >
+                    <ArrowLeft size={16} weight="bold" aria-hidden /> Use Quick
+                    Connect instead
+                </button>
+            )}
+        </div>
+    );
+}
+
+// PairCard owns the phone-pairing handshake. Kicks /pair/start on
+// mount, renders the QR + short code, and polls /pair/poll on a
+// 2.5s cadence. On poll status=complete, hands the kid payload to
+// onAuthorized. On expired, shows a retry button. On 4xx during
+// /start, falls back to "couldn't start" with manual retry.
+//
+// StrictMode-safe via startedRef (synchronous flip BEFORE the await
+// matches useQuickConnect's pattern).
+function PairCard({
+    onAuthorized,
+    onSwitchToPassword,
+    onSwitchToQC,
+    qcAvailable,
+}: {
+    onAuthorized: (kid: LoginResponse) => void;
+    onSwitchToPassword: () => void;
+    onSwitchToQC: () => void;
+    qcAvailable: boolean;
+}) {
+    const [start, setStart] = useState<PairStartResponse | null>(null);
+    const [expired, setExpired] = useState(false);
+    const [pairError, setPairError] = useState<string | null>(null);
+    const startedRef = useRef(false);
+    const unmountedRef = useRef(false);
+    const onAuthorizedRef = useRef(onAuthorized);
+    useEffect(() => {
+        onAuthorizedRef.current = onAuthorized;
+    }, [onAuthorized]);
+    useEffect(() => {
+        return () => {
+            unmountedRef.current = true;
+        };
+    }, []);
+
+    const beginPair = useCallback(async () => {
+        setExpired(false);
+        setPairError(null);
+        try {
+            const res = await fetch("/api/kids/auth/pair/start", {
+                method: "POST",
+                credentials: "same-origin",
+            });
+            if (!res.ok) {
+                throw new Error(`pair start ${res.status}`);
+            }
+            const body = (await res.json()) as PairStartResponse;
+            if (unmountedRef.current) return;
+            setStart(body);
+        } catch {
+            if (unmountedRef.current) return;
+            startedRef.current = false;
+            setPairError(
+                "Couldn't start phone sign-in. Use password instead.",
+            );
+        }
+    }, []);
+
+    // Mint a pairing on first mount. The synchronous startedRef flip
+    // BEFORE the await is what makes this StrictMode-safe; the
+    // double-mount in dev sees true and bails.
+    useEffect(() => {
+        if (start || expired) return;
+        if (startedRef.current) return;
+        startedRef.current = true;
+        void beginPair();
+    }, [start, expired, beginPair]);
+
+    // Poll while a pairing is live. Stops on terminal state
+    // (complete -> onAuthorized, expired -> render retry). Fires
+    // one tick immediately so a quick parent who completes before
+    // the first interval doesn't sit through 2.5s of "Waiting…".
+    useEffect(() => {
+        if (!start || expired) return;
+        let cancelled = false;
+        const tick = async () => {
+            try {
+                const res = await fetch(
+                    `/api/kids/auth/pair/poll?token=${encodeURIComponent(start.pollingToken)}`,
+                    { credentials: "same-origin" },
+                );
+                if (cancelled) return;
+                if (!res.ok) return; // transient; next tick retries
+                const body = (await res.json()) as PairPollResponse;
+                if (body.status === "expired") {
+                    setExpired(true);
+                    setStart(null);
+                    startedRef.current = false;
+                    return;
+                }
+                if (body.status === "complete" && body.kid) {
+                    onAuthorizedRef.current(body.kid);
+                }
+            } catch {
+                // Transient: next tick retries.
+            }
+        };
+        const id = window.setInterval(tick, PAIR_POLL_INTERVAL_MS);
+        void tick();
+        return () => {
+            cancelled = true;
+            window.clearInterval(id);
+        };
+    }, [start, expired]);
+
+    const restart = useCallback(() => {
+        setExpired(false);
+        setStart(null);
+        startedRef.current = false;
+        void beginPair();
+    }, [beginPair]);
+
+    const switchRef = useRef<HTMLButtonElement | null>(null);
+    const retryRef = useRef<HTMLButtonElement | null>(null);
+    useEffect(() => {
+        if (expired) retryRef.current?.focus();
+        else switchRef.current?.focus();
+    }, [expired]);
+
+    return (
+        <div className="kid-login-card">
+            <div className="kid-login-card-icon" aria-hidden>
+                <QrCode size={28} weight="fill" />
+            </div>
+            <h2>Sign in with phone</h2>
+            {pairError ? (
+                <>
+                    <p className="kid-login-blurb">{pairError}</p>
+                    <button
+                        ref={retryRef}
+                        type="button"
+                        className="kid-login-primary"
+                        onClick={restart}
+                    >
+                        Try again
+                    </button>
+                </>
+            ) : expired ? (
+                <>
+                    <p className="kid-login-blurb">
+                        That code timed out. Get a fresh one to try again.
+                    </p>
+                    <button
+                        ref={retryRef}
+                        type="button"
+                        className="kid-login-primary"
+                        onClick={restart}
+                    >
+                        Get a new code
+                    </button>
+                </>
+            ) : start ? (
+                <>
+                    <p className="kid-login-blurb">
+                        Scan the code below with your phone, then enter the
+                        kid's Jellyfin login.
+                    </p>
+                    <div className="kid-login-qr" aria-hidden={false}>
+                        <QRCodeSVG
+                            value={start.pairUrl}
+                            size={220}
+                            includeMargin
+                            level="M"
+                        />
+                    </div>
+                    <p className="kid-login-pair-code">
+                        Or visit:{" "}
+                        <code className="kid-login-pair-url">
+                            {start.pairUrl}
+                        </code>
+                    </p>
+                    <p className="kid-login-status">
+                        <span className="kid-login-spinner" aria-hidden />
+                        Waiting for sign-in…
+                    </p>
+                </>
+            ) : (
+                <p className="kid-login-blurb">Generating a code…</p>
+            )}
+            <button
+                ref={switchRef}
+                type="button"
+                className="kid-login-link"
+                onClick={onSwitchToPassword}
+            >
+                <KeyReturn size={16} weight="bold" aria-hidden /> Use password
+                instead
+            </button>
+            {qcAvailable && (
                 <button
                     type="button"
                     className="kid-login-link"
