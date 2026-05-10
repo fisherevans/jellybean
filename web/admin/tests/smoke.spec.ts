@@ -16,13 +16,13 @@ test.describe("admin shell", () => {
         await gotoAndWaitReady(page, "/manage");
         await expect(page.getByRole("heading", { name: /Welcome/ })).toBeVisible();
         const nav = page.getByRole("navigation").first();
-        // Top nav was collapsed to 6 primary items; deeper admin
-        // pages live under the Settings hub.
+        // Top nav has 5 primary items; /search is collapsed into
+        // /browse (the route still redirects). Deeper admin pages
+        // live under the Settings hub.
         for (const label of [
             "Home",
             "Categorize",
             "Browse",
-            "Search",
             "Tags",
             "Settings",
         ]) {
@@ -114,14 +114,11 @@ test.describe("activity", () => {
 });
 
 test.describe("search", () => {
-    test("loads + reacts to typing", async ({ page }) => {
+    test("legacy /search route redirects to /browse", async ({ page }) => {
+        // Keep the redirect-on-bookmark contract honest. /search was
+        // collapsed into /browse; the route still exists as a
+        // Navigate so old bookmarks don't 404.
         await gotoAndWaitReady(page, "/manage/search");
-        await expect(page.getByRole("heading", { name: "Search" })).toBeVisible();
-        await page.getByPlaceholder(/Type a title/).fill("the");
-        // Either matches or an empty-state message; both are fine outcomes
-        // for "the" against an arbitrary library.
-        await expect(
-            page.getByText(/Showing|No matches|Searching/),
-        ).toBeVisible({ timeout: 5_000 });
+        await expect(page).toHaveURL(/\/manage\/browse/);
     });
 });
