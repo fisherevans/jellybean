@@ -5519,3 +5519,211 @@ body[data-perf="slow"] .library-skeleton-tile::after {
     text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 }
 
+/* ===== Inline hero card (t32) =====
+   Replaces the page-level BrowseHero panel that used to sit above the
+   row stack. The metadata for the focused tile now renders INLINE in
+   the row track, immediately to the right of the focused poster, as a
+   sibling flex item in .browse-row-track. The track translateX is
+   unchanged: the animator still positions the focused tile at the
+   cursor-x slot, and the metadata card extends to the right of it.
+   Tiles after the focused one are pushed further right by the card's
+   width, which is the desired behavior - they peek further out at the
+   row's tail and the kid still sees the overflowing run.
+
+   DOM:
+       .browse-row-track
+         .tile  .tile  .tile.focused
+         .focused-meta-card-fade   <-- only present in the focused row
+            .focused-meta-card
+              .focused-meta-card-inner
+                h2.title  meta  overview  next-ep
+         .tile  .tile  ...
+
+   Animation: the .focused-meta-card-fade wrapper carries the keyed
+   remount (key={focusedItem.Id}) so the inner contents are torn down
+   + replaced when the kid arrows to a new tile. The fresh mount
+   triggers a one-shot opacity + translateY keyframe so the card
+   "lands" instead of popping. The previous tile's card unmounts
+   instantly when focus moves; we don't run an exit animation because
+   keying the wrapper means we have no DOM node left to animate.
+
+   Slow-perf path snaps in (no animation) per the task contract. */
+
+.focused-meta-card-fade {
+    /* Sized to the same height as the focused poster so the card sits
+       flush with it. The focused tile applies scale(1.12); the card
+       lives in the flow at the un-scaled height of a tile-poster
+       (~270px at desktop, ~225px at 720p) and the row's vertical
+       padding (1.75rem / 2.25rem on .browse-row-items) absorbs the
+       focused tile's bleed both above and below.
+       Width is fixed-ish so the layout doesn't reflow as the
+       overview text fills in async. The card always reserves its
+       slot regardless of detail-loaded state. */
+    flex: 0 0 auto;
+    width: 380px;
+    /* Top-align with the focused tile so the card's top edge sits
+       flush with the top of the poster. Centering against the row's
+       layout height would drift the card down because the under-
+       poster .tile-title adds ~30px to the layout but no visual
+       height in the focused tile (the card is paired visually with
+       the poster, not with the poster + title block). */
+    align-self: flex-start;
+    /* Lift to match the focused tile's z-index so the card isn't
+       occluded by neighboring tiles' shadows. */
+    position: relative;
+    z-index: 2;
+    animation: focused-meta-card-in 200ms ease-out both;
+    /* Pointer-events off so the card never steals clicks even though
+       it's a sibling of the tile button. The focused tile remains the
+       only interactive surface in its visual cluster. */
+    pointer-events: none;
+}
+
+@keyframes focused-meta-card-in {
+    from {
+        opacity: 0;
+        transform: translateX(-12px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+body[data-perf="slow"] .focused-meta-card-fade {
+    /* Snap-in on slow WebViews. The transform + opacity on the
+       previous keyframe each cost a paint pass, and the kid is
+       already paying for the focused-tile scale transition - the
+       card landing instantly is barely perceptible at full size. */
+    animation: none;
+}
+
+.focused-meta-card {
+    /* Card surface: a soft white pill that reads on the rainbow bg
+       without competing with the focused tile's white ring. The
+       backdrop-filter blur is intentionally NOT used here - paint
+       cost on Skyworth-class WebViews. A flat translucent fill +
+       a drop-shadow keeps the visual weight balanced. */
+    background: rgba(255, 255, 255, 0.92);
+    border-radius: 18px;
+    padding: 1.1rem 1.3rem;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.32);
+    color: #20162e;
+    /* Card height matches the poster (2:3 aspect → tile-width * 1.5).
+       Locked top + bottom so the card lines up with the focused
+       poster's visible bounds; align-self: center on the wrapper
+       handles vertical centering against the row's layout height
+       (which includes the under-poster title). */
+    width: 100%;
+    height: calc(var(--browse-tile-width) * 1.5);
+    box-sizing: border-box;
+    display: flex;
+    align-items: stretch;
+    overflow: hidden;
+}
+.focused-meta-card-inner {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+}
+.focused-meta-card-title {
+    font-family: "DynaPuff", "Cause", -apple-system, BlinkMacSystemFont,
+        "Segoe UI", Roboto, sans-serif;
+    font-size: 1.6rem;
+    font-weight: 700;
+    line-height: 1.1;
+    margin: 0 0 0.3rem;
+    color: #20162e;
+    /* Two-line clamp so a long title doesn't crowd the body. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.focused-meta-card-meta {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: rgba(32, 22, 46, 0.7);
+    margin: 0 0 0.55rem;
+    letter-spacing: 0.02em;
+}
+.focused-meta-card-overview {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 0.92rem;
+    line-height: 1.4;
+    color: rgba(32, 22, 46, 0.85);
+    margin: 0;
+}
+.focused-meta-card-empty {
+    color: rgba(32, 22, 46, 0.45);
+    font-style: italic;
+}
+.focused-meta-card-clamp-2,
+.focused-meta-card-clamp-3 {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.focused-meta-card-clamp-2 {
+    -webkit-line-clamp: 2;
+}
+.focused-meta-card-clamp-3 {
+    -webkit-line-clamp: 3;
+}
+.focused-meta-card-next-ep {
+    margin-top: auto;
+    padding-top: 0.6rem;
+    border-top: 1px solid rgba(32, 22, 46, 0.15);
+}
+.focused-meta-card-next-ep-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: rgba(32, 22, 46, 0.6);
+    margin: 0 0 0.15rem;
+}
+.focused-meta-card-next-ep-headline {
+    font-family: "DynaPuff", "Cause", -apple-system, BlinkMacSystemFont,
+        "Segoe UI", Roboto, sans-serif;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #20162e;
+    margin: 0;
+    /* Single line so a long episode name doesn't stretch the card. */
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* 720p tightening to match the smaller --browse-tile-width. The card
+   shrinks proportionally so it stays visually paired with the
+   focused tile rather than dwarfing it. */
+@media (max-height: 800px) {
+    .focused-meta-card-fade {
+        width: 320px;
+    }
+    .focused-meta-card {
+        padding: 0.85rem 1rem;
+        border-radius: 14px;
+    }
+    .focused-meta-card-title {
+        font-size: 1.35rem;
+    }
+    .focused-meta-card-meta {
+        font-size: 0.82rem;
+        margin: 0 0 0.4rem;
+    }
+    .focused-meta-card-overview {
+        font-size: 0.85rem;
+    }
+    .focused-meta-card-next-ep-label {
+        font-size: 0.65rem;
+    }
+    .focused-meta-card-next-ep-headline {
+        font-size: 0.9rem;
+    }
+}
+
