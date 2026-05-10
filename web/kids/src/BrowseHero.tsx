@@ -78,7 +78,6 @@ export type HeroDetail = {
         episodeName: string;
         seasonNumber?: number;
         episodeNumber?: number;
-        overview: string;
         playedPercentage: number;
         played: boolean;
     };
@@ -192,22 +191,11 @@ function BrowseHeroImpl({ item, adminPreview, adminProfileId }: BrowseHeroProps)
                     const nextUpBody = await fetchNextUp(nextUpURL, ac.signal);
                     if (ac.signal.aborted) return;
                     if (nextUpBody?.episodeId) {
-                        // Follow-up fetch for the episode's own
-                        // overview. Same /items/:id endpoint - returns
-                        // empty overview until t1 lands; we degrade
-                        // gracefully.
-                        const epURL = buildItemURL(
-                            nextUpBody.episodeId,
-                            adminProfileId,
-                        );
-                        const epBody = await fetchItemBody(epURL, ac.signal);
-                        if (ac.signal.aborted) return;
                         nextEp = {
                             episodeId: nextUpBody.episodeId,
                             episodeName: nextUpBody.name,
                             seasonNumber: nextUpBody.parentIndexNumber,
                             episodeNumber: nextUpBody.indexNumber,
-                            overview: epBody?.overview ?? "",
                             playedPercentage:
                                 nextUpBody.userData?.PlayedPercentage ?? 0,
                             played: !!nextUpBody.userData?.Played,
@@ -309,32 +297,22 @@ function SeriesHeroBody({
 
 function NextEpBlock({ nextEp }: { nextEp: NonNullable<HeroDetail["nextEp"]> }) {
     // Label tracks the kid's relationship to this episode:
-    //   - resume in progress       -> "Continue with..."
-    //   - never started but exists -> "Start with..."
-    //   - whole series finished    -> "Watch again..." (resume cycled
+    //   - resume in progress       -> "Continue"
+    //   - never started but exists -> "Next up"
+    //   - whole series finished    -> "Watch again" (resume cycled
     //                                  back to S1E1; relies on
     //                                  GetNextUp's behavior).
     const label = (() => {
-        if (nextEp.played) return "Watch again...";
-        if (nextEp.playedPercentage > 0) return "Continue with...";
-        return "Start with...";
+        if (nextEp.played) return "Watch again";
+        if (nextEp.playedPercentage > 0) return "Continue";
+        return "Next up";
     })();
     const sxe = formatSxE(nextEp.seasonNumber, nextEp.episodeNumber);
     const headline = sxe ? `${sxe} · ${nextEp.episodeName}` : nextEp.episodeName;
-    const epOverview = nextEp.overview.trim();
     return (
         <div className="browse-hero-next-ep">
             <div className="browse-hero-next-ep-label">{label}</div>
             <div className="browse-hero-next-ep-headline">{headline}</div>
-            {epOverview ? (
-                <p className="browse-hero-next-ep-overview browse-hero-clamp-3">
-                    {epOverview}
-                </p>
-            ) : (
-                <p className="browse-hero-next-ep-overview browse-hero-empty-line">
-                    (no description)
-                </p>
-            )}
         </div>
     );
 }
