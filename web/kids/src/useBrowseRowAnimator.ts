@@ -61,8 +61,25 @@ export function useBrowseRowAnimator(
     const tileAdvanceRef = useRef<number | null>(null);
 
     function measureTileAdvance(el: HTMLDivElement): number {
-        const firstChild = el.firstElementChild as HTMLElement | null;
-        const tileWidth = firstChild?.offsetWidth ?? 0;
+        // Walk the children looking for a "normal" (unfocused, non-
+        // metadata-card) tile. The focused tile is wider in t32 (it
+        // grows a metadata wing), and the metadata card is itself a
+        // sibling flex item; either would blow the measurement. Any
+        // tile in the row works for the advance because every
+        // unfocused tile is the same width. If the row is empty or
+        // every child is currently widened, fall back to whatever the
+        // first child measures - the next focus change will re-
+        // measure once a normal tile is laid out.
+        const children = Array.from(el.children) as HTMLElement[];
+        let sample: HTMLElement | null = null;
+        for (const child of children) {
+            if (child.classList.contains("focused-meta-card-fade")) continue;
+            if (child.classList.contains("focused")) continue;
+            sample = child;
+            break;
+        }
+        if (!sample) sample = children[0] ?? null;
+        const tileWidth = sample?.offsetWidth ?? 0;
         const gapPx = parseFloat(getComputedStyle(el).gap) || 0;
         return tileWidth + gapPx;
     }

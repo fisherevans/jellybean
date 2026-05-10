@@ -1,4 +1,5 @@
 import {
+    Fragment,
     useCallback,
     useEffect,
     useMemo,
@@ -19,7 +20,7 @@ import {
 import { TAG_ICONS, isTagIconName } from "jellybean-shared";
 import OverrideModal, { useLongPressEnter } from "./OverrideModal";
 import { useItemHiddenEvent } from "./itemHidden";
-import BrowseHero from "./BrowseHero";
+import FocusedTileMetaCard, { useFocusedItemDetail } from "./BrowseHero";
 import Tile from "./Tile";
 import { useBrowseRowAnimator } from "./useBrowseRowAnimator";
 import { useProgressiveBack } from "./useProgressiveBack";
@@ -209,6 +210,17 @@ export default function Browse() {
     const focusedItem = !tabFocused && data
         ? data.rows[focus.row]?.items[focus.col]
         : undefined;
+    // Detail fetch for the focused tile's metadata card. Owns the
+    // per-Browse-mount cache (so the kid arrowing back to a previously-
+    // focused tile reads from cache instantly) and aborts any in-
+    // flight call when focus moves on. Returns null while the fetch
+    // is in flight or when no tile is focused; the card falls back
+    // to the synchronous title + meta from the BrowseItem.
+    const focusedDetail = useFocusedItemDetail(
+        focusedItem,
+        !session,
+        adminProfileId,
+    );
     const handleShortPress = useCallback(() => {
         if (!data) return;
         const row = data.rows[focus.row];
@@ -847,11 +859,6 @@ export default function Browse() {
     return (
         <div className="browse">
             <div className="browse-stack" ref={stackRef}>
-            <BrowseHero
-                item={focusedItem}
-                adminPreview={!session}
-                adminProfileId={adminProfileId}
-            />
             {data.rows.map((row, rIdx) => {
                 // Each row's targetCol drives useBrowseRowAnimator:
                 // active row tracks the kid's focus.col, inactive rows
@@ -901,25 +908,54 @@ export default function Browse() {
                                         !tabFocused &&
                                         focus.row === rIdx &&
                                         focus.col === cIdx;
+                                    // Inject the focused-tile metadata
+                                    // card immediately after the focused
+                                    // tile inside this row's track. The
+                                    // wrapper key is stable ("__meta__")
+                                    // so React moves the same DOM node
+                                    // when the kid arrows within the
+                                    // row instead of remounting -
+                                    // useFocusedItemDetail already keys
+                                    // its cache by item id so the card's
+                                    // body reflects the new focus on
+                                    // the next render. The inner key
+                                    // (item.Id) re-triggers the fade-in
+                                    // animation per landed tile.
+                                    const showMetaAfter =
+                                        rowActive && focusedItem &&
+                                        focusedItem.Id === item.Id;
                                     return (
-                                        <Tile
-                                            key={item.Id}
-                                            item={item}
-                                            size="browse"
-                                            focused={focused}
-                                            showProgress
-                                            priority={rowImagePriority}
-                                            onClick={() => {
-                                                rememberLastFocused(item.Id);
-                                                nav(`/watch/${encodeURIComponent(item.Id)}${location.search}`);
-                                            }}
-                                            onFocus={() =>
-                                                setFocus({ kind: "tile", row: rIdx, col: cIdx })
-                                            }
-                                            refCallback={(el) =>
-                                                (tileRefs.current[key] = el)
-                                            }
-                                        />
+                                        <Fragment key={item.Id}>
+                                            <Tile
+                                                item={item}
+                                                size="browse"
+                                                focused={focused}
+                                                showProgress
+                                                priority={rowImagePriority}
+                                                onClick={() => {
+                                                    rememberLastFocused(item.Id);
+                                                    nav(`/watch/${encodeURIComponent(item.Id)}${location.search}`);
+                                                }}
+                                                onFocus={() =>
+                                                    setFocus({ kind: "tile", row: rIdx, col: cIdx })
+                                                }
+                                                refCallback={(el) =>
+                                                    (tileRefs.current[key] = el)
+                                                }
+                                            />
+                                            {showMetaAfter && focusedItem && (
+                                                <div
+                                                    key={focusedItem.Id}
+                                                    className="focused-meta-card-fade"
+                                                >
+                                                    <FocusedTileMetaCard
+                                                        item={focusedItem}
+                                                        detail={focusedDetail}
+                                                        adminPreview={!session}
+                                                    />
+                                                </div>
+                                            )}
+                                        </Fragment>
                                     );
                                 })}
                                 <TerminalTile
