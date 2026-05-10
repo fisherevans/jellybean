@@ -4856,3 +4856,117 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
 .library.keyboard-open .kids-keyboard-wrap:not(.kids-keyboard-focused) {
     opacity: 0.85;
 }
+
+/* ===== Browse layout fixes (t18) =====
+   Three issues observed on the kid TV after t5/t14 shipped the
+   BrowseHero panel:
+     1. Hero pushed row 0 below the visible viewport so the kid had
+        to scroll down to see any tiles. Fix here shrinks the hero
+        (smaller title, tighter clamps, lower min-height + a hard
+        max-height) so row 0 stays in frame.
+     2. The blue accent on .browse-row-active .browse-row-title
+        added noise on top of the already-strong tile focus ring.
+        We zero out the color override so the row title stays the
+        normal white shadowed title.
+     3. Tiles scrolling under the still-on-screen TabPill peeked
+        through gaps in the TabPill (pill highlight occluded a
+        horizontal slice of the tile, gaps revealed the rest).
+        We add a top-anchored gradient scrim on the slot that
+        masks tiles in the TabPill area while keeping the rainbow
+        bg readable above and around the pill. */
+
+/* Fix 1: shrink the hero. Overrides .browse-hero defined earlier. */
+.browse-hero,
+.browse-hero.browse-hero-empty {
+    /* Was 15rem -- way too tall on a 720p viewport (TabPill 90px +
+       hero 240px + row 0 ~400px overran the bottom). 8rem keeps the
+       title + meta + a single overview line visible while leaving
+       headroom for row 0 to sit above the fold. */
+    min-height: 8rem;
+    /* Hard max so a long overview or a series with a next-ep block
+       can't grow the hero past what we reserved. Combined with the
+       reduced line clamps below, content reliably fits. */
+    max-height: 9rem;
+    padding: 0.35rem var(--browse-cursor-x, 1.5rem) 0.5rem;
+    margin: 0 0 0.25rem;
+    overflow: hidden;
+}
+.browse-hero-title {
+    /* Was 2.6rem with clamp-2; the doubled-up display title was
+       most of the hero's vertical weight. Single line at 1.6rem
+       reads as a secondary heading - the focused tile already
+       carries the visual title, the hero just adds context. */
+    font-size: 1.6rem;
+    line-height: 1.15;
+    -webkit-line-clamp: 1;
+    margin: 0 0 0.15rem;
+}
+.browse-hero-meta {
+    font-size: 0.9rem;
+    margin: 0 0 0.25rem;
+}
+.browse-hero-overview {
+    font-size: 0.9rem;
+    line-height: 1.3;
+}
+/* Movies render up to 2 overview lines; series overviews collapse
+   to 1 line so the next-ep block (label + headline) always fits
+   inside max-height. .browse-hero-clamp-2 is set on series, -3 / -4
+   on movies. Old values were 2/3/4; new caps keep total content
+   inside the 9rem hero. */
+.browse-hero-clamp-2 {
+    -webkit-line-clamp: 1;
+}
+.browse-hero-clamp-3,
+.browse-hero-clamp-4 {
+    -webkit-line-clamp: 2;
+}
+.browse-hero-next-ep {
+    margin: 0.25rem 0 0;
+    padding: 0.2rem 0 0;
+}
+.browse-hero-next-ep-label {
+    font-size: 0.75rem;
+    margin: 0;
+}
+.browse-hero-next-ep-headline {
+    font-size: 1rem;
+    margin: 0;
+    /* Single line so the next-ep block stays inside the hero's
+       max-height even with a long episode name. */
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Fix 2: drop the blue tint on the active row's title. The class
+   stays on the row so other selectors can hang off it later, but the
+   color cue is gone (the focused tile + its scale + ring are loud
+   enough on their own). Resets to .browse-row-title's normal color
+   (white on the rainbow bg). */
+.browse-row-active .browse-row-title {
+    color: inherit;
+}
+
+/* Fix 3: masking scrim behind the TabPill so tiles scrolling under
+   it don't get visually sliced by the pill chrome. The slot already
+   transforms with --kids-scroll-y, so the scrim scrolls in lockstep
+   with the TabPill and disappears when the kid has scrolled far
+   enough that the pill is off-screen. A gradient (darker at top,
+   transparent at the bottom edge) keeps the seam with the rainbow
+   bg below the slot from being abrupt. Solid color only - no
+   backdrop-filter blur, since that's paint-time on the Skyworth
+   WebView and the perf docs explicitly call it out. */
+.kids-tabpill-slot {
+    background: linear-gradient(
+        to bottom,
+        rgba(20, 12, 32, 0.55) 0%,
+        rgba(20, 12, 32, 0.45) 55%,
+        rgba(20, 12, 32, 0) 100%
+    );
+    /* Pin a minimum slot height so the scrim covers the full
+       --kids-tabpill-height area even if the TabPill renders
+       slightly shorter than 90px (DynaPuff metrics vary). */
+    min-height: var(--kids-tabpill-height, 90px);
+}
