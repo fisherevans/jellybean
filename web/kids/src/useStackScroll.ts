@@ -188,10 +188,21 @@ export function useStackScroll(): StackScroll {
             // viewport's vertical center; adding it to the live
             // stack Y gives the absolute target that puts the
             // element back at center.
+            //
+            // Clamp the target to <= 0: the stack's natural top is
+            // at Y=0, and "scrolled down" is negative Y (the stack
+            // translates upward to reveal content below). When the
+            // focused element is already in the upper half of the
+            // viewport, naive centering produces a positive target
+            // - translating the stack DOWN past natural top and
+            // leaving a transparent gap above the first card. The
+            // clamp pins those cases to top instead. Cards in the
+            // lower half still get centered normally.
             const rect = el.getBoundingClientRect();
             const elCenter = rect.top + rect.height / 2;
             const delta = window.innerHeight / 2 - elCenter;
-            setStackY(yRef.current + delta, snap);
+            const target = Math.min(0, yRef.current + delta);
+            setStackY(target, snap);
         },
         [setStackY],
     );
