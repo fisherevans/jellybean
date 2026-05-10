@@ -8,10 +8,20 @@ import type { Item } from "./item";
  * BrowseItem is the per-tile payload in a browse row. The server emits
  * a subset of Item fields - no Genres / Studios / etc. - to keep the
  * row response small for slow TVs.
+ *
+ * `ProductionYear` and `RunTimeTicks` are present so the M8 browse
+ * hero panel can render the year + runtime line synchronously off the
+ * focused tile without a follow-up `/items/:id` fetch.
  */
 export type BrowseItem = Pick<
     Item,
-    "Id" | "Name" | "Type" | "ImageTags" | "UserData"
+    | "Id"
+    | "Name"
+    | "Type"
+    | "ProductionYear"
+    | "RunTimeTicks"
+    | "ImageTags"
+    | "UserData"
 >;
 
 /**
