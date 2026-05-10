@@ -5244,17 +5244,59 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
     overflow: hidden;
 }
 
-/* Bug 2 fix (t25): scrim removed. Both the t18 soft-gradient and
-   the t22 near-opaque dark band read as visually intrusive on the
-   rainbow bg - the user prefers seeing the bg + half-tiles through
-   the TabPill area to a black bar across the top of the screen.
-   This rule strips the background entirely and keeps the slot's
-   reserved height so the TabPill itself still lays out the same.
-   No replacement scrim - if the seam between TabPill and tiles
-   below ever needs softening, do it as a low-alpha (~5-8%) shadow
-   on the TabPill itself, not a full-slot gradient. */
+/* Bug 2 fix (t30): pin the TabPill slot at the top of the viewport
+   so it stops scrolling out of view with the content, and clad it
+   in the same rainbow tile the page bg uses so it acts as a
+   seamless mask for tiles passing underneath.
+
+   t18's scrim was too transparent, t22's bumped opacity read as a
+   dark band, t25 removed the scrim entirely and the underlying
+   "tiles clip at the top of the viewport" complaint came back. The
+   fix here is structural rather than cosmetic: keep the TabPill
+   anchored to the top of the viewport (no transform), give the
+   slot the same rainbow bg as .kids-home-bg with the same
+   --kids-bg-pos-y / --kids-bg-offset-y wiring, and let tiles pass
+   beneath the slot's z-index: 2 invisibly. No dark band, no half-
+   cut tiles, and the TabPill stays usable at any scroll depth.
+
+   Override order: this rule appears AFTER the t18 + t25 blocks
+   above so it wins matching specificity. The transform reset is
+   important - the slot's earlier rule sets translate3d(0, --kids-
+   scroll-y, 0); we override that to none to pin the slot in
+   place.
+
+   Background composition: the rainbow tile SVG contains alpha-
+   blended gradients (stop-opacity 0.75-0.9), so the SVG alone
+   doesn't fully mask tiles passing under the slot - the kid sees
+   the tile silhouette through the pill's flanks. We layer the
+   SVG over var(--page-bg) (the same cream the body renders, which
+   .kids-home-bg also composites over) so the composite is opaque
+   and matches what's rendered at the same position behind the
+   content stack. Position-y wires to the same CSS variables
+   .kids-home-bg uses, so the seam between the slot and the bg
+   layer is invisible at any scroll depth. */
 .kids-tabpill-slot {
-    background: none;
+    /* SVG tile on top of an opaque cream base. background-color
+       paints behind background-image, so the SVG's alpha-blended
+       gradients composite over the cream rather than over the
+       (transparent) slot - tiles passing beneath are fully masked.
+       Position-y wires to the same CSS variables .kids-home-bg uses
+       so the seam between the slot's tile and the page's tile is
+       invisible at any scroll depth. */
+    background-color: var(--bg);
+    background-image: url("/player/browse-bg-tile.svg");
+    background-repeat: repeat-y;
+    background-size: 100% auto;
+    background-position-y: var(
+        --kids-bg-pos-y,
+        var(--kids-bg-offset-y, 0)
+    );
+    /* Pin to viewport top. Overrides the earlier rule that
+       translates the slot in lockstep with the content stack
+       (transform: translate3d(0, var(--kids-scroll-y), 0)). With
+       the slot pinned, tiles in .browse-stack scroll beneath it
+       and the rainbow base masks them. */
+    transform: none;
     min-height: var(--kids-tabpill-height, 90px);
 }
 
