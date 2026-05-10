@@ -239,11 +239,11 @@ export default function Library() {
     const [filterOpen, setFilterOpen] = useState(false);
     const [sortOpen, setSortOpen] = useState(false);
     const [keyboardOpen, setKeyboardOpen] = useState(false);
-    // One-shot: open the keyboard automatically the first time search
-    // gets focus after mount. After that, opens are explicit (Enter on
-    // the focused search wrap or click). Prevents the keyboard from
-    // popping back open every time the kid arrows back up to search.
-    const searchAutoOpenedRef = useRef(false);
+    // The keyboard opens explicitly: Enter on the focused search wrap
+    // (D-pad path) or a pointer click (admin preview / desktop test).
+    // Earlier revisions auto-opened on first focus, but the kid keeps
+    // arrowing up to search after typing - re-popping the keyboard
+    // every time was annoying.
     const [searchInput, setSearchInput] = useState("");
     const [searchDebounced, setSearchDebounced] = useState("");
     useEffect(() => {
@@ -549,16 +549,9 @@ export default function Library() {
         if (focus.kind === "search") {
             searchWrapRef.current?.focus({ preventScroll: true });
             stack.scrollToTop();
-            // Auto-open the keyboard the first time search gets focus
-            // after the page mounts (matches the spec: "when the kid
-            // ... focuses it for the first time after the page mounts,
-            // open the keyboard"). One-shot via the ref so re-entries
-            // (kid arrows back up from grid to search) don't keep
-            // re-popping the keyboard.
-            if (!searchAutoOpenedRef.current) {
-                searchAutoOpenedRef.current = true;
-                setKeyboardOpen(true);
-            }
+            // Keyboard does NOT auto-open on focus. The kid presses
+            // Enter on the focused search wrap to open it (handled by
+            // moveControls -> openSearch).
             return;
         }
         const el = chromeRefs.current[focus.kind];
