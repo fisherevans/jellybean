@@ -4854,3 +4854,60 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
 .library.keyboard-open .kids-keyboard-wrap:not(.kids-keyboard-focused) {
     opacity: 0.7;
 }
+
+/* ===== Keyboard graphics polish (t19) =====
+   Three small adjustments on top of t15/t16:
+   - Letter font in cells bumped from 1.25rem to 1.75rem so the glyph
+     fills more of the cell. Letters stay readable at 720p (verified
+     at 1280x720 in the dev viewport).
+   - SPACE label moves ABOVE the bracket plate (the TSX swap reorders
+     the children; the CSS here just sizes the legend bigger - ~1.1em
+     of the cell font, matching keycap legend proportions).
+   - Bracket plate left untouched visually except for the order swap.
+
+   These selectors sit after the t15/t16 blocks so equal-specificity
+   rules win by source order. */
+.kids-keyboard-key {
+    font-size: 1.75rem;
+}
+.kids-keyboard-key-space .kids-keyboard-space-label {
+    font-size: 1.1em;
+    letter-spacing: 0.22em;
+}
+.kids-keyboard-key-space .kids-keyboard-space-glyph {
+    /* Tighter vertical gap so the legend + bar read as one keycap
+       rather than two stacked elements with air between them. */
+    gap: 0.15rem;
+}
+.kids-keyboard-key-space .kids-keyboard-space-bar {
+    /* Slightly thinner bar so the (now-larger) legend has the visual
+       weight, and the bracket reads as a secondary indicator. */
+    height: 0.35rem;
+    width: min(55%, 220px);
+}
+
+/* 720p sanity guard. The Skyworth TV runs at 1280x720; at that height
+   the 8-row grid + card padding squeezes cells enough that the
+   1.75rem letter from above starts to crowd. Knock the letter font
+   back a notch and tighten the inner padding so cells stay
+   proportional without ever overflowing. The SPACE legend follows
+   suit so it stays balanced against the letters around it. */
+@media (max-height: 800px) {
+    .kids-keyboard-key {
+        font-size: 1.45rem;
+        padding: 0.55rem 0.4rem;
+    }
+    .kids-keyboard-key-space .kids-keyboard-space-label {
+        font-size: 1em;
+        letter-spacing: 0.2em;
+    }
+    .kids-keyboard-key-space .kids-keyboard-space-bar {
+        height: 0.3rem;
+    }
+    .library.keyboard-open .kids-keyboard-card {
+        padding: 0.75rem;
+    }
+    .library.keyboard-open .kids-keyboard-grid {
+        gap: 0.4rem;
+    }
+}

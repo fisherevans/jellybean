@@ -225,15 +225,21 @@ function rgbToCss(rgb: RGB, alpha = 1): string {
 
 // Three-color palettes pulled from the kid-friendly visual language
 // already used elsewhere in the app (rainbow page bg, browse hero
-// gradients). Yellow is intentionally absent - low contrast on white.
+// gradients). t19 picks anchors with MORE hue separation (e.g. blue
+// paired with red instead of blue paired with purple) so the cascade
+// across the 6x8 grid reads as a clear corner-to-corner shift, not a
+// subtle blend. Saturation is bumped on the anchors so the cells pop
+// against the white panel. Yellow is intentionally absent - low
+// contrast on white.
 const PALETTES: [string, string, string][] = [
-    ["#2679ff", "#8b5cf6", "#d92b6f"], // blue / purple / pink
-    ["#10b981", "#2679ff", "#8b5cf6"], // green / blue / purple
-    ["#f97316", "#d92b6f", "#8b5cf6"], // orange / pink / purple
-    ["#e05a3a", "#f59e0b", "#10b981"], // red / orange / green
-    ["#6366f1", "#10b981", "#f97316"], // indigo / green / orange
-    ["#a855f7", "#2679ff", "#34d399"], // purple / blue / mint
-    ["#d92b6f", "#6366f1", "#10b981"], // pink / indigo / green
+    ["#0066ff", "#ff1a4d", "#00c853"], // blue / red / green
+    ["#00b86b", "#0048d6", "#e60053"], // green / deep-blue / magenta
+    ["#ff5722", "#aa00ff", "#00b3ff"], // orange / violet / cyan
+    ["#d10031", "#ff8a00", "#00875a"], // red / orange / forest
+    ["#3a00d6", "#00b896", "#ff4a1f"], // indigo / teal / red-orange
+    ["#c300ff", "#0073ff", "#00d65a"], // magenta / blue / lime
+    ["#ff006a", "#3300cc", "#00a86b"], // hot-pink / deep-purple / green
+    ["#0099ff", "#ff2a5b", "#7a00e6"], // cyan-blue / coral-red / violet
 ];
 
 // Theme captured at open-time. We pick a palette + assign each color
@@ -268,16 +274,32 @@ function pickTheme(): Theme {
 //   TL = (col=0, row=0)
 //   TR = (col=COLS-1, row=0)
 //   B  = (col=(COLS-1)/2, row=ROWS-1)
-// Weights sum to 1 by construction; the result is clamped to [0,1]
-// per channel implicitly via the anchor RGBs already being valid.
+// t19: a gamma curve (exponent < 1) is applied to each barycentric
+// weight before normalization. This pushes cells closer to a corner
+// further into that corner's color rather than spending most of the
+// grid in the muddy mid-blend. Visually: a clear shift from one
+// corner to the next instead of "everything looks slightly purple."
+// Weights are then re-normalized so they sum to 1 and the output
+// stays inside the anchor triangle.
+const CASCADE_GAMMA = 0.55;
 function cellColor(theme: Theme, row: number, col: number): RGB {
     const u = (COLS - 1) === 0 ? 0 : col / (COLS - 1); // 0..1 across cols
     const v = (ROWS - 1) === 0 ? 0 : row / (ROWS - 1); // 0..1 down rows
-    // Barycentric weights: bottom corner pulls in proportional to v;
-    // top corners share the remainder weighted by u.
-    const wB = v;
-    const wTL = (1 - v) * (1 - u);
-    const wTR = (1 - v) * u;
+    // Raw barycentric weights: bottom corner pulls in proportional to
+    // v; top corners share the remainder weighted by u.
+    let wTL = (1 - v) * (1 - u);
+    let wTR = (1 - v) * u;
+    let wB = v;
+    // Push each weight via gamma < 1 so values near 1 stay near 1 but
+    // mid-range values get amplified toward 1. The dominant corner
+    // becomes more dominant after re-normalization.
+    wTL = Math.pow(wTL, CASCADE_GAMMA);
+    wTR = Math.pow(wTR, CASCADE_GAMMA);
+    wB = Math.pow(wB, CASCADE_GAMMA);
+    const wSum = wTL + wTR + wB || 1;
+    wTL /= wSum;
+    wTR /= wSum;
+    wB /= wSum;
     const r = theme.cTL[0] * wTL + theme.cTR[0] * wTR + theme.cB[0] * wB;
     const g = theme.cTL[1] * wTL + theme.cTR[1] * wTR + theme.cB[1] * wB;
     const b = theme.cTL[2] * wTL + theme.cTR[2] * wTR + theme.cB[2] * wB;
@@ -701,25 +723,28 @@ function renderKeyContent(kind: KeyKind["kind"], label: string) {
         case "char":
             return label;
         case "space":
+            // Label first, bar second: with the parent flex column
+            // these stack as SPACE on top, bracket below. The plate
+            // mimics a keycap with its legend above the spacebar.
             return (
                 <span className="kids-keyboard-space-glyph" aria-hidden>
-                    <span className="kids-keyboard-space-bar" />
                     <span className="kids-keyboard-space-label">SPACE</span>
+                    <span className="kids-keyboard-space-bar" />
                 </span>
             );
         case "backspace":
             return (
                 <BackspaceIcon
                     weight="bold"
-                    size="1.6em"
+                    size="1.9em"
                     aria-hidden
                 />
             );
         case "clear":
-            return <Eraser weight="bold" size="1.6em" aria-hidden />;
+            return <Eraser weight="bold" size="1.9em" aria-hidden />;
         case "done":
             return (
-                <CheckCircle weight="fill" size="1.6em" aria-hidden />
+                <CheckCircle weight="fill" size="1.9em" aria-hidden />
             );
     }
 }
