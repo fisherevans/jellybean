@@ -271,6 +271,15 @@ export default function Library() {
             initialFocus: { kind: "search" },
             getFirstContentSlot: () => ({ kind: "search" }),
             scrollToTop: () => stack.setStackY(0, true),
+            // Back-then-down should reset, not restore. See the
+            // matching reset in the useProgressiveBack handler below
+            // for the keyboard-open path; this branch fires when the
+            // kid was in the grid with the keyboard closed.
+            onTabReset: () => {
+                lastGridFocusRef.current = { section: 0, item: 0 };
+                lastKeyboardPosRef.current = { row: 1, col: 1 };
+                lastContentPaneRef.current = null;
+            },
             tabNav: {
                 tabFocused: homeCtx.tabFocused,
                 setTabFocused: homeCtx.setTabFocused,
@@ -692,17 +701,37 @@ export default function Library() {
                 setTabFocused(true);
                 return;
             }
+            // Activation (Enter / Space) on the chrome controls.
+            // Handled here rather than inside moveControls so the
+            // modal-open state setters fire as plain side effects
+            // instead of being invoked from inside another setter's
+            // updater (which made the click never reach React's
+            // commit phase reliably on the WebView).
+            if (k === "Enter" || k === " ") {
+                if (focus.kind === "filter") {
+                    setFilterOpen(true);
+                    return;
+                }
+                if (focus.kind === "sort") {
+                    setSortOpen(true);
+                    return;
+                }
+                if (focus.kind === "alphaBtn") {
+                    setAlphaModalOpen(true);
+                    return;
+                }
+                if (focus.kind === "search") {
+                    setKeyboardOpen(true);
+                    setFocus({ kind: "keyboard" });
+                    return;
+                }
+                return;
+            }
             setFocus((f) =>
                 moveControls(
                     f,
                     k,
                     sections,
-                    {
-                        setFilterOpen,
-                        setSortOpen,
-                        setAlphaModalOpen,
-                        openSearch: () => setKeyboardOpen(true),
-                    },
                     keyboardOpen,
                     {
                         // ArrowDown from search returns to whichever
@@ -774,15 +803,38 @@ export default function Library() {
             // fall through here. Back from the grid in that state
             // moves focus to the search input rather than closing the
             // keyboard - the kid can keep typing without re-popping it.
+            //
+            // Back from the grid is "I'm done with this list, take me
+            // home" - reset the position memory so a follow-up
+            // ArrowDown lands on the first tile rather than restoring
+            // the buried cell the kid just walked away from. UP-then-
+            // DOWN is the gesture that restores; BACK-then-DOWN starts
+            // fresh.
             if (keyboardOpen && focus.kind !== "keyboard") {
+                // Back from the grid (keyboard open as a sibling
+                // pane). Keep the "last pane was the grid" flag so a
+                // follow-up ArrowDown re-engages the grid rather than
+                // re-popping the keyboard the kid just walked away
+                // from, but reset the cell so we land on (0, 0)
+                // instead of restoring the buried tile. Back from a
+                // chrome control (filter / sort / alpha) leaves the
+                // memory alone - the kid wasn't in the grid; clearing
+                // would surprise their next ArrowDown.
+                if (focus.kind === "grid") {
+                    lastGridFocusRef.current = { section: 0, item: 0 };
+                    lastContentPaneRef.current = "grid";
+                }
                 setFocus({ kind: "search" });
                 return true;
             }
             // Belt-and-suspenders: if the keyboard's own back fired
             // and somehow returned false while focused (race between
             // setKeyboardOpen(true) and the child's effect-time push),
-            // close the keyboard from here.
+            // close the keyboard from here. Reset the keyboard
+            // position too so the next open lands on "A".
             if (keyboardOpen) {
+                lastKeyboardPosRef.current = { row: 1, col: 1 };
+                lastContentPaneRef.current = null;
                 setKeyboardOpen(false);
                 setFocus({ kind: "search" });
                 return true;
@@ -1031,6 +1083,14 @@ export default function Library() {
                         }
                     }}
                     onClose={() => {
+                        // Back from the keyboard while focused on it.
+                        // Treat as "I'm done typing, take me up" -
+                        // reset the cell memory so a re-open lands on
+                        // "A" rather than the cell the kid backed
+                        // out of. UP from the top row preserves the
+                        // memory (handled by onExitUp); BACK does not.
+                        lastKeyboardPosRef.current = { row: 1, col: 1 };
+                        lastContentPaneRef.current = null;
                         setKeyboardOpen(false);
                         setFocus({ kind: "search" });
                     }}
@@ -1170,13 +1230,6 @@ function AdminPreviewBanner() {
     );
 }
 
-type ActivateHandlers = {
-    setFilterOpen: (v: boolean) => void;
-    setSortOpen: (v: boolean) => void;
-    setAlphaModalOpen: (v: boolean) => void;
-    openSearch: () => void;
-};
-
 type PositionMemory = {
     /** null means "the kid hasn't visited a content pane yet this
      *  session." ArrowDown from search then falls back to keyboard
@@ -1192,30 +1245,15 @@ type PositionMemory = {
 // below the controls row) and to the first grid cell otherwise. Down
 // from filter/sort/jump still goes to the grid - the keyboard isn't
 // to their visual left, so steering them into it would feel
-// arbitrary. Up off the row is handled by the page's keydown listener
-// separately.
+// arbitrary. Up off the row + Enter/Space activation are handled by
+// the page's keydown listener separately.
 function moveControls(
     f: Focus,
     key: string,
     sections: GridSection<LibraryItem>[],
-    h: ActivateHandlers,
     keyboardOpen: boolean,
     mem: PositionMemory,
 ): Focus {
-    if (key === "Enter" || key === " ") {
-        if (f.kind === "filter") h.setFilterOpen(true);
-        else if (f.kind === "sort") h.setSortOpen(true);
-        else if (f.kind === "alphaBtn") h.setAlphaModalOpen(true);
-        else if (f.kind === "search") {
-            h.openSearch();
-            // Hand focus to the keyboard so its listener takes over
-            // immediately. Library's effect that follows focus.kind
-            // skips the DOM-focus dance for "keyboard" - the keyboard
-            // owns its internal focus state.
-            return { kind: "keyboard" };
-        }
-        return f;
-    }
     // Build the "first grid" / "remembered grid" candidate, clamped
     // against the current sections shape so a stale memory from a
     // previous filter/sort doesn't overshoot.
