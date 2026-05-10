@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -311,6 +312,62 @@ func TestAdminSetStateRecordsHistoryWithSetBy(t *testing.T) {
 	}
 	if resp.Entries[0]["changedBy"] != "admin-user" {
 		t.Errorf("changedBy = %v, want admin-user", resp.Entries[0]["changedBy"])
+	}
+}
+
+// TestRunStartupReconcileMarksOrphans covers the daemon-boot self-heal
+// that fixes the "ghost tile" 404 bug: visible categorizations whose
+// Jellyfin items have disappeared get tombstoned, ProfileMaxSetAt
+// advances, and the kid client's next If-None-Match cycles to a fresh
+// response instead of a stale 304.
+func TestRunStartupReconcileMarksOrphans(t *testing.T) {
+	library := makeItems(5)
+	srv, _ := newTestServer(t, library)
+	profileID := defaultProfileID(t, srv)
+	ctx := t.Context()
+
+	visible := curation.StateVisible
+	for _, it := range library {
+		if _, err := srv.curation.SetState(ctx, it.ID, profileID, &visible, "admin"); err != nil {
+			t.Fatalf("SetState %s: %v", it.ID, err)
+		}
+	}
+	// Mark a row visible for an item that doesn't exist in Jellyfin -
+	// this is the "ghost" the reconciler should tombstone.
+	if _, err := srv.curation.SetState(ctx, "item-deleted", profileID, &visible, "admin"); err != nil {
+		t.Fatalf("SetState ghost: %v", err)
+	}
+
+	maxSetAtBefore, err := srv.curation.ProfileMaxSetAt(ctx, profileID)
+	if err != nil {
+		t.Fatalf("ProfileMaxSetAt before: %v", err)
+	}
+
+	// Wait long enough that unixepoch() in MarkOrphan ticks past the
+	// SetState writes above. SQLite's unixepoch() is second-precision.
+	time.Sleep(1100 * time.Millisecond)
+
+	srv.RunStartupReconcile(ctx)
+
+	maxSetAtAfter, err := srv.curation.ProfileMaxSetAt(ctx, profileID)
+	if err != nil {
+		t.Fatalf("ProfileMaxSetAt after: %v", err)
+	}
+	if maxSetAtAfter <= maxSetAtBefore {
+		t.Errorf("ProfileMaxSetAt did not advance: before=%d after=%d", maxSetAtBefore, maxSetAtAfter)
+	}
+
+	visibleIDs, err := srv.curation.ListEffectivelyVisibleItemIDs(ctx, profileID)
+	if err != nil {
+		t.Fatalf("ListEffectivelyVisibleItemIDs: %v", err)
+	}
+	for _, id := range visibleIDs {
+		if id == "item-deleted" {
+			t.Fatalf("ghost id still visible after startup reconcile: %v", visibleIDs)
+		}
+	}
+	if len(visibleIDs) != len(library) {
+		t.Errorf("visible ids = %d, want %d (the 5 real ones)", len(visibleIDs), len(library))
 	}
 }
 

@@ -613,21 +613,7 @@ func (s *Server) handleAdminRecentActivity(w http.ResponseWriter, r *http.Reques
 //
 // Response shape: {"checked": N, "marked": N, "cleared": N}.
 func (s *Server) handleAdminReconcile(w http.ResponseWriter, r *http.Request) {
-	lookup := func(ctx context.Context, ids []string) (map[string]struct{}, error) {
-		if len(ids) == 0 {
-			return map[string]struct{}{}, nil
-		}
-		res, err := s.jellyfin.GetItems(ctx, jellyfin.ItemsFilter{IDs: ids})
-		if err != nil {
-			return nil, err
-		}
-		found := make(map[string]struct{}, len(res.Items))
-		for _, it := range res.Items {
-			found[it.ID] = struct{}{}
-		}
-		return found, nil
-	}
-	checked, marked, cleared, err := s.curation.Reconcile(r.Context(), lookup)
+	checked, marked, cleared, err := s.curation.Reconcile(r.Context(), s.reconcileLookup)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("reconcile orphan categorizations")
 		http.Error(w, "reconcile failed", http.StatusBadGateway)
@@ -644,6 +630,55 @@ func (s *Server) handleAdminReconcile(w http.ResponseWriter, r *http.Request) {
 		"marked":  marked,
 		"cleared": cleared,
 	})
+}
+
+// reconcileLookup is the curation.Reconcile lookup func wired against
+// the service-account Jellyfin client. Shared between the admin
+// maintenance endpoint and the startup self-heal so both apply the
+// same "is this id still in Jellyfin?" predicate.
+func (s *Server) reconcileLookup(ctx context.Context, ids []string) (map[string]struct{}, error) {
+	if len(ids) == 0 {
+		return map[string]struct{}{}, nil
+	}
+	res, err := s.jellyfin.GetItems(ctx, jellyfin.ItemsFilter{IDs: ids})
+	if err != nil {
+		return nil, err
+	}
+	found := make(map[string]struct{}, len(res.Items))
+	for _, it := range res.Items {
+		found[it.ID] = struct{}{}
+	}
+	return found, nil
+}
+
+// RunStartupReconcile sweeps the categorizations table once at boot and
+// tombstones rows whose Jellyfin item ids no longer resolve (and clears
+// tombstones on items that have come back). Idempotent and safe to run
+// concurrently with the manual /api/admin/maintenance/reconcile
+// endpoint - MarkOrphan / ClearOrphan are individually idempotent.
+//
+// Why this exists: the kids library handler computes its ETag from
+// curation DB state alone, so a Jellyfin item disappearing without a
+// categorization flip never invalidates the kid client's IndexedDB
+// cache. Stale cached pages then render dead poster URLs as 404 black
+// tiles. Reconciling at boot bumps ProfileMaxSetAt for any profile
+// holding a now-orphaned id, busting those caches on the next request
+// the kid client makes.
+//
+// Errors are logged, not returned: this is a best-effort background
+// refresh, and the daemon should keep serving even if Jellyfin is
+// temporarily unreachable at boot.
+func (s *Server) RunStartupReconcile(ctx context.Context) {
+	checked, marked, cleared, err := s.curation.Reconcile(ctx, s.reconcileLookup)
+	if err != nil {
+		s.logger.Warn().Err(err).Msg("startup reconcile failed")
+		return
+	}
+	s.logger.Info().
+		Int("checked", checked).
+		Int("marked", marked).
+		Int("cleared", cleared).
+		Msg("startup reconcile complete")
 }
 
 // handleAdminStream returns the Jellyfin HLS manifest URL for the requested
