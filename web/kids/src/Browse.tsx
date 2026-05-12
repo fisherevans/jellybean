@@ -171,6 +171,47 @@ export default function Browse() {
     // double-Enter on the terminal button doesn't fire two parallel
     // fetches.
     const [loadingMore, setLoadingMore] = useState<Set<number>>(new Set());
+    // t36 item 9: gate non-active rows' tile contents during the
+    // 250ms inter-row slide. Without this gate, the outgoing row's
+    // tiles remain visible while sliding from data-pos="active" to
+    // data-pos="hint-prev", and the incoming row's tiles reveal
+    // (its .browse-row-items unhide) all the way through the slide
+    // - producing a visible "poster flash" of mid-air tiles. While
+    // animating we render only the title bar on every row except
+    // the new active one; the outgoing row's tiles disappear
+    // immediately when its data-pos flips, the incoming row's
+    // tiles are already visible from the moment its data-pos
+    // becomes "active." Per-row image-priority latch + horizontal
+    // scroll memory are unaffected (they live on the parent row
+    // element, not on the tile DOM that's being conditionally
+    // rendered). CSS sees `.browse[data-animating="true"]` and
+    // forces `.browse-row[data-pos="hint-prev"]/[hint-next]/[far-*]
+    // .browse-row-items` to display:none.
+    //
+    // t37 hotfix: this hook lives here, BEFORE the early returns for
+    // error / !data / empty rows. Previously it was declared after
+    // those returns, which meant first render (data null) ran with
+    // N hooks and subsequent renders (data present) ran with N+3,
+    // tripping React error #310 ("rendered more hooks than during
+    // the previous render"). Hooks must be unconditional.
+    const [isRowAnimating, setIsRowAnimating] = useState(false);
+    const lastFocusRowRef = useRef(focus.row);
+    useEffect(() => {
+        if (focus.row === lastFocusRowRef.current) return;
+        lastFocusRowRef.current = focus.row;
+        // 250ms matches the data-pos slide on .browse-row. We clear
+        // the gate slightly before slide-completion (180ms) so the
+        // items' opacity 0->1 transition (200ms via styles.css) lands
+        // right around the slide settling - the kid sees the posters
+        // fade in just as the row finishes moving into place, rather
+        // than waiting an additional 200ms after the slide. Slow-
+        // perf snaps with no transition, so the gate window is short.
+        const isSlow = document.body?.dataset.perf === "slow";
+        const dur = isSlow ? 40 : 180;
+        setIsRowAnimating(true);
+        const id = window.setTimeout(() => setIsRowAnimating(false), dur);
+        return () => window.clearTimeout(id);
+    }, [focus.row]);
 
     // Parent hid an item: drop it from every row in-place + rewrite
     // the sessionStorage cache so a fresh mount doesn't resurrect it.
@@ -902,40 +943,6 @@ export default function Browse() {
     // + future selectors (e.g. dimming when on the TabPill). The
     // per-row data-pos attribute drives the actual layout.
     const activeRow = tabFocused ? -1 : focus.row;
-    // t36 item 9: gate non-active rows' tile contents during the
-    // 250ms inter-row slide. Without this gate, the outgoing row's
-    // tiles remain visible while sliding from data-pos="active" to
-    // data-pos="hint-prev", and the incoming row's tiles reveal
-    // (its .browse-row-items unhide) all the way through the slide
-    // - producing a visible "poster flash" of mid-air tiles. While
-    // animating we render only the title bar on every row except
-    // the new active one; the outgoing row's tiles disappear
-    // immediately when its data-pos flips, the incoming row's
-    // tiles are already visible from the moment its data-pos
-    // becomes "active." Per-row image-priority latch + horizontal
-    // scroll memory are unaffected (they live on the parent row
-    // element, not on the tile DOM that's being conditionally
-    // rendered). CSS sees `.browse[data-animating="true"]` and
-    // forces `.browse-row[data-pos="hint-prev"]/[hint-next]/[far-*]
-    // .browse-row-items` to display:none.
-    const [isRowAnimating, setIsRowAnimating] = useState(false);
-    const lastFocusRowRef = useRef(focus.row);
-    useEffect(() => {
-        if (focus.row === lastFocusRowRef.current) return;
-        lastFocusRowRef.current = focus.row;
-        // 250ms matches the data-pos slide on .browse-row. We clear
-        // the gate slightly before slide-completion (180ms) so the
-        // items' opacity 0->1 transition (200ms via styles.css) lands
-        // right around the slide settling - the kid sees the posters
-        // fade in just as the row finishes moving into place, rather
-        // than waiting an additional 200ms after the slide. Slow-
-        // perf snaps with no transition, so the gate window is short.
-        const isSlow = document.body?.dataset.perf === "slow";
-        const dur = isSlow ? 40 : 180;
-        setIsRowAnimating(true);
-        const id = window.setTimeout(() => setIsRowAnimating(false), dur);
-        return () => window.clearTimeout(id);
-    }, [focus.row]);
     return (
         <div
             className="browse browse-single-row"
