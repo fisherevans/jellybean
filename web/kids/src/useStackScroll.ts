@@ -9,13 +9,15 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 // viewport repaint" behavior - transforming a child only repaints
 // the stack's box, which the GPU compositor handles cheaply.
 //
-// The hook also writes `--kids-scroll-y` (used by KidsHome's
-// .kids-tabpill-slot to scroll the TabPill in lockstep) and
-// `--kids-bg-pos-y` (used by .kids-home-bg's
-// background-position so the rainbow drifts with the content,
-// adding visible feedback that the page is moving). The bg-pos
-// write is skipped on slow devices where each background-position
-// repaint is itself expensive.
+// The hook writes `--kids-scroll-y` (used by KidsHome's
+// .kids-tabpill-slot to scroll the TabPill in lockstep with the
+// content). It deliberately does NOT write `--kids-bg-pos-y`:
+// Library/Tags/TagDetail scroll in pixels, sometimes thousands of
+// them, and tying bg-position to that raw pixel scroll produced
+// huge bg shifts on those surfaces (t40). The bg now stays at the
+// per-tab random offset (`--kids-bg-offset-y`) on
+// Library/Tags/TagDetail and is only animated per-row by
+// Browse.tsx, which writes `--kids-bg-pos-y` directly.
 //
 // Usage:
 //
@@ -64,6 +66,9 @@ export function useStackScroll(): StackScroll {
             // Clear shared CSS variables so the next page (if it
             // doesn't use this hook) gets a clean slate.
             document.documentElement.style.removeProperty("--kids-scroll-y");
+            // bg-pos-y isn't written here anymore (t40), but Browse
+            // writes it and unmounts can interleave, so wipe it on
+            // teardown too as a belt-and-suspenders cleanup.
             document.documentElement.style.removeProperty("--kids-bg-pos-y");
         };
     }, []);
@@ -75,18 +80,12 @@ export function useStackScroll(): StackScroll {
             "--kids-scroll-y",
             `${y}px`,
         );
-        // bg-position drift is cheap-ish on fast WebViews; on slow,
-        // every per-frame background-position write retriggers a
-        // raster of the bg layer, eating the same budget the
-        // animation needs. Skip the bg drift there.
-        if (document.body?.dataset.perf === "slow") return;
-        const baseOffset = Number(
-            document.documentElement.dataset.kidsBgOffsetY ?? 0,
-        );
-        document.documentElement.style.setProperty(
-            "--kids-bg-pos-y",
-            `${baseOffset + y}px`,
-        );
+        // t40: do NOT write --kids-bg-pos-y here. Library/Tags/
+        // TagDetail scroll in pixels (sometimes thousands), and
+        // tying the bg to that raw pixel scroll produced wild bg
+        // shifts on those surfaces. The bg now stays at the per-
+        // tab random offset on these pages; Browse owns the only
+        // bg-pos-y motion path via its per-row writes.
     }, []);
 
     const setStackY = useCallback(
