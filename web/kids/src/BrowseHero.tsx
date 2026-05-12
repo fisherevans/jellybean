@@ -9,12 +9,17 @@ import { authHeaders, withAuthRetry } from "./auth";
 // transcode. The kid's existing tile-focus model is the source of
 // truth; this component just listens.
 //
-// Layout shells:
-//   - Movie:  title (DynaPuff h2), meta (year + runtime), overview
-//             clamped to 3 lines.
-//   - Series: title, meta (year + "Series"), series overview clamped
-//             to 2 lines, then "Continue / Next up / Watch again"
-//             eyebrow with S{n}E{n} + episode name.
+// Layout shells (t36):
+//   .focused-meta-card-body
+//     - title (DynaPuff h2)
+//     - meta (year + runtime/Series)
+//     - overview (Cause, clamped to fill body height)
+//   .focused-meta-card-footer  (footer band, divided from body)
+//     - left: label + optional headline
+//             ("Next up · S3E4 - The Title" for series with next-up,
+//              "Continue" / "Watch again" / "Play" otherwise)
+//     - right: Phosphor Play chip (the same one t34 added to the
+//              title row; relocated here to read as a footer action).
 //
 // Per-focus detail fetch is debounced + AbortControlled + cached in a
 // per-Browse-mount Map (the parent owns it). Held-arrow scrolling
@@ -248,6 +253,34 @@ function FocusedTileMetaCardImpl({
     }, [item]);
 
     const isSeries = item.Type === "Series";
+    // t36 item 7: footer headline. Series with a known next-up (from
+    // the detail fetch - typically CW or in-progress series) shows
+    // "Next up · S{n}E{n} - Title"; everything else shows "Play."
+    // We deliberately don't gate on row type here: the detail hook
+    // already returns nextEp only when the kid has an actual position
+    // OR the series has GetNextUp data. Non-CW series without
+    // next-up data fall back to "Play" cheaply (no extra call - the
+    // detail fetch already happens on every focused tile).
+    const footer = ((): { label: string; headline?: string } => {
+        if (isSeries && !adminPreview && detail?.nextEp) {
+            const ep = detail.nextEp;
+            const labelPrefix =
+                ep.played ? "Watch again" :
+                ep.playedPercentage > 0 ? "Continue" :
+                "Next up";
+            const sxe = formatSxE(ep.seasonNumber, ep.episodeNumber);
+            const headline = sxe
+                ? `${sxe} · ${ep.episodeName}`
+                : ep.episodeName;
+            return { label: labelPrefix, headline };
+        }
+        // Movie or series w/o next-up: encourage resume vs start.
+        const pct = item.UserData?.PlayedPercentage ?? 0;
+        const played = !!item.UserData?.Played;
+        if (played) return { label: "Watch again" };
+        if (pct >= 5) return { label: "Continue" };
+        return { label: "Play" };
+    })();
 
     return (
         <div
@@ -256,34 +289,47 @@ function FocusedTileMetaCardImpl({
             aria-atomic="true"
         >
             <div className="focused-meta-card-inner">
-                <h2 className="focused-meta-card-title">
-                    {/* t34: leading play-triangle. Visual affordance that
-                        Enter on this tile plays right now (Browse routes
-                        straight to /play). White-filled to match the
-                        card's title-on-light-bg color scheme - the chip
-                        sits inside a deep-purple pill that matches the
-                        card title text color, giving it the same weight
-                        as the title without introducing a new accent. */}
+                <div className="focused-meta-card-body">
+                    <h2 className="focused-meta-card-title">
+                        <span className="focused-meta-card-title-text">
+                            {item.Name}
+                        </span>
+                    </h2>
+                    {meta && (
+                        <div className="focused-meta-card-meta">{meta}</div>
+                    )}
+                    {isSeries ? (
+                        <SeriesBody overview={detail?.overview} />
+                    ) : (
+                        <MovieBody overview={detail?.overview} />
+                    )}
+                </div>
+                {/* t36 item 7: footer band with play affordance in the
+                    bottom-right. Replaces t34's leading title-chip.
+                    For series with known next-up data, the label
+                    reads "Next up · S{n}E{n} - Title"; otherwise
+                    "Play" / "Continue" based on the focused item's
+                    own UserData. The play chip is the same Phosphor
+                    triangle that previously prefixed the title -
+                    relocated, not removed. */}
+                <div className="focused-meta-card-footer">
+                    <div className="focused-meta-card-footer-text">
+                        <div className="focused-meta-card-footer-label">
+                            {footer.label}
+                        </div>
+                        {footer.headline && (
+                            <div className="focused-meta-card-footer-headline">
+                                {footer.headline}
+                            </div>
+                        )}
+                    </div>
                     <span
                         className="focused-meta-card-play-chip"
                         aria-hidden
                     >
                         <Play weight="fill" />
                     </span>
-                    <span className="focused-meta-card-title-text">
-                        {item.Name}
-                    </span>
-                </h2>
-                {meta && <div className="focused-meta-card-meta">{meta}</div>}
-                {isSeries ? (
-                    <SeriesBody
-                        overview={detail?.overview}
-                        nextEp={detail?.nextEp}
-                        adminPreview={adminPreview}
-                    />
-                ) : (
-                    <MovieBody overview={detail?.overview} />
-                )}
+                </div>
             </div>
         </div>
     );
@@ -299,63 +345,28 @@ function MovieBody({ overview }: { overview: string | undefined }) {
         );
     }
     return (
-        <p className="focused-meta-card-overview focused-meta-card-clamp-3">
+        <p className="focused-meta-card-overview focused-meta-card-clamp">
             {text}
         </p>
     );
 }
 
-function SeriesBody({
-    overview,
-    nextEp,
-    adminPreview,
-}: {
-    overview: string | undefined;
-    nextEp: FocusedItemDetail["nextEp"] | undefined;
-    adminPreview: boolean;
-}) {
+function SeriesBody({ overview }: { overview: string | undefined }) {
+    // t36 item 7: next-ep info moved to the card footer; the body
+    // is now just the overview. Series + movies share the same
+    // overview clamp - footer renders "Next up · SxExx" separately.
     const text = (overview ?? "").trim();
+    if (!text) {
+        return (
+            <p className="focused-meta-card-overview focused-meta-card-empty">
+                (no description)
+            </p>
+        );
+    }
     return (
-        <>
-            {text ? (
-                <p className="focused-meta-card-overview focused-meta-card-clamp-2">
-                    {text}
-                </p>
-            ) : (
-                <p className="focused-meta-card-overview focused-meta-card-empty">
-                    (no description)
-                </p>
-            )}
-            {!adminPreview && nextEp && <NextEpBlock nextEp={nextEp} />}
-        </>
-    );
-}
-
-function NextEpBlock({
-    nextEp,
-}: {
-    nextEp: NonNullable<FocusedItemDetail["nextEp"]>;
-}) {
-    // Label tracks the kid's relationship to this episode:
-    //   - resume in progress       -> "Continue"
-    //   - never started but exists -> "Next up"
-    //   - whole series finished    -> "Watch again" (resume cycled
-    //                                  back to S1E1; relies on
-    //                                  GetNextUp's behavior).
-    const label = (() => {
-        if (nextEp.played) return "Watch again";
-        if (nextEp.playedPercentage > 0) return "Continue";
-        return "Next up";
-    })();
-    const sxe = formatSxE(nextEp.seasonNumber, nextEp.episodeNumber);
-    const headline = sxe
-        ? `${sxe} · ${nextEp.episodeName}`
-        : nextEp.episodeName;
-    return (
-        <div className="focused-meta-card-next-ep">
-            <div className="focused-meta-card-next-ep-label">{label}</div>
-            <div className="focused-meta-card-next-ep-headline">{headline}</div>
-        </div>
+        <p className="focused-meta-card-overview focused-meta-card-clamp">
+            {text}
+        </p>
     );
 }
 
