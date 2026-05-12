@@ -5923,3 +5923,33 @@ body[data-perf="slow"] .kids-tabpill-slot {
     transition: none;
 }
 
+/* ===== TabPill scrolls with content on Library / Tags (t35) =====
+   Library and Tags both call useStackScroll, which writes
+   --kids-scroll-y per rAF frame (negative when scrolled down). The
+   earlier .kids-tabpill-slot rules at line ~5287 and ~5900 pin the
+   slot to the viewport top with transform: none / translate3d(0, 0,
+   0) so tile silhouettes scroll beneath it on /browse and the SVG
+   tile bg masks them. That pinning is intentional on Browse - it
+   uses .kids-tabpill-slot-hidden to slide the pill out of the way
+   once the kid scrolls past row 0.
+
+   On Library and Tags there is no in-stack hiding affordance; the
+   kid expects the TabPill to scroll off with the rest of the
+   content (the pattern every other vertical scroller follows).
+   Re-enable the lockstep translate3d here, scoped to non-Browse
+   home tabs via the data-active attribute KidsHome sets on
+   .kids-home. This rule sits after every earlier
+   .kids-tabpill-slot { transform: ... } block, so it wins by
+   source order.
+
+   Transition is forced to none on these pages because the slot
+   transform now updates every animator frame; the 250ms transition
+   defined upstream (line ~5902) would smear each frame's target
+   into a quarter-second lag. Library/Tags don't use the show/hide
+   class so they don't need the transition for that path either. */
+.kids-home[data-active="library"] .kids-tabpill-slot,
+.kids-home[data-active="tags"] .kids-tabpill-slot {
+    transform: translate3d(0, var(--kids-scroll-y, 0px), 0);
+    transition: none;
+}
+
