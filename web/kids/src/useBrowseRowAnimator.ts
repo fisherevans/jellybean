@@ -70,11 +70,17 @@ export function useBrowseRowAnimator(
         // every child is currently widened, fall back to whatever the
         // first child measures - the next focus change will re-
         // measure once a normal tile is laid out.
+        // t34/t36: the focused tile + meta card are nested inside a
+        // single .focused-row-combo wrapper that is itself the track's
+        // flex child; the wrapper has no .focused class. Skip it
+        // explicitly so the measurement only picks up plain unfocused
+        // tile widths.
         const children = Array.from(el.children) as HTMLElement[];
         let sample: HTMLElement | null = null;
         for (const child of children) {
             if (child.classList.contains("focused-meta-card-fade")) continue;
             if (child.classList.contains("focused")) continue;
+            if (child.classList.contains("focused-row-combo")) continue;
             sample = child;
             break;
         }
