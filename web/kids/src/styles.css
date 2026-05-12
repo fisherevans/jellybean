@@ -66,7 +66,14 @@
        tile-gap=1.4rem (~22px) -> tile-advance ~202px. Cursor-x of
        5rem (80px) gives ~33% peek of the previous tile when the row
        has scrolled. */
-    --browse-tile-width: 180px;
+    /* t34: tile-width bumped to 220px so the focused row dominates the
+       viewport rather than feeling crowded against TabPill + hint rows.
+       The scan-ahead constraint (>= 2.5 posters past the focused tile +
+       meta-card combo) was verified at the 720p override below
+       (180px / 340px meta-card -> ~3.1 tiles past combo at 1280px).
+       At 1920px with 220px tiles + 420px meta-card the row shows ~4.5
+       tiles past the focused combo, well within the cap. */
+    --browse-tile-width: 220px;
     --browse-tile-gap: 1.9rem;
     --browse-tile-advance: calc(var(--browse-tile-width) + var(--browse-tile-gap));
     --browse-cursor-x: 5rem;
@@ -1582,6 +1589,28 @@ body.kids-scroll-active .kids-home-content {
         --kids-bg-pos-y,
         var(--kids-bg-offset-y, 0)
     );
+    /* t34: bg-pos-y is now driven per-row by Browse.tsx so the rainbow
+       shifts in lockstep with the active-row swap. Match the 250ms
+       row-swap easing so the bg + rows feel coupled rather than
+       independently animating. Library/Tags don't write --kids-bg-pos-y
+       so they stay static (the transition runs only when the var
+       changes). */
+    transition: background-position-y 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* Snap mode for the bg: when Browse mounts (or back-navigation lands
+   on a non-zero row), Browse.tsx sets data-kids-bg-snap="1" on the
+   documentElement around the initial bg-pos-y write so the bg jumps
+   to its starting position instead of animating in from 0. The
+   attribute clears once the initial style has flushed. */
+:root[data-kids-bg-snap="1"] .kids-home-bg {
+    transition: none;
+}
+/* Slow-perf: no transition on the bg either. The bg-pos-y still
+   updates (so the static per-tab offset still works), but it snaps
+   between rows on cheap WebViews where animating a fixed background
+   would force a fullscreen repaint each frame. */
+body[data-perf="slow"] .kids-home-bg {
+    transition: none;
 }
 .kids-home-content {
     position: relative;
@@ -5066,11 +5095,15 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
      - Tags landscape cards: 2 per row at 1280px wide. */
 @media (max-height: 800px) {
     :root {
-        /* Tile + cursor metrics. Drops tile-width ~17%, gap ~26%,
-           cursor-x ~30%. Combined: more tiles fit per row, and the
-           focused tile's peek-of-previous still reads at ~33% of the
-           shrunken tile width (matching the desktop ratio). */
-        --browse-tile-width: 150px;
+        /* t34: 720p tile-width bumped from 150 -> 180 to match the
+           desktop bump. cursor-x stays at 3.5rem (56px) so the
+           focused tile peeks left of the cursor a comfortable amount.
+           Scan-ahead check at 1280x720: cursor-x 56 + focused combo
+           (~202 scaled + gap 22 + 340 meta-card + gap 22) = 642 px,
+           leaving ~582 px to the right. Per-tile advance ~202 px, so
+           ~2.88 tiles past the focused combo - clears the 2.5 floor
+           the task requires. */
+        --browse-tile-width: 180px;
         --browse-tile-gap: 1.4rem;
         --browse-cursor-x: 3.5rem;
     }
@@ -5560,7 +5593,14 @@ body[data-perf="slow"] .library-skeleton-tile::after {
        overview text fills in async. The card always reserves its
        slot regardless of detail-loaded state. */
     flex: 0 0 auto;
-    width: 380px;
+    /* t34: width bumped from 380 -> 420 to balance against the larger
+       focused tile (220px -> ~246 scaled). The text inside scales up
+       too (title 1.8rem, overview 1rem) so the card breathes rather
+       than ending in dead white space at the bottom. The scan-ahead
+       check at 1920x1080 still passes: cursor 80 + focused combo
+       (246 + 30 + 420 + 30) = 806 px, leaving ~1034 px to the right
+       for ~4.1 tiles past the combo. */
+    width: 420px;
     /* Top-align with the focused tile so the card's top edge sits
        flush with the top of the poster. Centering against the row's
        layout height would drift the card down because the under-
@@ -5598,6 +5638,79 @@ body[data-perf="slow"] .focused-meta-card-fade {
     animation: none;
 }
 
+/* t34: .focused-row-combo wraps the focused tile + its meta card so
+   a SINGLE focus ring traces the outer rectangle (poster + meta
+   card) instead of the ring sitting on the poster alone. The wrapper
+   becomes the flex item inside .browse-row-track and re-establishes
+   the gap between tile and meta card via an internal gap. The inner
+   tile suppresses its own ring + scale + padding via the descendant
+   rules below so the combo's ring is the only visual focus indicator.
+   The inner .tile-title is hidden because the meta card carries the
+   title; otherwise the tile's underbar would push the combo's bottom
+   edge below the meta card and leave dead vertical space inside the
+   ring. */
+.focused-row-combo {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--browse-tile-gap);
+    position: relative;
+    z-index: 2;
+    /* Nested-card frame matching the per-tile focus ring style:
+       transparent 5px gutter inside the combo, 4px white box-shadow
+       ring outside, drop shadow underneath. The combo's outer radius
+       is a touch larger than the tile's (24 vs 20) because the
+       enclosed rectangle is wider; tightens visually at the corners. */
+    padding: 5px;
+    border-radius: 24px;
+    box-shadow:
+        0 0 0 4px #ffffff,
+        0 10px 26px rgba(0, 0, 0, 0.32);
+}
+/* Inner tile inside the combo: kill the per-tile ring + scale +
+   padding so the combo's ring is the only one drawn. Without these
+   overrides, the tile would still paint its own white box-shadow
+   inside the combo's ring (visually doubled) and the scale(1.12)
+   would break out of the combo's bounding rectangle. */
+.focused-row-combo .tile.focused,
+.focused-row-combo .tile:focus {
+    transform: none;
+}
+.focused-row-combo .tile.focused .tile-poster,
+.focused-row-combo .tile:focus .tile-poster {
+    padding: 0;
+    box-shadow: none;
+    border-radius: 14px;
+}
+.focused-row-combo .tile.focused .tile-poster img,
+.focused-row-combo .tile:focus .tile-poster img {
+    border-radius: inherit;
+}
+/* The meta card carries the title; the under-tile title would push
+   the combo's bottom edge below the meta-card and leave a gap in
+   the ring. Hide it visually but keep the element so screen readers
+   still see the tile name on the button itself. */
+.focused-row-combo .tile-title {
+    display: none;
+}
+/* Inner meta card wrapper drops its own keyed entrance animation
+   here - the combo itself appears all at once when focus lands on
+   a new tile, so the meta card flowing in from the left would
+   visually separate from the tile inside the combined ring. The
+   keyframe still applies on slow-perf path (which is no-op anyway). */
+.focused-row-combo .focused-meta-card-fade {
+    animation: none;
+}
+
+/* Slow-perf path: outline instead of box-shadow ring (cheaper paint).
+   Mirrors the per-tile slow-mode focus treatment. */
+body[data-perf="slow"] .focused-row-combo {
+    padding: 0;
+    box-shadow: none;
+    outline: 4px solid #ffffff;
+    outline-offset: 6px;
+}
+
 .focused-meta-card {
     /* Card surface: a soft white pill that reads on the rainbow bg
        without competing with the focused tile's white ring. The
@@ -5630,27 +5743,66 @@ body[data-perf="slow"] .focused-meta-card-fade {
 .focused-meta-card-title {
     font-family: "DynaPuff", "Cause", -apple-system, BlinkMacSystemFont,
         "Segoe UI", Roboto, sans-serif;
-    font-size: 1.6rem;
+    /* t34: bumped from 1.6 -> 1.85rem to balance against the bigger
+       focused tile + wider card. Layout switched from -webkit-box
+       (which only clamps text) to flex so the leading play-triangle
+       chip can sit baseline-aligned with the title text. Text clamp
+       moves down onto .focused-meta-card-title-text. */
+    font-size: 1.85rem;
     font-weight: 700;
     line-height: 1.1;
-    margin: 0 0 0.3rem;
+    margin: 0 0 0.45rem;
     color: #20162e;
-    /* Two-line clamp so a long title doesn't crowd the body. */
+    display: flex;
+    align-items: baseline;
+    gap: 0.55rem;
+    min-width: 0;
+}
+.focused-meta-card-title-text {
+    /* Two-line clamp on the title text only - the chip sits outside
+       the clamp box. flex: 1 1 auto + min-width 0 lets the text
+       shrink to fit so a long title doesn't push the chip out of
+       the card's content area. */
+    flex: 1 1 auto;
+    min-width: 0;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
 }
+.focused-meta-card-play-chip {
+    /* Leading play-triangle: round chip in the deep-purple title
+       color with a white-filled triangle. Reads as a primary action
+       affordance ("Enter plays now") without introducing a new
+       accent color - it just uses the title text's own ink. */
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    background: #20162e;
+    color: #ffffff;
+    transform: translateY(0.18em);
+}
+.focused-meta-card-play-chip svg {
+    width: 1rem;
+    height: 1rem;
+}
 .focused-meta-card-meta {
-    font-size: 0.9rem;
+    font-size: 1rem;
     font-weight: 600;
     color: rgba(32, 22, 46, 0.7);
-    margin: 0 0 0.55rem;
+    margin: 0 0 0.65rem;
     letter-spacing: 0.02em;
 }
 .focused-meta-card-overview {
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    font-size: 0.92rem;
+    /* t34: 0.92 -> 1.02rem so the body reads at a comfortable size
+       inside the taller card without leaving dead vertical space
+       below the clamp. */
+    font-size: 1.02rem;
     line-height: 1.4;
     color: rgba(32, 22, 46, 0.85);
     margin: 0;
@@ -5677,17 +5829,19 @@ body[data-perf="slow"] .focused-meta-card-fade {
     border-top: 1px solid rgba(32, 22, 46, 0.15);
 }
 .focused-meta-card-next-ep-label {
-    font-size: 0.7rem;
+    /* t34: 0.7 -> 0.78rem to track the bumped body text. */
+    font-size: 0.78rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.1em;
     color: rgba(32, 22, 46, 0.6);
-    margin: 0 0 0.15rem;
+    margin: 0 0 0.2rem;
 }
 .focused-meta-card-next-ep-headline {
     font-family: "DynaPuff", "Cause", -apple-system, BlinkMacSystemFont,
         "Segoe UI", Roboto, sans-serif;
-    font-size: 1rem;
+    /* t34: 1 -> 1.15rem. */
+    font-size: 1.15rem;
     font-weight: 700;
     color: #20162e;
     margin: 0;
@@ -5703,27 +5857,28 @@ body[data-perf="slow"] .focused-meta-card-fade {
    focused tile rather than dwarfing it. */
 @media (max-height: 800px) {
     .focused-meta-card-fade {
-        width: 320px;
+        /* t34: 320 -> 340 to match the bumped 720p tile-width. */
+        width: 340px;
     }
     .focused-meta-card {
-        padding: 0.85rem 1rem;
-        border-radius: 14px;
+        padding: 1rem 1.15rem;
+        border-radius: 16px;
     }
     .focused-meta-card-title {
-        font-size: 1.35rem;
+        font-size: 1.55rem;
     }
     .focused-meta-card-meta {
-        font-size: 0.82rem;
-        margin: 0 0 0.4rem;
+        font-size: 0.9rem;
+        margin: 0 0 0.45rem;
     }
     .focused-meta-card-overview {
-        font-size: 0.85rem;
+        font-size: 0.95rem;
     }
     .focused-meta-card-next-ep-label {
-        font-size: 0.65rem;
+        font-size: 0.72rem;
     }
     .focused-meta-card-next-ep-headline {
-        font-size: 0.9rem;
+        font-size: 1.05rem;
     }
 }
 
@@ -5830,15 +5985,19 @@ body.kids-tabpill-hidden .browse.browse-single-row .browse-stack {
        rendered height plus a comfortable gap. Active row is
        ~400-520px tall (title + tiles + scale-1.12 bleed); 38% of
        the viewport keeps the hint clear of the focused tile's ring
-       on 720p and scales sensibly on larger displays. */
+       on 720p and scales sensibly on larger displays.
+       t34: row opacity stays at 1; the hint title + caret carry
+       their own per-element opacity (0.65) so the text + icon read
+       at the same level instead of being doubly attenuated by a
+       container opacity stack. */
     transform: translateY(calc(-50% - 38vh));
-    opacity: 0.85;
+    opacity: 1;
     z-index: 2;
     pointer-events: none;
 }
 .browse.browse-single-row .browse-row[data-pos="hint-next"] {
     transform: translateY(calc(-50% + 38vh));
-    opacity: 0.85;
+    opacity: 1;
     z-index: 2;
     pointer-events: none;
 }
@@ -5853,9 +6012,12 @@ body.kids-tabpill-hidden .browse.browse-single-row .browse-stack {
 }
 .browse.browse-single-row .browse-row[data-pos="hint-prev"] .browse-row-title,
 .browse.browse-single-row .browse-row[data-pos="hint-next"] .browse-row-title {
-    /* Slightly muted compared to the active row's title. The caret
-       icon (rendered by Browse.tsx) carries the directional cue. */
-    opacity: 0.75;
+    /* t34: bump from effective ~0.6 (0.75 * 0.85 container) to a
+       clean 0.65 so the hint reads as "you can see those rows exist,
+       still subordinate to focus" without disappearing into the bg.
+       The container opacity is now 1 so the title + caret share this
+       single attenuation value. */
+    opacity: 0.65;
     margin: 0;
     padding-top: 0.5rem;
     padding-bottom: 0.5rem;
@@ -5867,6 +6029,10 @@ body.kids-tabpill-hidden .browse.browse-single-row .browse-stack {
     margin-right: 0.35em;
     vertical-align: -0.15em;
     color: #ffffff;
+    /* t34: caret inherits the title's 0.65 opacity (the title is the
+       caret's parent in the DOM, so opacity stacks naturally and the
+       caret + text read at the same alpha). Drop-shadow stays for
+       legibility on busy bg regions. */
     filter:
         drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55))
         drop-shadow(0 4px 14px rgba(0, 0, 0, 0.45));
