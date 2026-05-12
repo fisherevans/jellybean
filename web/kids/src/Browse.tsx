@@ -211,15 +211,16 @@ export default function Browse() {
     useLayoutEffect(() => {
         if (focus.row === lastFocusRowRef.current) return;
         lastFocusRowRef.current = focus.row;
-        // 250ms matches the data-pos slide on .browse-row. We clear
-        // the gate slightly before slide-completion (180ms) so the
-        // items' opacity 0->1 transition (200ms via styles.css) lands
-        // right around the slide settling - the kid sees the posters
-        // fade in just as the row finishes moving into place, rather
-        // than waiting an additional 200ms after the slide. Slow-
-        // perf snaps with no transition, so the gate window is short.
+        // t39: the row slide is now 380ms (was 250ms in t38), so the
+        // poster-flash gate window grew from 180ms to 240ms. The new
+        // active row stays at opacity 0 through ~63% of the slide,
+        // then its 220ms opacity 0->1 transition (styles.css) overlaps
+        // with the last 140ms of the slide and finishes ~80ms after
+        // the row settles - the kid sees the posters "rise into view"
+        // as the row arrives, not before it. Slow-perf snaps with no
+        // transition, so the gate window stays short.
         const isSlow = document.body?.dataset.perf === "slow";
-        const dur = isSlow ? 40 : 180;
+        const dur = isSlow ? 40 : 240;
         setIsRowAnimating(true);
         if (animatingTimerRef.current !== null) {
             window.clearTimeout(animatingTimerRef.current);

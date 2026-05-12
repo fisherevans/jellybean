@@ -1596,12 +1596,12 @@ body.kids-scroll-active .kids-home-content {
         var(--kids-bg-offset-y, 0)
     );
     /* t34: bg-pos-y is now driven per-row by Browse.tsx so the rainbow
-       shifts in lockstep with the active-row swap. Match the 250ms
-       row-swap easing so the bg + rows feel coupled rather than
-       independently animating. Library/Tags don't write --kids-bg-pos-y
-       so they stay static (the transition runs only when the var
-       changes). */
-    transition: background-position-y 250ms cubic-bezier(0.4, 0, 0.2, 1);
+       shifts in lockstep with the active-row swap. Match the row-swap
+       easing + duration (t39: 380ms ease-out-quint) so the bg + rows
+       feel coupled rather than independently animating. Library/Tags
+       don't write --kids-bg-pos-y so they stay static (the transition
+       runs only when the var changes). */
+    transition: background-position-y 380ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 /* Snap mode for the bg: when Browse mounts (or back-navigation lands
    on a non-zero row), Browse.tsx sets data-kids-bg-snap="1" on the
@@ -2284,6 +2284,16 @@ body.browse-active {
     /* Subtle text shadow so titles read on the watercolor blobs
        without a heavy chrome bar behind them. */
     text-shadow: 0 1px 4px rgba(255, 255, 255, 0.6);
+    /* t39: animate font-size + opacity so the active <-> hint title
+       size and dimness changes interpolate smoothly during a row
+       swap rather than snapping at the same instant data-pos flips.
+       Combined with the unified padding-left (cursor-x in every
+       state) this means a row swap visually slides titles up/down
+       while their size + dimness ease in lockstep with the row
+       translateY. Duration matches the row's 380ms slide below. */
+    transition:
+        font-size 380ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 380ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .browse-row-icon {
     color: var(--accent);
@@ -6044,9 +6054,18 @@ body.kids-tabpill-hidden .browse.browse-single-row .browse-stack {
        vertical middle aligns with the anchor. */
     top: 50%;
     transform: translateY(-50%);
+    /* t39: bumped from 250ms ease-in-out to 380ms with an ease-out-
+       quint curve so row swaps feel like a substantial slide rather
+       than a flash. The longer settle gives the eye time to read
+       the title rising into / falling out of the hint slot, and the
+       softer landing (curve decelerates more aggressively at the end)
+       sells "the new row arrived" instead of "a row appeared." Item
+       opacity below (200ms -> 220ms) and the data-animating gate in
+       Browse.tsx (180ms -> 240ms) shift in lockstep so the new active
+       row's posters fade in just as the slide settles. */
     transition:
-        transform 250ms cubic-bezier(0.4, 0, 0.2, 1),
-        opacity 250ms cubic-bezier(0.4, 0, 0.2, 1);
+        transform 380ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 380ms cubic-bezier(0.22, 1, 0.36, 1);
     /* Cancel the base .browse-row content-visibility on active so
        the row paints when it slides in. far-prev / far-next keep
        content-visibility: auto so the WebView can skip them. */
@@ -6135,17 +6154,17 @@ body.kids-tabpill-hidden .browse.browse-single-row .browse-stack {
     padding-top: 0.5rem;
     padding-bottom: 0.5rem;
     font-size: 1.5rem;
-    /* t38: horizontally center the prev/next hint blocks (caret +
-       title). The base .browse-row-title has padding-left:
-       --browse-cursor-x to line up with the cursor column on the
-       active row; hint rows ignore that left-pinning so the
-       title block balances against the page rather than feeling
-       lopsided against the section header. */
-    padding-left: 0;
-    text-align: center;
-    /* The <h2> is a block element spanning the full row width; the
-       caret + title text inside flow horizontally and the text-align
-       on the parent centers the inline content. */
+    /* t39 fix: keep the hint title anchored to --browse-cursor-x just
+       like the active row's title. The t38 attempt to center the hint
+       block was the source of a visible horizontal flash during row
+       swaps - the title's effective left position jumped from cursor-
+       x (active) to (rowWidth - titleWidth) / 2 (centered hint) in a
+       single frame while the row was already mid-translateY. Pinning
+       all titles to the same horizontal anchor means the only thing
+       that animates during the swap is the row's vertical translate
+       plus the title's font-size + opacity, which all interpolate
+       smoothly. The "balance against the page" intent of t38 was
+       cosmetic; smooth transitions matter more. */
 }
 .browse.browse-single-row .browse-row-hint-caret {
     width: 1.1em;
@@ -6210,7 +6229,14 @@ body.kids-tabpill-hidden .browse.browse-single-row .browse-stack {
    row titles slide vertically and the new active row's items
    fade in. No posters from any other row are ever visible. */
 .browse-row-items {
-    transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    /* t39: bumped from 200ms -> 220ms to track the longer 380ms row
+       slide. Browse.tsx holds data-animating="true" for the first
+       240ms of the slide (was 180ms), keeping items at opacity 0
+       while the row covers ~63% of its translateY. The remaining
+       140ms of the slide overlaps with the items' 220ms fade-in so
+       posters appear to "rise into view" as the row settles - the
+       fade finishes ~80ms after the slide lands at center. */
+    transition: opacity 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .browse[data-animating="true"] .browse-row[data-pos="active"] .browse-row-items {
     opacity: 0;
@@ -6252,6 +6278,7 @@ body[data-perf="slow"] .browse-row-items {
    many subtrees. Class flips alone communicate the state change. */
 body[data-perf="slow"] .browse.browse-single-row .browse-row,
 body[data-perf="slow"] .browse.browse-single-row .browse-stack,
+body[data-perf="slow"] .browse-row-title,
 body[data-perf="slow"] .kids-tabpill-slot {
     transition: none;
 }

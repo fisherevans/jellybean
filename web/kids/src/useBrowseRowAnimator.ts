@@ -86,6 +86,19 @@ export function useBrowseRowAnimator(
         }
         if (!sample) sample = children[0] ?? null;
         const tileWidth = sample?.offsetWidth ?? 0;
+        // t39 fix: if the sample has zero width (track inside a
+        // display:none .browse-row-items - which is the steady state
+        // for hint-prev / hint-next / far rows post-t38), reading the
+        // computed `gap` still returns its resolved pixel value. The
+        // old code returned 0 + gap (~30px) and cached that as the
+        // per-tile advance, so every subsequent ArrowRight on the row
+        // shifted the track by ~30px (one gap-width) instead of the
+        // full ~310px (tile + gap). Bailing out with 0 here means the
+        // caller skips caching and retries measurement next time the
+        // row's targetCol changes - by which point the row has flipped
+        // to data-pos="active", .browse-row-items is display:block,
+        // and offsetWidth returns the real tile width.
+        if (tileWidth <= 0) return 0;
         const gapPx = parseFloat(getComputedStyle(el).gap) || 0;
         return tileWidth + gapPx;
     }

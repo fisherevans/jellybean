@@ -85,7 +85,22 @@ function TileImpl({
                     <img
                         src={src}
                         alt={item.Name}
-                        loading="lazy"
+                        // t39: was loading="lazy", which blocks fetch
+                        // on any <img> whose ancestor is display:none.
+                        // After t38 the hint-prev / hint-next rows'
+                        // .browse-row-items is display:none in steady
+                        // state, so lazy meant their posters never
+                        // started fetching - the kid arrowed onto a
+                        // neighboring row and watched a cold load
+                        // happen instead of seeing the cached image
+                        // fade in. The `priority` prop already gates
+                        // <img> presence to a small warm window around
+                        // the focused row (default radius 2, grows
+                        // 1/1.5s), so flipping to eager just pulls
+                        // those warm-window tiles into the fetch
+                        // pipeline immediately. Cold rows still don't
+                        // render <img> at all (placeholder div above).
+                        loading="eager"
                         decoding="async"
                     />
                 ) : (
