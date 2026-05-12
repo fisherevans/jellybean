@@ -163,72 +163,45 @@ test.describe("kids back-then-down focus reset", () => {
             timeout: 15_000,
         });
 
-        // ArrowDown twice: tab → row 0; row 0 → row 1.
+        // ArrowDown three times: tab → row 0; row 0 → row 1; row 1 →
+        // row 2. We then verify we're on row > 0 indirectly by checking
+        // that the TabPill is hidden (Browse hides it when focus.row >
+        // 0). t41: the sliding-window architecture only mounts the
+        // active row's <section class="browse-row"> at any time, so
+        // we can't count rows in the DOM as a proxy for focus.row.
         await page.keyboard.press("ArrowDown");
         await page.keyboard.press("ArrowDown");
         await page.keyboard.press("ArrowDown");
-        // Verify a tile has focus and we're at row > 0.
-        const focusedRow = await page.evaluate(() => {
-            const el = document.querySelector(".tile.focused");
-            if (!el) return -1;
-            const row = el.closest(".browse-row") as HTMLElement | null;
-            const all = Array.from(document.querySelectorAll(".browse-row"));
-            return row ? all.indexOf(row) : -1;
-        });
-        expect(
-            focusedRow,
-            "expected focus to be in a row past row 0",
-        ).toBeGreaterThan(0);
+        // TabPill should be hidden once focus moves past row 0.
+        await expect(page.locator(".kids-tabpill-slot.kids-tabpill-slot-hidden"))
+            .toHaveCount(1, { timeout: 2_000 });
+        // There must be a hint-prev title (only present when focus.row > 0).
+        await expect(page.locator('.browse-hint[data-slot="prev"]'))
+            .toHaveCount(1);
 
-        // Browse uses a transform on .browse-stack rather than body
-        // scroll, so check the stack's transform Y component.
-        const stackY = await page.evaluate(() => {
-            const stack = document.querySelector(
-                ".browse-stack",
-            ) as HTMLElement | null;
-            if (!stack) return 0;
-            const m = new DOMMatrixReadOnly(getComputedStyle(stack).transform);
-            return m.f; // y translation
-        });
-        expect(
-            stackY,
-            `expected stack translated up; got translateY=${stackY}`,
-        ).toBeLessThan(0);
-
-        // Press Back: tab pill focused, stack should snap to 0.
+        // Press Back: tab pill focused, hint-prev disappears (row 0
+        // has no row above it).
         const consumed = await pressBack(page);
         expect(consumed).toBe(true);
-        await page.waitForFunction(
-            () => {
-                const stack = document.querySelector(
-                    ".browse-stack",
-                ) as HTMLElement | null;
-                if (!stack) return false;
-                const m = new DOMMatrixReadOnly(
-                    getComputedStyle(stack).transform,
-                );
-                return Math.abs(m.f) < 1;
-            },
-            undefined,
-            { timeout: 2_000 },
-        );
+        await expect(page.locator('.browse-hint[data-slot="prev"]'))
+            .toHaveCount(0, { timeout: 2_000 });
         await expect(page.locator(".tile.focused")).toHaveCount(0);
         await expect(page.locator(".kids-tabpill-tab.active")).toBeFocused();
 
         // Next Down: should land on the FIRST tile (row 0 col 0), not
-        // the previously-focused tile.
+        // the previously-focused tile. Row 0 means: TabPill still
+        // visible (only hides when focus.row > 0) and a hint-next is
+        // present (since there are more rows below row 0).
         await page.keyboard.press("ArrowDown");
         await expect(page.locator(".tile.focused")).toHaveCount(1, {
             timeout: 2_000,
         });
-        const landedRow = await page.evaluate(() => {
-            const el = document.querySelector(".tile.focused");
-            if (!el) return -1;
-            const row = el.closest(".browse-row") as HTMLElement | null;
-            const all = Array.from(document.querySelectorAll(".browse-row"));
-            return row ? all.indexOf(row) : -1;
-        });
-        expect(landedRow, "Down after Back should land on row 0").toBe(0);
+        await expect(
+            page.locator(".kids-tabpill-slot.kids-tabpill-slot-hidden"),
+        ).toHaveCount(0);
+        // Hint-prev absent (row 0 has no prev row above).
+        await expect(page.locator('.browse-hint[data-slot="prev"]'))
+            .toHaveCount(0);
     });
 
     test("Tags: back from a deep card lands on tab nav, scroll resets, next Down lands on first card", async ({
