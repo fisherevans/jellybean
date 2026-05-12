@@ -72,8 +72,14 @@
        meta-card combo) was verified at the 720p override below
        (180px / 340px meta-card -> ~3.1 tiles past combo at 1280px).
        At 1920px with 220px tiles + 420px meta-card the row shows ~4.5
-       tiles past the focused combo, well within the cap. */
-    --browse-tile-width: 220px;
+       tiles past the focused combo, well within the cap.
+       t38: bumped from 220 -> 280 so the active row reads larger.
+       Focused combo (clamped by --focused-poster-h to ~400px wide at
+       1080p) still visibly dwarfs the new 280px unfocused tile (ratio
+       ~1.43x). Scan-ahead at 1920x1080: cursor 80 + combo (~400 + 14
+       + 340) + outer gap 30 = 864 px; remaining 1056 / advance (280
+       + 30) ~= 3.4 tiles past the combo - well above the 2.5 floor. */
+    --browse-tile-width: 280px;
     --browse-tile-gap: 1.9rem;
     --browse-tile-advance: calc(var(--browse-tile-width) + var(--browse-tile-gap));
     --browse-cursor-x: 5rem;
@@ -5110,8 +5116,15 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
            (~202 scaled + gap 22 + 340 meta-card + gap 22) = 642 px,
            leaving ~582 px to the right. Per-tile advance ~202 px, so
            ~2.88 tiles past the focused combo - clears the 2.5 floor
-           the task requires. */
-        --browse-tile-width: 180px;
+           the task requires.
+           t38: bumped from 180 -> 200 to match the desktop bump. Held
+           below 220 so the 2.5-tile scan-ahead floor still clears at
+           720p. Re-check at 1280x720: cursor 56 + focused combo
+           (focused-poster-h clamp(280, 56vh, 420) at 720h = 403,
+           poster w 269 + 14 + 340 meta = 623) + gap 22 = 701 px;
+           remaining 579 / advance (200 + 22) = 2.60 tiles past combo,
+           which clears the 2.5 floor with a thin margin. */
+        --browse-tile-width: 200px;
         --browse-tile-gap: 1.4rem;
         --browse-cursor-x: 3.5rem;
     }
@@ -6064,25 +6077,50 @@ body.kids-tabpill-hidden .browse.browse-single-row .browse-stack {
        t34: row opacity stays at 1; the hint title + caret carry
        their own per-element opacity (0.65) so the text + icon read
        at the same level instead of being doubly attenuated by a
-       container opacity stack. */
-    transform: translateY(calc(-50% - 38vh));
+       container opacity stack.
+       t38: bumped from 38vh -> 42vh so hints sit roughly halfway
+       between viewport edge and active row's vertical extent. With
+       the active combo now ~600px tall at 1080p (~28vh half-height)
+       the active row spans ~22vh to ~78vh; midpoint between page
+       top (0) and active row top (22vh) is ~11vh, midpoint between
+       active row bottom (78vh) and page bottom (100vh) is ~89vh.
+       -42vh puts the hint title at 8vh (above midpoint, closer to
+       viewport edge than to active row) which reads as "centered
+       between page edge and content" rather than "pinned to the
+       active row" as -38vh did. */
+    transform: translateY(calc(-50% - 42vh));
     opacity: 1;
     z-index: 2;
     pointer-events: none;
 }
 .browse.browse-single-row .browse-row[data-pos="hint-next"] {
-    transform: translateY(calc(-50% + 38vh));
+    transform: translateY(calc(-50% + 42vh));
     opacity: 1;
     z-index: 2;
     pointer-events: none;
 }
-/* Hint rows: tile track + horizontal scroll padding don't paint.
-   We keep .browse-row-title visible (with the ▲/▼ caret rendered
-   by Browse.tsx) so the kid sees the upcoming row's name. The
-   .browse-row-items container is collapsed so the row's footprint
-   in the page is just the title height. */
+/* Non-active rows: tile track + horizontal scroll padding never
+   paint. We keep .browse-row-title visible on hint-prev / hint-next
+   (with the ▲/▼ caret rendered by Browse.tsx) so the kid sees the
+   upcoming row's name; far-prev / far-next rows are off-screen via
+   their translateY + opacity 0 so the title isn't visible there
+   either. The .browse-row-items container is collapsed everywhere
+   except data-pos="active" so no posters ever paint outside the
+   active row.
+   t38: extended from just hint-prev/hint-next to also cover
+   far-prev / far-next. Without this, rows two or more away from
+   the active row kept rendering their .browse-row-items normally
+   even though the row's opacity transitioned to 0 over 250ms; mid-
+   slide their posters were briefly visible riding the row's
+   translateY animation. Hiding the items via display:none kicks
+   in the same frame data-pos flips, so the outgoing row's posters
+   vanish instantly and only the incoming active row's items are
+   ever visible during the swap (those fade in via the data-
+   animating opacity gate below). */
 .browse.browse-single-row .browse-row[data-pos="hint-prev"] .browse-row-items,
-.browse.browse-single-row .browse-row[data-pos="hint-next"] .browse-row-items {
+.browse.browse-single-row .browse-row[data-pos="hint-next"] .browse-row-items,
+.browse.browse-single-row .browse-row[data-pos="far-prev"] .browse-row-items,
+.browse.browse-single-row .browse-row[data-pos="far-next"] .browse-row-items {
     display: none;
 }
 .browse.browse-single-row .browse-row[data-pos="hint-prev"] .browse-row-title,
@@ -6097,6 +6135,17 @@ body.kids-tabpill-hidden .browse.browse-single-row .browse-stack {
     padding-top: 0.5rem;
     padding-bottom: 0.5rem;
     font-size: 1.5rem;
+    /* t38: horizontally center the prev/next hint blocks (caret +
+       title). The base .browse-row-title has padding-left:
+       --browse-cursor-x to line up with the cursor column on the
+       active row; hint rows ignore that left-pinning so the
+       title block balances against the page rather than feeling
+       lopsided against the section header. */
+    padding-left: 0;
+    text-align: center;
+    /* The <h2> is a block element spanning the full row width; the
+       caret + title text inside flow horizontally and the text-align
+       on the parent centers the inline content. */
 }
 .browse.browse-single-row .browse-row-hint-caret {
     width: 1.1em;
@@ -6130,37 +6179,36 @@ body.kids-tabpill-hidden .browse.browse-single-row .browse-stack {
     pointer-events: none;
 }
 
-/* t36 item 9: poster-flash gate during row swaps.
+/* t36 item 9 + t38 item 4: poster-flash gate during row swaps.
 
-   Steady state: data-pos="active" shows .browse-row-items; every
-   other data-pos hides .browse-row-items (hint rows show title +
-   caret only, far rows are off-screen).
+   Steady state: only data-pos="active" shows .browse-row-items;
+   every other data-pos (hint-prev / hint-next / far-prev / far-
+   next) hides .browse-row-items via display:none (rule above).
+   Hint rows still show their title + caret outside the items
+   container; far rows are off-screen entirely.
 
-   The flash happens during the 250ms slide because data-pos flips
-   immediately on focus change:
-     - The outgoing row's data-pos goes active -> hint-prev/next.
-       display:none kicks in instantly, fine.
+   Without further work the swap itself still flashes:
+     - The outgoing row's data-pos goes active -> hint-prev/next
+       (or further). display:none on .browse-row-items kicks in
+       the same frame, so its posters vanish instantly. Good.
      - The incoming row's data-pos goes hint-prev/next -> active.
        Its .browse-row-items becomes display:block instantly, but
        the row itself is mid-slide at its previous translateY
-       offset (-50% +/- 38vh). The tiles render at that wrong
+       offset (-50% +/- 44vh). The tiles render at that wrong
        y-position and ride the row's translateY animation into the
        final center. That ride is the visible "poster flash."
 
    Fix: while Browse stamps data-animating="true" on its root,
-   fade the active row's .browse-row-items to opacity 0 (still
+   force the active row's .browse-row-items to opacity 0 (still
    visibility: hidden via pointer-events). The kid sees only the
-   row titles sliding between start and end. Once the 270ms
-   transition window elapses Browse clears data-animating; the
-   active row's items transition back to opacity 1 in place.
-   Outgoing row's items stayed hidden the whole time via its
-   hint-prev/next data-pos.
+   row titles sliding between start and end. Once the 180ms gate
+   window elapses Browse clears data-animating; the active row's
+   items transition back to opacity 1 in place via the 200ms
+   opacity transition.
 
-   Using opacity (instead of display:none) lets the items reveal
-   smoothly via the opacity transition that's already on the
-   parent .browse-row - no jarring pop. The titles continue to
-   read normally because they live OUTSIDE .browse-row-items in
-   the row's section element. */
+   Net effect (per t38 user spec): during a row swap only the
+   row titles slide vertically and the new active row's items
+   fade in. No posters from any other row are ever visible. */
 .browse-row-items {
     transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
