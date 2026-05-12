@@ -2,6 +2,7 @@ import {
     Fragment,
     useCallback,
     useEffect,
+    useLayoutEffect,
     useMemo,
     useRef,
     useState,
@@ -194,9 +195,20 @@ export default function Browse() {
     // N hooks and subsequent renders (data present) ran with N+3,
     // tripping React error #310 ("rendered more hooks than during
     // the previous render"). Hooks must be unconditional.
+    //
+    // t38: data-animating must flip on the SAME paint as data-pos.
+    // The original useEffect-based approach (t36) ran after commit
+    // and paint, leaving a 1-frame gap where the incoming row's
+    // .browse-row-items rendered at opacity 1 in the wrong y-position
+    // (still mid-slide) before opacity 0 kicked in on the next paint.
+    // useLayoutEffect runs synchronously after the DOM mutation but
+    // BEFORE paint, so the resulting state update + re-render flush
+    // before the browser draws. Both renders are coalesced into the
+    // same paint - the kid never sees the in-between frame.
     const [isRowAnimating, setIsRowAnimating] = useState(false);
     const lastFocusRowRef = useRef(focus.row);
-    useEffect(() => {
+    const animatingTimerRef = useRef<number | null>(null);
+    useLayoutEffect(() => {
         if (focus.row === lastFocusRowRef.current) return;
         lastFocusRowRef.current = focus.row;
         // 250ms matches the data-pos slide on .browse-row. We clear
@@ -209,9 +221,23 @@ export default function Browse() {
         const isSlow = document.body?.dataset.perf === "slow";
         const dur = isSlow ? 40 : 180;
         setIsRowAnimating(true);
-        const id = window.setTimeout(() => setIsRowAnimating(false), dur);
-        return () => window.clearTimeout(id);
+        if (animatingTimerRef.current !== null) {
+            window.clearTimeout(animatingTimerRef.current);
+        }
+        animatingTimerRef.current = window.setTimeout(() => {
+            setIsRowAnimating(false);
+            animatingTimerRef.current = null;
+        }, dur);
     }, [focus.row]);
+    useEffect(() => {
+        // Cleanup on unmount so we don't leak the gate timer.
+        return () => {
+            if (animatingTimerRef.current !== null) {
+                window.clearTimeout(animatingTimerRef.current);
+                animatingTimerRef.current = null;
+            }
+        };
+    }, []);
 
     // Parent hid an item: drop it from every row in-place + rewrite
     // the sessionStorage cache so a fresh mount doesn't resurrect it.
@@ -844,10 +870,12 @@ export default function Browse() {
                 document.documentElement.dataset.kidsBgOffsetY ?? 0,
             );
             // t36: -120 felt too gentle (~10 rows per full cycle).
-            // -320 gives a more pronounced shift so each row swap
-            // visibly re-anchors the bg, while still keeping ~3-4
-            // rows per cycle on the noise-heavy painted texture.
-            const ROW_BG_OFFSET = -320;
+            // -320 gave a more pronounced shift but still felt subtle.
+            // t38: bumped to -560 so each row swap visibly re-anchors
+            // the bg by a noticeable amount on the painted-texture
+            // backdrop. Still keeps the texture in-frame on the bg
+            // layer (background-size is much larger than viewport).
+            const ROW_BG_OFFSET = -560;
             const y = baseOffset + focus.row * ROW_BG_OFFSET;
             if (isFirst) {
                 // Snap on first paint: temporarily disable the bg
