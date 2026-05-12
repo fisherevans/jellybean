@@ -2178,28 +2178,38 @@ body[data-perf="slow"] .kids-tag-card.focused {
     gap: 0.75rem;
     color: #ffffff;
 }
-/* .browse-bg used to live here; the bg has moved up to KidsHome
-   (.kids-home-bg) so it can render BEHIND the TabPill too. When
-   the TabPill scrolls up on /browse, the rainbow shows through
-   instead of a white gap. CSS variable --kids-bg-pos-y is written
-   by Browse's animator each frame to scroll the bg in lockstep. */
+/* t41: .browse-stack is the sliding-window container. Each visible
+   role (hint-prev / active / hint-next) is its own child component;
+   the stack absolutely-positions them via data-slot anchors below.
+   On row swap, Browse.tsx writes an inline transform that starts at
+   one slot-height offset and transitions back to 0 - the kid sees
+   every mounted component slide in lockstep.
+
+   --browse-slot-h: vertical distance from the active row's center
+   to a hint title's center. ~42vh keeps the hints roughly halfway
+   between viewport edge and the active row's rendered extent at
+   1080p (active combo ~28vh half-height -> active row spans 22vh..
+   78vh; hint title at 8vh / 92vh sits squarely between page edge
+   and content). It's also the per-step animation distance.
+
+   .browse-stack fills the area below the TabPill (or the whole
+   content area when the pill is hidden). It transitions only the
+   top edge so the active row stays vertically centered as the pill
+   collapses. */
 .browse-stack {
-    /* Transparent container that gets translateY'd by JS for
-       vertical motion. No bg here so the stack isn't a giant
-       painted texture - only its children's contained layers
-       move when transform changes. position: relative establishes
-       a stacking context.
-       padding-top: clearance for the absolutely-positioned TabPill
-       so the first row isn't hidden under it at scrollY=0. As the
-       kid scrolls down, the stack transforms up; both the TabPill
-       and this padding move up at the same rate so the first row
-       transitions cleanly into the TabPill area as it scrolls
-       away. */
-    padding: var(--kids-tabpill-height, 90px) 0 1.25rem 0;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: var(--kids-tabpill-height, 90px);
+    bottom: 0;
+    --browse-slot-h: 42vh;
     will-change: transform;
     transform: translate3d(0, 0, 0);
-    position: relative;
+    transition: top 250ms cubic-bezier(0.4, 0, 0.2, 1);
     z-index: 1;
+}
+body.kids-tabpill-hidden .browse-stack {
+    top: 0;
 }
 /* Body lock for Browse (kept under .browse-active for back-compat
    with the class KidsHome adds for /browse). Same effect as
@@ -2242,38 +2252,26 @@ body.browse-active {
     vertical-align: -0.15em;
 }
 
-/* Rows are transparent - the colorful surface lives on .browse
-   (rainbow + blob bg). Earlier draft put per-row colored bands
-   here; that fought with the page-level decoration and made
-   adjacent rows feel like discrete posters rather than a single
-   playful canvas.
-   content-visibility: auto tells the browser to skip layout +
-   paint for rows that aren't currently in (or near) the viewport.
-   contain-intrinsic-size gives the browser a placeholder height
-   for skipped rows so scroll position + scrollbar size stay
-   accurate. Massive perf win on cheap WebView - a 22-row library
-   only paints the 2-3 rows visible at any time instead of all 22
-   on every scroll frame. The intrinsic size matches an actual
-   focused row (title + ~270px poster + 14px label + padding). */
+/* t41: .browse-row is the ActiveRow's outer <section>. It anchors
+   to the center of the stack via data-slot="active". Hint rows are
+   a separate .browse-hint component (centered horizontally, no tile
+   track) so this rule applies only to the active row.
+   Paint containment keeps the tile track + focused-combo transforms
+   from invalidating page-level layout when the kid arrows around
+   inside the row. */
 .browse-row {
-    margin: 0 0 0.5rem;
+    position: absolute;
+    left: 0;
+    right: 0;
+    margin: 0;
     padding: 0;
-    content-visibility: auto;
-    contain-intrinsic-size: auto 400px;
-    /* Layout + paint containment: each row is its own layout +
-       paint subtree. Layout: invalidations (focus class flips on a
-       child tile, animator transform writes on the track) don't
-       cascade up to the page-level layout. Paint: hints to the
-       browser that the row's pixels are independent, which tends
-       to put each row on its own compositor layer. The big payoff
-       is on window scroll - without paint containment, every
-       scroll frame repaints the entire viewport on this WebView
-       (5s freeze on a single Down press). With paint containment,
-       scroll just composites the cached row layers vertically.
-       Safe with the focused tile's transform: scale(1.12) because
-       .browse-row-items has top/bottom padding that absorbs the
-       scaled tile's bleed inside the row's box. */
     contain: layout paint;
+}
+.browse-row[data-slot="active"] {
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 3;
+    pointer-events: auto;
 }
 .browse-row-title {
     font-size: 2rem;
@@ -2281,19 +2279,7 @@ body.browse-active {
     margin: 0.9rem 0 0.6rem;
     color: var(--fg);
     padding-left: var(--browse-cursor-x);
-    /* Subtle text shadow so titles read on the watercolor blobs
-       without a heavy chrome bar behind them. */
     text-shadow: 0 1px 4px rgba(255, 255, 255, 0.6);
-    /* t39: animate font-size + opacity so the active <-> hint title
-       size and dimness changes interpolate smoothly during a row
-       swap rather than snapping at the same instant data-pos flips.
-       Combined with the unified padding-left (cursor-x in every
-       state) this means a row swap visually slides titles up/down
-       while their size + dimness ease in lockstep with the row
-       translateY. Duration matches the row's 380ms slide below. */
-    transition:
-        font-size 380ms cubic-bezier(0.22, 1, 0.36, 1),
-        opacity 380ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .browse-row-icon {
     color: var(--accent);
@@ -4231,15 +4217,10 @@ body[data-perf="slow"] .up-next-btn {
         0 3px 10px rgba(0, 0, 0, 0.45);
 }
 
-/* Active-row reinforcement. Tile-level focus already drives the
-   primary cue (scale + ring); this is a peripheral hint that ties
-   the hero panel back to the row containing the focused tile.
-   Class flip only - no transform, no shadow change, just a brighter
-   title color. Kept light to avoid competing with the focused
-   tile's affordance. */
-.browse-row-active .browse-row-title {
-    color: var(--accent, #ffffff);
-}
+/* (t41 removed .browse-row-active reinforcement: the ActiveRow
+   component is the only row with a .browse-row-title now - there
+   is no inactive sibling to differentiate from. The focused tile's
+   ring + scale already provide the focus cue.) */
 
 /* Slow-perf overrides. Drop the multi-stop drop-shadows on the
    hero text. The hero is on every Browse render, so the difference
@@ -5016,9 +4997,7 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
    color cue is gone (the focused tile + its scale + ring are loud
    enough on their own). Resets to .browse-row-title's normal color
    (white on the rainbow bg). */
-.browse-row-active .browse-row-title {
-    color: inherit;
-}
+/* (t41 removed second .browse-row-active reset; class no longer set.) */
 
 /* Fix 3: masking scrim behind the TabPill so tiles scrolling under
    it don't get visually sliced by the pill chrome. The slot already
@@ -5980,282 +5959,103 @@ body[data-perf="slow"] .focused-row-combo {
     }
 }
 
-/* ===== Single-row browse (t33) =====
-   Browse used to show every row stacked vertically and scroll the
-   whole stack as one unit. t33 reshapes it into a "viewing window":
-   only ONE row is fully visible at a time, vertically centered. The
-   rows immediately above and below shrink down to just their titles
-   (+ a ▲/▼ caret) as hints. Rows further away (delta >= 2) are
-   pushed off-screen and faded out.
+/* ===== Sliding-window browse (t41) =====
+   Browse mounts a sliding window of at most 4 row components at a
+   time: hint-prev / active / hint-next (steady state) plus a
+   transient outgoing row during a swap. Each visual role is its own
+   React component:
+     - <ActiveRow>      -> section.browse-row[data-slot="active"]
+     - <HintRowTitle>   -> section.browse-hint[data-slot="prev|next|far-*"]
 
-   All rows still mount; the visibility state is class-flips +
-   transforms, no DOM churn. This preserves the per-row image
-   priority latch, the horizontal track animator's cached position,
-   and React state on every Tile. The active row's data-pos attribute
-   drives the layout; CSS transitions (transform + opacity) handle
-   the slide.
+   The container .browse-stack absolutely positions children by
+   data-slot:
+     - active     : top:50%, translateY(-50%)             (centered)
+     - prev       : top:50%, translateY(-50% - slot-h)    (above)
+     - next       : top:50%, translateY(-50% + slot-h)    (below)
+     - far-prev   : top:50%, translateY(-50% - 2 * slot-h) (off-top)
+     - far-next   : top:50%, translateY(-50% + 2 * slot-h) (off-bottom)
 
-   Slow-mode (body[data-perf="slow"]) snaps with no transition - the
-   kid TV can't comfortably interpolate 22 rows of contained
-   subtrees on every D-pad press, so we just present the new state.
+   On a row swap, Browse.tsx writes an inline transform on
+   .browse-stack of +/-slot-h (the "previous visual state") then
+   transitions back to translate3d(0,0,0). All four slot anchors are
+   static; only the stack-level transform animates. The kid sees
+   every mounted child slide in lockstep.
 
-   Layout math:
-     - Active row sits at the vertical center of the content area
-       (translate from its natural flow position). The row's intrinsic
-       size (~400px contain-intrinsic) plus the focused tile's
-       scale(1.12) all fit comfortably in a 720p viewport with the
-       TabPill collapsed.
-     - hint-prev sits just above the active row's vertical extent.
-     - hint-next sits just below.
-     - far-prev / far-next are off-screen (translateY +/- 100vh)
-       with opacity 0 so the WebView can skip painting them. */
-.browse.browse-single-row .browse-stack {
-    /* Stack-Y translate is no longer load-bearing for vertical
-       scroll (each row owns its position via data-pos). Reset to a
-       transparent fill container so child rows can position
-       absolutely + the page bg shows through.
-       When the TabPill is visible (body lacks .kids-tabpill-hidden),
-       the stack starts below the TabPill's height so the active row
-       centers in the remaining space and the previous-row hint
-       (which sits above active) doesn't overlap with the pill chrome.
-       When hidden, the stack fills the whole content area and the
-       hint-prev moves up into the spot the TabPill used to occupy. */
+   No display:none, no opacity gates, no data-pos flipping on a
+   shared element. The active row's title and the hint title are
+   rendered by different components with different layout languages -
+   .browse-row-title is anchored at cursor-x; .browse-hint-title is
+   centered horizontally. Because they're separate DOM nodes the
+   active-row title never "flashes" above its destination during a
+   swap (it's the focal point of <ActiveRow> in the new tree; the
+   hint title for the same row id is a freshly-mounted <HintRowTitle>
+   that already lives at the hint slot's translateY before the
+   container transform settles to 0). */
+
+/* Hint title component: row-name + chevron, centered horizontally.
+   Vertical position is owned by the [data-slot] anchor below. */
+.browse-hint {
+    position: absolute;
+    left: 0;
+    right: 0;
+    margin: 0;
+    pointer-events: none;
+    text-align: center;
+}
+.browse-hint-title {
+    margin: 0;
     padding: 0;
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: var(--kids-tabpill-height, 90px);
-    bottom: 0;
-    transition: top 250ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-body.kids-tabpill-hidden .browse.browse-single-row .browse-stack {
-    top: 0;
-}
-/* Hero panel: hidden in single-row mode. The component still
-   mounts so its data-fetch side-effect runs (warms the kid-item
-   cache), but it doesn't paint. The active row's inline metadata
-   (post-t32) is where focused-item context lives now. */
-.browse.browse-single-row .browse-hero {
-    display: none;
-}
-/* Each row absolutely positions itself within the .browse-stack
-   container. The transitions cover the slide-and-fade between
-   states. content-visibility: auto stays on .browse-row from the
-   base rules, but data-pos="active" overrides it because the row
-   is visible. */
-.browse.browse-single-row .browse-row {
-    position: absolute;
-    left: 0;
-    right: 0;
-    /* Vertical anchor: top of the row sits at 50% of the stack
-       (the visible content area below the TabPill). Translate-Y
-       offsets per data-pos move the row up or down from that
-       anchor. The base translate is -50% so the row's own
-       vertical middle aligns with the anchor. */
-    top: 50%;
-    transform: translateY(-50%);
-    /* t39: bumped from 250ms ease-in-out to 380ms with an ease-out-
-       quint curve so row swaps feel like a substantial slide rather
-       than a flash. The longer settle gives the eye time to read
-       the title rising into / falling out of the hint slot, and the
-       softer landing (curve decelerates more aggressively at the end)
-       sells "the new row arrived" instead of "a row appeared." Item
-       opacity below (200ms -> 220ms) and the data-animating gate in
-       Browse.tsx (180ms -> 240ms) shift in lockstep so the new active
-       row's posters fade in just as the slide settles. */
-    transition:
-        transform 380ms cubic-bezier(0.22, 1, 0.36, 1),
-        opacity 380ms cubic-bezier(0.22, 1, 0.36, 1);
-    /* Cancel the base .browse-row content-visibility on active so
-       the row paints when it slides in. far-prev / far-next keep
-       content-visibility: auto so the WebView can skip them. */
-    content-visibility: visible;
-    will-change: transform, opacity;
-    /* Pull the row's natural margin off so the absolute positioning
-       maths line up cleanly. */
-    margin: 0;
-}
-.browse.browse-single-row .browse-row[data-pos="active"] {
-    transform: translateY(-50%);
-    opacity: 1;
-    z-index: 3;
-    pointer-events: auto;
-}
-/* Hint rows: shrink to title-only height + slide above/below the
-   active row. We don't fully hide them (display: none would lose
-   the transition); instead we cap the row's visible area to the
-   title's natural height + a little headroom. The tiles inside
-   still occupy DOM but are translated off via the row's offset
-   so they never paint into the viewport. */
-.browse.browse-single-row .browse-row[data-pos="hint-prev"] {
-    /* Sit above the active row. Offset is ~half the active row's
-       rendered height plus a comfortable gap. Active row is
-       ~400-520px tall (title + tiles + scale-1.12 bleed); 38% of
-       the viewport keeps the hint clear of the focused tile's ring
-       on 720p and scales sensibly on larger displays.
-       t34: row opacity stays at 1; the hint title + caret carry
-       their own per-element opacity (0.65) so the text + icon read
-       at the same level instead of being doubly attenuated by a
-       container opacity stack.
-       t38: bumped from 38vh -> 42vh so hints sit roughly halfway
-       between viewport edge and active row's vertical extent. With
-       the active combo now ~600px tall at 1080p (~28vh half-height)
-       the active row spans ~22vh to ~78vh; midpoint between page
-       top (0) and active row top (22vh) is ~11vh, midpoint between
-       active row bottom (78vh) and page bottom (100vh) is ~89vh.
-       -42vh puts the hint title at 8vh (above midpoint, closer to
-       viewport edge than to active row) which reads as "centered
-       between page edge and content" rather than "pinned to the
-       active row" as -38vh did. */
-    transform: translateY(calc(-50% - 42vh));
-    opacity: 1;
-    z-index: 2;
-    pointer-events: none;
-}
-.browse.browse-single-row .browse-row[data-pos="hint-next"] {
-    transform: translateY(calc(-50% + 42vh));
-    opacity: 1;
-    z-index: 2;
-    pointer-events: none;
-}
-/* Non-active rows: tile track + horizontal scroll padding never
-   paint. We keep .browse-row-title visible on hint-prev / hint-next
-   (with the ▲/▼ caret rendered by Browse.tsx) so the kid sees the
-   upcoming row's name; far-prev / far-next rows are off-screen via
-   their translateY + opacity 0 so the title isn't visible there
-   either. The .browse-row-items container is collapsed everywhere
-   except data-pos="active" so no posters ever paint outside the
-   active row.
-   t38: extended from just hint-prev/hint-next to also cover
-   far-prev / far-next. Without this, rows two or more away from
-   the active row kept rendering their .browse-row-items normally
-   even though the row's opacity transitioned to 0 over 250ms; mid-
-   slide their posters were briefly visible riding the row's
-   translateY animation. Hiding the items via display:none kicks
-   in the same frame data-pos flips, so the outgoing row's posters
-   vanish instantly and only the incoming active row's items are
-   ever visible during the swap (those fade in via the data-
-   animating opacity gate below). */
-.browse.browse-single-row .browse-row[data-pos="hint-prev"] .browse-row-items,
-.browse.browse-single-row .browse-row[data-pos="hint-next"] .browse-row-items,
-.browse.browse-single-row .browse-row[data-pos="far-prev"] .browse-row-items,
-.browse.browse-single-row .browse-row[data-pos="far-next"] .browse-row-items {
-    display: none;
-}
-.browse.browse-single-row .browse-row[data-pos="hint-prev"] .browse-row-title,
-.browse.browse-single-row .browse-row[data-pos="hint-next"] .browse-row-title {
-    /* t34: bump from effective ~0.6 (0.75 * 0.85 container) to a
-       clean 0.65 so the hint reads as "you can see those rows exist,
-       still subordinate to focus" without disappearing into the bg.
-       The container opacity is now 1 so the title + caret share this
-       single attenuation value. */
-    opacity: 0.65;
-    margin: 0;
-    padding-top: 0.5rem;
-    padding-bottom: 0.5rem;
+    /* Sized to read as "the row name above/below" without competing
+       with the active row's title. 1.5rem matches the prior t34/t38
+       hint title size. 0.65 opacity reads as subordinate. */
     font-size: 1.5rem;
-    /* t39 fix: keep the hint title anchored to --browse-cursor-x just
-       like the active row's title. The t38 attempt to center the hint
-       block was the source of a visible horizontal flash during row
-       swaps - the title's effective left position jumped from cursor-
-       x (active) to (rowWidth - titleWidth) / 2 (centered hint) in a
-       single frame while the row was already mid-translateY. Pinning
-       all titles to the same horizontal anchor means the only thing
-       that animates during the swap is the row's vertical translate
-       plus the title's font-size + opacity, which all interpolate
-       smoothly. The "balance against the page" intent of t38 was
-       cosmetic; smooth transitions matter more. */
+    font-weight: 700;
+    color: #ffffff;
+    opacity: 0.65;
+    text-shadow:
+        0 2px 4px rgba(0, 0, 0, 0.55),
+        0 4px 14px rgba(0, 0, 0, 0.45);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
 }
-.browse.browse-single-row .browse-row-hint-caret {
+.browse-hint-caret {
     width: 1.1em;
     height: 1.1em;
-    margin-right: 0.35em;
-    vertical-align: -0.15em;
     color: #ffffff;
-    /* t34: caret inherits the title's 0.65 opacity (the title is the
-       caret's parent in the DOM, so opacity stacks naturally and the
-       caret + text read at the same alpha). Drop-shadow stays for
-       legibility on busy bg regions. */
     filter:
         drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55))
         drop-shadow(0 4px 14px rgba(0, 0, 0, 0.45));
 }
-/* Far rows: fully off-screen + faded. Far-prev pushed up beyond
-   the viewport top, far-next beyond the viewport bottom. opacity 0
-   so they're not in the kid's peripheral vision. The transition on
-   transform + opacity covers the smooth slide-out when a row
-   transitions from hint to far. */
-.browse.browse-single-row .browse-row[data-pos="far-prev"] {
-    transform: translateY(calc(-50% - 100vh));
-    opacity: 0;
+
+/* Slot anchors. The active row's anchor is defined in the
+   .browse-row[data-slot="active"] block higher up. Hint slots
+   anchor here. Far slots park the outgoing/incoming rows off-
+   screen during a swap. */
+.browse-hint[data-slot="prev"] {
+    top: 50%;
+    transform: translateY(calc(-50% - var(--browse-slot-h)));
+    z-index: 2;
+}
+.browse-hint[data-slot="next"] {
+    top: 50%;
+    transform: translateY(calc(-50% + var(--browse-slot-h)));
+    z-index: 2;
+}
+.browse-hint[data-slot="far-prev"] {
+    top: 50%;
+    transform: translateY(calc(-50% - 2 * var(--browse-slot-h)));
     z-index: 1;
-    pointer-events: none;
 }
-.browse.browse-single-row .browse-row[data-pos="far-next"] {
-    transform: translateY(calc(-50% + 100vh));
-    opacity: 0;
+.browse-hint[data-slot="far-next"] {
+    top: 50%;
+    transform: translateY(calc(-50% + 2 * var(--browse-slot-h)));
     z-index: 1;
-    pointer-events: none;
 }
 
-/* t36 item 9 + t38 item 4: poster-flash gate during row swaps.
-
-   Steady state: only data-pos="active" shows .browse-row-items;
-   every other data-pos (hint-prev / hint-next / far-prev / far-
-   next) hides .browse-row-items via display:none (rule above).
-   Hint rows still show their title + caret outside the items
-   container; far rows are off-screen entirely.
-
-   Without further work the swap itself still flashes:
-     - The outgoing row's data-pos goes active -> hint-prev/next
-       (or further). display:none on .browse-row-items kicks in
-       the same frame, so its posters vanish instantly. Good.
-     - The incoming row's data-pos goes hint-prev/next -> active.
-       Its .browse-row-items becomes display:block instantly, but
-       the row itself is mid-slide at its previous translateY
-       offset (-50% +/- 44vh). The tiles render at that wrong
-       y-position and ride the row's translateY animation into the
-       final center. That ride is the visible "poster flash."
-
-   Fix: while Browse stamps data-animating="true" on its root,
-   force the active row's .browse-row-items to opacity 0 (still
-   visibility: hidden via pointer-events). The kid sees only the
-   row titles sliding between start and end. Once the 180ms gate
-   window elapses Browse clears data-animating; the active row's
-   items transition back to opacity 1 in place via the 200ms
-   opacity transition.
-
-   Net effect (per t38 user spec): during a row swap only the
-   row titles slide vertically and the new active row's items
-   fade in. No posters from any other row are ever visible. */
-.browse-row-items {
-    /* t39: bumped from 200ms -> 220ms to track the longer 380ms row
-       slide. Browse.tsx holds data-animating="true" for the first
-       240ms of the slide (was 180ms), keeping items at opacity 0
-       while the row covers ~63% of its translateY. The remaining
-       140ms of the slide overlaps with the items' 220ms fade-in so
-       posters appear to "rise into view" as the row settles - the
-       fade finishes ~80ms after the slide lands at center. */
-    transition: opacity 220ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-.browse[data-animating="true"] .browse-row[data-pos="active"] .browse-row-items {
-    opacity: 0;
-    pointer-events: none;
-}
-/* Slow-perf: snap so the kid TV doesn't pay two simultaneous
-   opacity transitions (row + items). */
-body[data-perf="slow"] .browse-row-items {
-    transition: none;
-}
-
-/* TabPill hide/show wired by KidsHome via the .kids-tabpill-slot-hidden
-   class. Animates opacity + transform together so the page chrome
-   gives the slot's vertical space back to the row-hint stack when
-   the kid scrolls past row 0. The base transform stays at translate3d
-   (0,0,0) so the hidden state's translate animates smoothly - browsers
-   can't always interpolate from `none` to a matrix transform.
-   This rule sits AFTER the earlier .kids-tabpill-slot { transform:
-   none } block, so the explicit translate3d takes effect. */
+/* TabPill hide/show wired by KidsHome via .kids-tabpill-slot-hidden.
+   The pill collapses when the kid scrolls past row 0 so the
+   hint-prev title can move up into the spot. */
 .kids-tabpill-slot {
     transform: translate3d(0, 0, 0);
     transition:
@@ -6264,21 +6064,16 @@ body[data-perf="slow"] .browse-row-items {
 }
 .kids-tabpill-slot-hidden {
     opacity: 0;
-    /* Slide up out of view so the kid sees the row hint move up
-       into the pill's spot rather than the pill just fading. The
-       !important here beats the earlier slot rules that pin
-       transform to translate3d(0,0,0) (the previous tile-bg masking
-       block at the top of the slot's CSS history). */
     transform: translate3d(0, -100%, 0) !important;
     pointer-events: none;
 }
 
 /* Slow-perf: snap with no transitions. The Skyworth WebView's
-   compositor stutters on simultaneous transform animations across
-   many subtrees. Class flips alone communicate the state change. */
-body[data-perf="slow"] .browse.browse-single-row .browse-row,
-body[data-perf="slow"] .browse.browse-single-row .browse-stack,
-body[data-perf="slow"] .browse-row-title,
+   compositor stutters on simultaneous transform animations - on
+   slow mode the row-swap useLayoutEffect skips the start-state
+   write entirely so there's nothing to settle, and we also drop
+   the stack's transition here for belt-and-suspenders. */
+body[data-perf="slow"] .browse-stack,
 body[data-perf="slow"] .kids-tabpill-slot {
     transition: none;
 }
