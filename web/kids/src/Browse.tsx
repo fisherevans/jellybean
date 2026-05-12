@@ -1094,6 +1094,7 @@ export default function Browse() {
                                                     focused={focused}
                                                     showProgress
                                                     priority={rowImagePriority}
+                                                    loading="eager"
                                                     onClick={() => {
                                                         rememberLastFocused(item.Id);
                                                         nav(`/play/${encodeURIComponent(item.Id)}${location.search}`);
@@ -1126,6 +1127,7 @@ export default function Browse() {
                                                 focused={focused}
                                                 showProgress
                                                 priority={rowImagePriority}
+                                                loading="eager"
                                                 onClick={() => {
                                                     // t34: Browse Enter -> /play directly. See
                                                     // handleShortPress comment for rationale.

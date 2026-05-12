@@ -38,6 +38,16 @@ type Props = {
        rows far from the focused row so we only decode images the
        kid is actually about to look at. */
     priority?: boolean;
+    /* <img loading=> attribute. Defaults to "lazy" - the safe
+       choice for dense grids like Library where TileGrid renders
+       hundreds of items without virtualization (firing all poster
+       requests at page-load would hammer the image proxy on cold
+       cache). Browse passes "eager" explicitly because its
+       priority gate already constrains <img> rendering to the
+       warm window around the focused row, and lazy was masking
+       the warm fetches behind the t38 display:none on non-active
+       rows. See Browse.tsx warmRowsRef + priority for context. */
+    loading?: "lazy" | "eager";
 };
 
 function TileImpl({
@@ -49,6 +59,7 @@ function TileImpl({
     refCallback,
     showProgress = false,
     priority = true,
+    loading = "lazy",
 }: Props) {
     const tag = item.ImageTags?.Primary ?? "";
     // Poster width is adaptive: slow-perf devices stay at 130 (decode
@@ -85,22 +96,17 @@ function TileImpl({
                     <img
                         src={src}
                         alt={item.Name}
-                        // t39: was loading="lazy", which blocks fetch
-                        // on any <img> whose ancestor is display:none.
-                        // After t38 the hint-prev / hint-next rows'
-                        // .browse-row-items is display:none in steady
-                        // state, so lazy meant their posters never
-                        // started fetching - the kid arrowed onto a
-                        // neighboring row and watched a cold load
-                        // happen instead of seeing the cached image
-                        // fade in. The `priority` prop already gates
-                        // <img> presence to a small warm window around
-                        // the focused row (default radius 2, grows
-                        // 1/1.5s), so flipping to eager just pulls
-                        // those warm-window tiles into the fetch
-                        // pipeline immediately. Cold rows still don't
-                        // render <img> at all (placeholder div above).
-                        loading="eager"
+                        // t40: caller-controlled. Browse passes
+                        // "eager" (warm-window posters need to start
+                        // fetching even when their .browse-row-items
+                        // ancestor is display:none - t38 hides
+                        // hint-prev/hint-next rows, and lazy stalls
+                        // fetches under any display:none ancestor).
+                        // Library/Tags/TagDetail default to "lazy"
+                        // because TileGrid renders hundreds of tiles
+                        // without virtualization and eager would
+                        // hammer the image proxy on cold cache.
+                        loading={loading}
                         decoding="async"
                     />
                 ) : (
@@ -165,5 +171,6 @@ export default memo(TileImpl, (prev, next) =>
     prev.size === next.size &&
     prev.focused === next.focused &&
     prev.showProgress === next.showProgress &&
-    prev.priority === next.priority,
+    prev.priority === next.priority &&
+    prev.loading === next.loading,
 );
