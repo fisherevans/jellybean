@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { Play } from "@phosphor-icons/react";
 import type { BrowseItem } from "jellybean-shared";
 import { authHeaders, withAuthRetry } from "./auth";
 
@@ -255,7 +256,24 @@ function FocusedTileMetaCardImpl({
             aria-atomic="true"
         >
             <div className="focused-meta-card-inner">
-                <h2 className="focused-meta-card-title">{item.Name}</h2>
+                <h2 className="focused-meta-card-title">
+                    {/* t34: leading play-triangle. Visual affordance that
+                        Enter on this tile plays right now (Browse routes
+                        straight to /play). White-filled to match the
+                        card's title-on-light-bg color scheme - the chip
+                        sits inside a deep-purple pill that matches the
+                        card title text color, giving it the same weight
+                        as the title without introducing a new accent. */}
+                    <span
+                        className="focused-meta-card-play-chip"
+                        aria-hidden
+                    >
+                        <Play weight="fill" />
+                    </span>
+                    <span className="focused-meta-card-title-text">
+                        {item.Name}
+                    </span>
+                </h2>
                 {meta && <div className="focused-meta-card-meta">{meta}</div>}
                 {isSeries ? (
                     <SeriesBody

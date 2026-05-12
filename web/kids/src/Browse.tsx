@@ -231,7 +231,16 @@ export default function Browse() {
         const item = row.items[focus.col];
         if (!item) return;
         rememberLastFocused(item.Id);
-        nav(`/watch/${encodeURIComponent(item.Id)}${location.search}`);
+        // t34: Browse is a curated lean-back surface, so Enter means
+        // "play this thing right now" rather than "open the interstitial
+        // watch menu." The /play page already handles resume-position for
+        // continue-watching tiles and starting a series at its next ep
+        // (the existing CW wiring relies on the same code paths). Back
+        // from /play still lands on /watch/:id per M7 behavior, so the
+        // watch menu remains the swap-out hub - the kid just doesn't
+        // pass through it on the way in. Library + Tags still route to
+        // /watch (those surfaces are for browsing/swapping content).
+        nav(`/play/${encodeURIComponent(item.Id)}${location.search}`);
     }, [data, focus, nav]);
     const handleLongPress = useCallback(() => {
         if (!focusedItem) return;
@@ -662,21 +671,13 @@ export default function Browse() {
             "--kids-scroll-y",
             `${y}px`,
         );
-        if (document.body?.dataset.perf === "slow") return;
-        // Drive the layout's bg layer (.kids-home-bg) by writing
-        // --kids-bg-pos-y. KidsHome's per-tab offset is mirrored
-        // on documentElement.dataset.kidsBgOffsetY so we can sum
-        // it with the scroll y here. CSS uses --kids-bg-pos-y
-        // when set, falling back to --kids-bg-offset-y otherwise
-        // (Library/Tags don't write --kids-bg-pos-y so they get
-        // the static per-tab offset).
-        const baseOffset = Number(
-            document.documentElement.dataset.kidsBgOffsetY ?? 0,
-        );
-        document.documentElement.style.setProperty(
-            "--kids-bg-pos-y",
-            `${baseOffset + y}px`,
-        );
+        // t34: bg-pos-y is no longer driven by stack-Y. With t33's
+        // single-row viewport, stack-Y stays at 0 and a separate
+        // effect (focus-change) writes --kids-bg-pos-y from the
+        // focused row index so the bg shifts in lockstep with row
+        // swaps. The CSS transition on .kids-home-bg matches the
+        // row-swap timing. Library/Tags don't write --kids-bg-pos-y
+        // so they keep the static per-tab offset.
     }
     // Clear shared CSS variables on unmount so Library / Tags
     // start with the TabPill at top and the bg at the per-session
@@ -785,6 +786,50 @@ export default function Browse() {
         // back-navigation lands instantly on the previously-focused
         // tile; subsequent moves let the CSS transition animate.
         setStackY(0, isFirst);
+        // t34: drive --kids-bg-pos-y from the focused row index so the
+        // rainbow bg shifts in lockstep with the active-row swap. Stack-
+        // Y stays at 0 in single-row mode, so applyStackY above writes
+        // baseOffset+0 = baseOffset on every focus change - the bg
+        // wouldn't move without this. The CSS transition on
+        // .kids-home-bg's background-position-y matches the 250ms row-
+        // swap timing so the bg and rows feel coupled rather than
+        // independently animating. Gated on perf=fast (slow devices
+        // pin the bg via applyStackY's early-return + no transition
+        // on the bg layer when perf=slow). First paint snaps to the
+        // current row's offset by skipping the transition via a one-
+        // shot data attribute on documentElement.
+        if (document.body?.dataset.perf !== "slow") {
+            const baseOffset = Number(
+                document.documentElement.dataset.kidsBgOffsetY ?? 0,
+            );
+            // -120px per row gives the eye enough motion to read as
+            // "scrolled down" without the texture cycling visibly to
+            // a new region within a small range of focus changes.
+            const ROW_BG_OFFSET = -120;
+            const y = baseOffset + focus.row * ROW_BG_OFFSET;
+            if (isFirst) {
+                // Snap on first paint: temporarily disable the bg
+                // transition, write the value, force a reflow, and
+                // restore. Otherwise the bg would animate from 0 to
+                // y when we return from /play via Back (which restores
+                // focus to a non-zero row).
+                document.documentElement.dataset.kidsBgSnap = "1";
+                document.documentElement.style.setProperty(
+                    "--kids-bg-pos-y",
+                    `${y}px`,
+                );
+                // Read offsetHeight to flush style changes before
+                // unsetting the snap flag - the next style change
+                // will be the transitioned one.
+                void document.documentElement.offsetHeight;
+                delete document.documentElement.dataset.kidsBgSnap;
+            } else {
+                document.documentElement.style.setProperty(
+                    "--kids-bg-pos-y",
+                    `${y}px`,
+                );
+            }
+        }
     }, [focus, tabFocused]);
 
     // Window-level keyboard listener. Skip while an override modal
@@ -954,26 +999,37 @@ export default function Browse() {
                                     const showMetaAfter =
                                         rowActive && focusedItem &&
                                         focusedItem.Id === item.Id;
-                                    return (
-                                        <Fragment key={item.Id}>
-                                            <Tile
-                                                item={item}
-                                                size="browse"
-                                                focused={focused}
-                                                showProgress
-                                                priority={rowImagePriority}
-                                                onClick={() => {
-                                                    rememberLastFocused(item.Id);
-                                                    nav(`/watch/${encodeURIComponent(item.Id)}${location.search}`);
-                                                }}
-                                                onFocus={() =>
-                                                    setFocus({ kind: "tile", row: rIdx, col: cIdx })
-                                                }
-                                                refCallback={(el) =>
-                                                    (tileRefs.current[key] = el)
-                                                }
-                                            />
-                                            {showMetaAfter && focusedItem && (
+                                    // t34: When this tile is the focused one,
+                                    // wrap the tile + its inline meta card in
+                                    // a single .focused-row-combo container so
+                                    // CSS can paint ONE focus ring around the
+                                    // outer rectangle. The inner Tile suppresses
+                                    // its own ring (via the parent class) so
+                                    // the ring isn't drawn twice or split
+                                    // visually between two siblings.
+                                    if (showMetaAfter && focusedItem) {
+                                        return (
+                                            <div
+                                                key={item.Id}
+                                                className="focused-row-combo"
+                                            >
+                                                <Tile
+                                                    item={item}
+                                                    size="browse"
+                                                    focused={focused}
+                                                    showProgress
+                                                    priority={rowImagePriority}
+                                                    onClick={() => {
+                                                        rememberLastFocused(item.Id);
+                                                        nav(`/play/${encodeURIComponent(item.Id)}${location.search}`);
+                                                    }}
+                                                    onFocus={() =>
+                                                        setFocus({ kind: "tile", row: rIdx, col: cIdx })
+                                                    }
+                                                    refCallback={(el) =>
+                                                        (tileRefs.current[key] = el)
+                                                    }
+                                                />
                                                 <div
                                                     key={focusedItem.Id}
                                                     className="focused-meta-card-fade"
@@ -984,7 +1040,30 @@ export default function Browse() {
                                                         adminPreview={!session}
                                                     />
                                                 </div>
-                                            )}
+                                            </div>
+                                        );
+                                    }
+                                    return (
+                                        <Fragment key={item.Id}>
+                                            <Tile
+                                                item={item}
+                                                size="browse"
+                                                focused={focused}
+                                                showProgress
+                                                priority={rowImagePriority}
+                                                onClick={() => {
+                                                    // t34: Browse Enter -> /play directly. See
+                                                    // handleShortPress comment for rationale.
+                                                    rememberLastFocused(item.Id);
+                                                    nav(`/play/${encodeURIComponent(item.Id)}${location.search}`);
+                                                }}
+                                                onFocus={() =>
+                                                    setFocus({ kind: "tile", row: rIdx, col: cIdx })
+                                                }
+                                                refCallback={(el) =>
+                                                    (tileRefs.current[key] = el)
+                                                }
+                                            />
                                         </Fragment>
                                     );
                                 })}
