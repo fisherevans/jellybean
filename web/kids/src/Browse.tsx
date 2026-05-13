@@ -90,13 +90,30 @@ const SWAP_DURATION_MS = 380;
 const SWAP_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
 
 // Per-row state that survives mount/unmount of a row's components.
-// Indexed by row.rowId so a row that becomes active again (e.g. after
+// Indexed by rowKey so a row that becomes active again (e.g. after
 // scrolling away and back) remembers where its track was positioned.
 type RowState = {
     // Last focused column index within this row. Browse reads this on
     // ActiveRow mount to seed the horizontal track position.
     scrollColumn: number;
 };
+
+// rowKeyOf produces a unique stable identifier per resolved browse row.
+//
+// The server's `rowId` is the LayoutRow DB id - NOT unique for
+// `tag_fanout` rows. One LayoutRow of type tag_fanout produces N
+// ResolvedRows (one per tag) and the server emits all of them with the
+// same `rowId`. Using `rowId` directly as a React key collapses every
+// fanout child into a single reconciliation slot, so as the kid arrows
+// through them React's diff fails to swap component types correctly
+// and old rows pile up at the active slot (the "Dinosaursal" /
+// "Mr. Rogers'-behind-Horton" bug). The wire field name is misleading
+// but fixing it server-side would also need a load-more rewrite; for
+// the hotfix we compute a unique key on the client. Tag titles are
+// unique within a layout, so `${rowId}:${title}` is sufficient.
+function rowKeyOf(row: BrowseRow): string {
+    return `${row.rowId}:${row.title}`;
+}
 
 export default function Browse() {
     const nav = useNavigate();
@@ -128,14 +145,14 @@ export default function Browse() {
 
     // Per-row memory: last column the kid had focus on inside a row.
     // Survives unmount/remount of <ActiveRow> as the kid scrolls past.
-    // Keyed by rowId so reordered data (admin shuffles, etc.) doesn't
-    // corrupt the lookup.
-    const rowStateRef = useRef<Map<number, RowState>>(new Map());
-    function getRowState(rowId: number): RowState {
-        let s = rowStateRef.current.get(rowId);
+    // Keyed by rowKey (see rowKeyOf) so tag_fanout rows that share
+    // a server-side LayoutRow.ID don't collide their scroll columns.
+    const rowStateRef = useRef<Map<string, RowState>>(new Map());
+    function getRowState(rowKey: string): RowState {
+        let s = rowStateRef.current.get(rowKey);
         if (!s) {
             s = { scrollColumn: 0 };
-            rowStateRef.current.set(rowId, s);
+            rowStateRef.current.set(rowKey, s);
         }
         return s;
     }
@@ -181,11 +198,11 @@ export default function Browse() {
 
     // Per-row image-priority latch. Once a row's tiles have been
     // rendered with <img> they stay in the warm set so a future
-    // re-mount of <ActiveRow> for the same row id doesn't re-decode
+    // re-mount of <ActiveRow> for the same row doesn't re-decode
     // images from cold. Image priority is independent of mount state
     // because the browser HTTP cache + decoded-image cache survive
-    // unmount.
-    const warmRowsRef = useRef<Set<number>>(new Set());
+    // unmount. Keyed by rowKey (see rowKeyOf).
+    const warmRowsRef = useRef<Set<string>>(new Set());
 
     // Long-press Enter handling. Same shape as before the rewrite.
     const focusedItem = !tabFocused && data
@@ -484,8 +501,8 @@ export default function Browse() {
         }
 
         if (key === "ArrowUp" && focus.row === 0) {
-            const rowId = rows[focus.row].rowId;
-            getRowState(rowId).scrollColumn = focus.col;
+            const rowKey = rowKeyOf(rows[focus.row]);
+            getRowState(rowKey).scrollColumn = focus.col;
             setTabFocused(true);
             return;
         }
@@ -494,12 +511,12 @@ export default function Browse() {
             const row = rows[prev.row];
             if (!row) return prev;
             const lastCol = row.items.length;
-            const rowId = row.rowId;
+            const rowKey = rowKeyOf(row);
             switch (key) {
                 case "ArrowRight": {
                     if (prev.col < lastCol) {
                         const nextCol = prev.col + 1;
-                        getRowState(rowId).scrollColumn = nextCol;
+                        getRowState(rowKey).scrollColumn = nextCol;
                         return { kind: "tile", row: prev.row, col: nextCol };
                     }
                     return prev;
@@ -507,18 +524,18 @@ export default function Browse() {
                 case "ArrowLeft": {
                     if (prev.col > 0) {
                         const nextCol = prev.col - 1;
-                        getRowState(rowId).scrollColumn = nextCol;
+                        getRowState(rowKey).scrollColumn = nextCol;
                         return { kind: "tile", row: prev.row, col: nextCol };
                     }
                     return prev;
                 }
                 case "ArrowDown": {
                     if (prev.row < rows.length - 1) {
-                        getRowState(rowId).scrollColumn = prev.col;
+                        getRowState(rowKey).scrollColumn = prev.col;
                         const nextRow = prev.row + 1;
-                        const nextRowId = rows[nextRow].rowId;
+                        const nextRowKey = rowKeyOf(rows[nextRow]);
                         const remembered =
-                            getRowState(nextRowId).scrollColumn;
+                            getRowState(nextRowKey).scrollColumn;
                         const nextLen = rows[nextRow].items.length;
                         const col = Math.min(
                             remembered,
@@ -529,10 +546,10 @@ export default function Browse() {
                     return prev;
                 }
                 case "ArrowUp": {
-                    getRowState(rowId).scrollColumn = prev.col;
+                    getRowState(rowKey).scrollColumn = prev.col;
                     const prevRow = prev.row - 1;
-                    const prevRowId = rows[prevRow].rowId;
-                    const remembered = getRowState(prevRowId).scrollColumn;
+                    const prevRowKey = rowKeyOf(rows[prevRow]);
+                    const remembered = getRowState(prevRowKey).scrollColumn;
                     const prevLen = rows[prevRow].items.length;
                     const col = Math.min(
                         remembered,
@@ -714,11 +731,13 @@ export default function Browse() {
             <div className="browse-stack" ref={stackRef}>
                 {mounts.map(({ rowIndex, slot }) => {
                     const row = rows[rowIndex];
+                    const rowKey = rowKeyOf(row);
                     if (slot === "active") {
                         return (
                             <ActiveRow
-                                key={row.rowId}
+                                key={rowKey}
                                 row={row}
+                                rowKey={rowKey}
                                 rowIndex={rowIndex}
                                 focusCol={focus.col}
                                 focusedItem={focusedItem}
@@ -726,7 +745,7 @@ export default function Browse() {
                                 session={session}
                                 tabFocused={tabFocused}
                                 warmRowsRef={warmRowsRef}
-                                rowState={getRowState(row.rowId)}
+                                rowState={getRowState(rowKey)}
                                 setFocus={setFocus}
                                 onPlay={(item) => {
                                     rememberLastFocused(item.Id);
@@ -754,8 +773,9 @@ export default function Browse() {
                     }
                     return (
                         <HintRowTitle
-                            key={row.rowId}
+                            key={rowKey}
                             row={row}
+                            rowKey={rowKey}
                             slot={slot}
                         />
                     );
@@ -784,9 +804,11 @@ export default function Browse() {
 // posters are already in the HTTP cache.
 function HintRowTitleImpl({
     row,
+    rowKey,
     slot,
 }: {
     row: BrowseRow;
+    rowKey: string;
     slot: SlotName;
 }) {
     // Image preload: warm the row's first ~6 poster URLs. These never
@@ -814,7 +836,7 @@ function HintRowTitleImpl({
                 img.src = "";
             }
         };
-    }, [row.rowId]);
+    }, [rowKey, row.items]);
 
     const isPrev = slot === "prev";
     const isFar = slot === "far-prev" || slot === "far-next";
@@ -854,13 +876,14 @@ const HintRowTitle = memo(HintRowTitleImpl);
 // was on.
 type ActiveRowProps = {
     row: BrowseRow;
+    rowKey: string;
     rowIndex: number;
     focusCol: number;
     focusedItem: BrowseRow["items"][number] | undefined;
     focusedDetail: ReturnType<typeof useFocusedItemDetail>;
     session: Session | null;
     tabFocused: boolean;
-    warmRowsRef: React.MutableRefObject<Set<number>>;
+    warmRowsRef: React.MutableRefObject<Set<string>>;
     rowState: RowState;
     setFocus: (f: Focus) => void;
     onPlay: (item: BrowseRow["items"][number]) => void;
@@ -871,6 +894,7 @@ type ActiveRowProps = {
 
 function ActiveRow({
     row,
+    rowKey,
     rowIndex,
     focusCol,
     focusedItem,
@@ -897,8 +921,8 @@ function ActiveRow({
     // the placeholder-then-image flash. Effect (not direct ref write)
     // so the mutation runs after commit, not during render.
     useEffect(() => {
-        warmRowsRef.current.add(row.rowId);
-    }, [row.rowId, warmRowsRef]);
+        warmRowsRef.current.add(rowKey);
+    }, [rowKey, warmRowsRef]);
     const priority = true; // ActiveRow is always priority warm.
 
     const lastCol = row.items.length;
