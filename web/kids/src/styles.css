@@ -2210,6 +2210,16 @@ body[data-perf="slow"] .kids-tag-card.focused {
 }
 body.kids-tabpill-hidden .browse-stack {
     top: 0;
+    /* t42: pull the prev-hint title up into the space the TabPill
+       vacated. Without this the prev hint just floats ~8vh from the
+       top of the viewport with rainbow above it - the user reads it
+       as "the freed header space isn't being used". --browse-hint-
+       prev-extra adds onto the slot-anchor's translateY so we lift
+       the prev hint without changing slot-h (which doubles as the
+       row-swap animation distance). 6vh sits the hint roughly where
+       the TabPill's bottom edge used to be at 1080p, leaving a small
+       cushion against the very top edge. */
+    --browse-hint-prev-extra: 6vh;
 }
 /* Body lock for Browse (kept under .browse-active for back-compat
    with the class KidsHome adds for /browse). Same effect as
@@ -4999,25 +5009,18 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
    (white on the rainbow bg). */
 /* (t41 removed second .browse-row-active reset; class no longer set.) */
 
-/* Fix 3: masking scrim behind the TabPill so tiles scrolling under
-   it don't get visually sliced by the pill chrome. The slot already
-   transforms with --kids-scroll-y, so the scrim scrolls in lockstep
-   with the TabPill and disappears when the kid has scrolled far
-   enough that the pill is off-screen. A gradient (darker at top,
-   transparent at the bottom edge) keeps the seam with the rainbow
-   bg below the slot from being abrupt. Solid color only - no
-   backdrop-filter blur, since that's paint-time on the Skyworth
-   WebView and the perf docs explicitly call it out. */
+/* t42: the gradient scrim and the rainbow-tile re-paint that used to
+   live on .kids-tabpill-slot are both removed. The page-wide
+   .kids-home-bg (fixed, inset:0) already paints the rainbow behind
+   the slot, so a second bg layer on the slot itself just risks
+   compositing seams between the slot's tile and the page tile when
+   the bg-pos-y transition runs on one but not the other. The slot
+   stays transparent and lets the single page bg show through.
+   We do keep the min-height so the slot still reserves the
+   tabpill area when it's empty (KidsHome leaves it mounted; the
+   pill is just visually slid off via .kids-tabpill-slot-hidden). */
 .kids-tabpill-slot {
-    background: linear-gradient(
-        to bottom,
-        rgba(20, 12, 32, 0.55) 0%,
-        rgba(20, 12, 32, 0.45) 55%,
-        rgba(20, 12, 32, 0) 100%
-    );
-    /* Pin a minimum slot height so the scrim covers the full
-       --kids-tabpill-height area even if the TabPill renders
-       slightly shorter than 90px (DynaPuff metrics vary). */
+    background: none;
     min-height: var(--kids-tabpill-height, 90px);
 }
 
@@ -5296,58 +5299,26 @@ body[data-perf="slow"] .kids-keyboard-key.focused {
     overflow: hidden;
 }
 
-/* Bug 2 fix (t30): pin the TabPill slot at the top of the viewport
-   so it stops scrolling out of view with the content, and clad it
-   in the same rainbow tile the page bg uses so it acts as a
-   seamless mask for tiles passing underneath.
+/* t42: replaces the t30 "clad the slot in its own rainbow tile"
+   approach. The page-wide .kids-home-bg layer (position: fixed,
+   inset: 0) already paints the rainbow tile behind the slot, so
+   the slot just needs to stay transparent and let it show through.
+   Painting a second copy of the bg image on the slot caused a
+   visible seam at the boundary - the .kids-home-bg has a
+   background-position-y transition (380ms) while the slot's bg
+   updated synchronously, and even at rest pixel-snap differences
+   between the two layers showed up as a band of misaligned color.
 
-   t18's scrim was too transparent, t22's bumped opacity read as a
-   dark band, t25 removed the scrim entirely and the underlying
-   "tiles clip at the top of the viewport" complaint came back. The
-   fix here is structural rather than cosmetic: keep the TabPill
-   anchored to the top of the viewport (no transform), give the
-   slot the same rainbow bg as .kids-home-bg with the same
-   --kids-bg-pos-y / --kids-bg-offset-y wiring, and let tiles pass
-   beneath the slot's z-index: 2 invisibly. No dark band, no half-
-   cut tiles, and the TabPill stays usable at any scroll depth.
-
-   Override order: this rule appears AFTER the t18 + t25 blocks
-   above so it wins matching specificity. The transform reset is
-   important - the slot's earlier rule sets translate3d(0, --kids-
-   scroll-y, 0); we override that to none to pin the slot in
-   place.
-
-   Background composition: the rainbow tile SVG contains alpha-
-   blended gradients (stop-opacity 0.75-0.9), so the SVG alone
-   doesn't fully mask tiles passing under the slot - the kid sees
-   the tile silhouette through the pill's flanks. We layer the
-   SVG over var(--page-bg) (the same cream the body renders, which
-   .kids-home-bg also composites over) so the composite is opaque
-   and matches what's rendered at the same position behind the
-   content stack. Position-y wires to the same CSS variables
-   .kids-home-bg uses, so the seam between the slot and the bg
-   layer is invisible at any scroll depth. */
+   We still want the slot pinned to the top of the viewport on
+   /browse so the row-swap transform doesn't drag the pill
+   around: transform: none here overrides the earlier
+   translate3d(0, --kids-scroll-y, 0) rule. The slot is z-index 2
+   (set on the base rule); .browse-stack is z-index 1, so tiles
+   scroll beneath the slot but there's no longer a second bg
+   layer painted on top to mask them - the page's .kids-home-bg
+   masks them instead, from a single shared compositing surface. */
 .kids-tabpill-slot {
-    /* SVG tile on top of an opaque cream base. background-color
-       paints behind background-image, so the SVG's alpha-blended
-       gradients composite over the cream rather than over the
-       (transparent) slot - tiles passing beneath are fully masked.
-       Position-y wires to the same CSS variables .kids-home-bg uses
-       so the seam between the slot's tile and the page's tile is
-       invisible at any scroll depth. */
-    background-color: var(--bg);
-    background-image: url("/player/browse-bg-tile.svg");
-    background-repeat: repeat-y;
-    background-size: 100% auto;
-    background-position-y: var(
-        --kids-bg-pos-y,
-        var(--kids-bg-offset-y, 0)
-    );
-    /* Pin to viewport top. Overrides the earlier rule that
-       translates the slot in lockstep with the content stack
-       (transform: translate3d(0, var(--kids-scroll-y), 0)). With
-       the slot pinned, tiles in .browse-stack scroll beneath it
-       and the rainbow base masks them. */
+    background: none;
     transform: none;
     min-height: var(--kids-tabpill-height, 90px);
 }
@@ -6031,11 +6002,23 @@ body[data-perf="slow"] .focused-row-combo {
 /* Slot anchors. The active row's anchor is defined in the
    .browse-row[data-slot="active"] block higher up. Hint slots
    anchor here. Far slots park the outgoing/incoming rows off-
-   screen during a swap. */
+   screen during a swap.
+
+   t42: the prev-hint translateY uses var(--browse-hint-prev-extra,
+   0vh) on top of -slot-h so the body.kids-tabpill-hidden rule below
+   can pull the prev hint up to where the TabPill used to be without
+   touching slot-h itself (which doubles as the row-swap animation
+   distance - changing it would jitter the swap motion). */
 .browse-hint[data-slot="prev"] {
     top: 50%;
-    transform: translateY(calc(-50% - var(--browse-slot-h)));
+    transform: translateY(
+        calc(
+            -50% - var(--browse-slot-h) -
+                var(--browse-hint-prev-extra, 0vh)
+        )
+    );
     z-index: 2;
+    transition: transform 250ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 .browse-hint[data-slot="next"] {
     top: 50%;
