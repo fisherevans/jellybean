@@ -211,7 +211,15 @@ export default function Browse() {
     const warmRowsRef = useRef<Set<string>>(new Set());
 
     // Long-press Enter handling. Same shape as before the rewrite.
-    const focusedItem = !tabFocused && data
+    //
+    // t48: focusedItem stays populated even when tabFocused is true,
+    // so the focused-row-combo can keep rendering at its full size on
+    // row 0 with just an opacity dim. Without this the combo would
+    // unmount the moment focus moves to TabPill, and remount full-size
+    // on ArrowDown - producing a visible "flash big" snap. Dimming is
+    // a paint-only transition (compositor-friendly) so the layout
+    // stays put.
+    const focusedItem = data
         ? data.rows[focus.row]?.items[focus.col]
         : undefined;
     const focusedDetail = useFocusedItemDetail(
@@ -219,6 +227,12 @@ export default function Browse() {
         !session,
         adminProfileId,
     );
+
+    // Dimmed-combo state: tabFocused is only reachable from row 0, so
+    // this is effectively "kid moved up off row 0 into TabPill." We
+    // keep the combo mounted at full size with reduced opacity + no
+    // focus ring; ArrowDown back from TabPill brightens it instantly.
+    const dimmedCombo = tabFocused && focus.row === 0;
 
     const handleShortPress = useCallback(() => {
         if (!data) return;
@@ -942,6 +956,13 @@ export default function Browse() {
                         ? swap!.leavingFocusedItem
                         : focusedItem;
                     const rowFocusedDetail = isLeaving ? null : focusedDetail;
+                    // t48: dimmedCombo only applies to the entering
+                    // (non-leaving) row 0. Leaving rows already snapshot
+                    // their own focused-row-combo state at swap time and
+                    // never coexist with TabPill focus (the keydown
+                    // handler returns early when tabFocused), so they
+                    // pass false.
+                    const rowDimmed = !isLeaving && dimmedCombo && rowIndex === 0;
                     return (
                         <ActiveRow
                             key={rowKey + (isLeaving ? ":leaving" : "")}
@@ -953,6 +974,7 @@ export default function Browse() {
                             focusedDetail={rowFocusedDetail}
                             session={session}
                             tabFocused={tabFocused}
+                            dimmedCombo={rowDimmed}
                             warmRowsRef={warmRowsRef}
                             rowState={getRowState(rowKey)}
                             setFocus={setFocus}
@@ -1090,6 +1112,13 @@ type ActiveRowProps = {
     focusedDetail: ReturnType<typeof useFocusedItemDetail>;
     session: Session | null;
     tabFocused: boolean;
+    /**
+     * t48: render the focused-row-combo with a dimmed modifier class
+     * instead of unmounting it when focus has moved up to TabPill.
+     * Keeps the combo at full size so the return trip (ArrowDown from
+     * TabPill) is a paint-only opacity transition with no layout snap.
+     */
+    dimmedCombo: boolean;
     warmRowsRef: React.MutableRefObject<Set<string>>;
     rowState: RowState;
     setFocus: (f: Focus) => void;
@@ -1110,6 +1139,7 @@ function ActiveRow({
     focusedDetail,
     session,
     tabFocused,
+    dimmedCombo,
     warmRowsRef,
     rowState,
     setFocus,
@@ -1151,7 +1181,14 @@ function ActiveRow({
     // reacts on the CURRENT focused item; the meta card renders its
     // synchronous title+meta shell without detail, which is enough
     // for a sub-400ms fade-out.
-    const focusedKey = !tabFocused ? focusCol : -1;
+    // t48: when dimmedCombo is true (kid moved up to TabPill while on
+    // row 0), keep the combo hosting the tracked column at full size so
+    // the return trip is opacity-only. The dimmed state suppresses the
+    // ring + lowers opacity via the .focused-row-combo--dimmed modifier.
+    const focusedKey = !tabFocused || dimmedCombo ? focusCol : -1;
+    const comboClass = dimmedCombo
+        ? "focused-row-combo focused-row-combo--dimmed"
+        : "focused-row-combo";
 
     return (
         <section
@@ -1170,7 +1207,7 @@ function ActiveRow({
                         const showCombo = focused && focusedItem && focusedItem.Id === item.Id;
                         if (showCombo && focusedItem) {
                             return (
-                                <div key={item.Id} className="focused-row-combo">
+                                <div key={item.Id} className={comboClass}>
                                     <Tile
                                         item={item}
                                         size="browse"
