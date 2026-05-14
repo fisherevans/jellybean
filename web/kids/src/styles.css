@@ -2288,6 +2288,69 @@ body.browse-active {
     z-index: 3;
     pointer-events: auto;
 }
+/* t45: row-swap animations. During a swap two ActiveRows mount at
+   the active slot - one entering, one leaving - and each gets a
+   class below. The stack-level transform still slides the whole
+   set by one slot (so hint titles + the entering row carry their
+   motion); the leaving row's static transform offsets it BY one
+   slot in the swap direction, which means the stack transform
+   carries it from "active slot at t=0" to "prev/next slot at
+   t=380ms" while its opacity keyframe fades it out. Z-index keeps
+   the entering row painted above the leaving row so the focused
+   combo on the entering row stays legible during the overlap. */
+.browse-row.browse-row-entering-down,
+.browse-row.browse-row-entering-up {
+    z-index: 4;
+    animation: browse-row-fade-in 380ms cubic-bezier(0.22, 1, 0.36, 1)
+        forwards;
+}
+.browse-row.browse-row-leaving-down {
+    z-index: 3;
+    /* Counter-position by -slot-h so the stack's +slot-h start state
+       (ArrowDown) puts this row visually at the active slot at t=0;
+       at t=380ms (stack=0) it lands at the prev slot. */
+    transform: translateY(calc(-50% - var(--browse-slot-h)));
+    pointer-events: none;
+    animation: browse-row-fade-out 380ms cubic-bezier(0.22, 1, 0.36, 1)
+        forwards;
+}
+.browse-row.browse-row-leaving-up {
+    z-index: 3;
+    /* ArrowUp mirror: stack starts at -slot-h, counter +slot-h puts
+       the row at active slot at t=0; lands at next slot at t=380ms. */
+    transform: translateY(calc(-50% + var(--browse-slot-h)));
+    pointer-events: none;
+    animation: browse-row-fade-out 380ms cubic-bezier(0.22, 1, 0.36, 1)
+        forwards;
+}
+@keyframes browse-row-fade-in {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+@keyframes browse-row-fade-out {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
+}
+body[data-perf="slow"] .browse-row.browse-row-entering-down,
+body[data-perf="slow"] .browse-row.browse-row-entering-up,
+body[data-perf="slow"] .browse-row.browse-row-leaving-down,
+body[data-perf="slow"] .browse-row.browse-row-leaving-up {
+    animation: none;
+}
+body[data-perf="slow"] .browse-row.browse-row-leaving-down,
+body[data-perf="slow"] .browse-row.browse-row-leaving-up {
+    /* Slow-perf snaps - if a leaving row does mount it shouldn't
+       linger. Keep it invisible so there's nothing to settle. */
+    display: none;
+}
 /* t44: the active row's section centers vertically via top:50% +
    translateY(-50%). With the title in normal flow it inflated the
    section's height by ~3.5rem at the top, which pushed the tile
@@ -5962,38 +6025,39 @@ body[data-perf="slow"] .focused-row-combo {
     }
 }
 
-/* ===== Sliding-window browse (t41) =====
+/* ===== Sliding-window browse (t41 / t45) =====
    Browse mounts a sliding window of at most 4 row components at a
    time: hint-prev / active / hint-next (steady state) plus a
-   transient outgoing row during a swap. Each visual role is its own
-   React component:
+   transient leaving ActiveRow during a swap. Each visual role is its
+   own React component:
      - <ActiveRow>      -> section.browse-row[data-slot="active"]
-     - <HintRowTitle>   -> section.browse-hint[data-slot="prev|next|far-*"]
+     - <HintRowTitle>   -> section.browse-hint[data-slot="prev|next"]
 
    The container .browse-stack absolutely positions children by
    data-slot:
      - active     : top:50%, translateY(-50%)             (centered)
      - prev       : top:50%, translateY(-50% - slot-h)    (above)
      - next       : top:50%, translateY(-50% + slot-h)    (below)
-     - far-prev   : top:50%, translateY(-50% - 2 * slot-h) (off-top)
-     - far-next   : top:50%, translateY(-50% + 2 * slot-h) (off-bottom)
 
    On a row swap, Browse.tsx writes an inline transform on
    .browse-stack of +/-slot-h (the "previous visual state") then
-   transitions back to translate3d(0,0,0). All four slot anchors are
-   static; only the stack-level transform animates. The kid sees
-   every mounted child slide in lockstep.
+   transitions back to translate3d(0,0,0). All slot anchors are
+   static; only the stack-level transform animates the hint titles
+   and the entering ActiveRow in lockstep.
 
-   No display:none, no opacity gates, no data-pos flipping on a
-   shared element. The active row's title and the hint title are
-   rendered by different components with different layout languages -
-   .browse-row-title is anchored at cursor-x; .browse-hint-title is
-   centered horizontally. Because they're separate DOM nodes the
-   active-row title never "flashes" above its destination during a
-   swap (it's the focal point of <ActiveRow> in the new tree; the
-   hint title for the same row id is a freshly-mounted <HintRowTitle>
-   that already lives at the hint slot's translateY before the
-   container transform settles to 0). */
+   t45: the leaving ActiveRow is also mounted at the active slot
+   during the swap window. It uses a `.browse-row-leaving-{down,up}`
+   class that overrides the active slot's transform by offsetting it
+   by -/+slot-h - this counter-positions it so the stack-level
+   transform carries it from "active slot at t=0" to "prev/next slot
+   at t=duration" while a CSS keyframe fades its opacity to 0. The
+   entering ActiveRow gets a complementary `.browse-row-entering-*`
+   class that fades opacity in from 0 to 1. After the swap window
+   closes the leaving row unmounts and we're back to one ActiveRow
+   at the active slot. Also during the swap, the prev/next hint slot
+   for the leaving row is intentionally skipped in the render tree to
+   avoid double-rendering the same row as both a leaving ActiveRow
+   and a fresh hint title. */
 
 /* Hint title component: row-name + chevron, centered horizontally.
    Vertical position is owned by the [data-slot] anchor below. */
@@ -6056,16 +6120,6 @@ body[data-perf="slow"] .focused-row-combo {
     top: 50%;
     transform: translateY(calc(-50% + var(--browse-slot-h)));
     z-index: 2;
-}
-.browse-hint[data-slot="far-prev"] {
-    top: 50%;
-    transform: translateY(calc(-50% - 2 * var(--browse-slot-h)));
-    z-index: 1;
-}
-.browse-hint[data-slot="far-next"] {
-    top: 50%;
-    transform: translateY(calc(-50% + 2 * var(--browse-slot-h)));
-    z-index: 1;
 }
 
 /* TabPill hide/show wired by KidsHome via .kids-tabpill-slot-hidden.

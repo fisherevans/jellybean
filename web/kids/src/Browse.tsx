@@ -32,7 +32,7 @@ import { sessionCache } from "./kidsCache";
 import { useHomeTabFocus } from "./useHomeTabFocus";
 import { posterWidthForViewport } from "./perfMode";
 
-// Browse is the kid home (M8 #48). t41 rewrite:
+// Browse is the kid home (M8 #48). t41/t45 rewrite:
 //
 // Instead of mounting every row simultaneously and gating visibility
 // via display:none + data-pos flips, we maintain a sliding window of
@@ -47,10 +47,18 @@ import { posterWidthForViewport } from "./perfMode";
 // by <HintRowTitle> - they are different DOM nodes with different
 // visual languages.
 //
-// Animation: a wrapping <StackContainer> applies a translateY to
-// the new tree equal to "+1 slot" at the moment focus.row changes,
-// then transitions it back to 0. From the kid's perspective every
-// mounted element slides in lockstep into its new slot.
+// Animation (t45): during a swap, two <ActiveRow> components are
+// mounted at the active slot simultaneously - the leaving one (the
+// row focus moved off of) and the entering one (the row focus moved
+// onto). Each gets a CSS animation class that drives a slide + fade
+// in opposite directions. The leaving row's static transform
+// counter-positions it by one slot so the parent stack's lockstep
+// translate moves it visually from active slot to prev/next slot
+// while it fades out; the entering row inherits the stack's natural
+// slide (next/prev slot -> active slot) and adds a fade-in. After
+// SWAP_DURATION_MS the leaving row unmounts. The stack-level
+// transition is preserved because it still carries hint title
+// motion.
 
 type Focus = { kind: "tile"; row: number; col: number };
 
@@ -76,13 +84,6 @@ const CACHE_KEY_PREFIX = "jellybean.kids.browse.cache.";
 function browseCacheKey(profileId: string | null): string {
     return CACHE_KEY_PREFIX + (profileId ?? "kid");
 }
-
-// Slot names describe a row's vertical position relative to the
-// active row. The StackContainer's children get a data-slot attr
-// and CSS positions them absolutely from there. "far-prev" and
-// "far-next" are used only briefly during a row swap to hold the
-// outgoing row off-screen while the stack slides.
-type SlotName = "far-prev" | "prev" | "active" | "next" | "far-next";
 
 // Row swap animation timing - matches t39's curve so the slide feels
 // substantial. Slow-perf devices snap to the new state.
@@ -582,81 +583,108 @@ export default function Browse() {
         }
     }, [focus, tabFocused]);
 
-    // === Sliding-window animation state ===
+    // === Row-swap animation state (t45) ===
     //
     // The visible tree is computed from focus.row. In steady state we
-    // mount up to 3 components (prev / active / next). When focus.row
-    // changes we also keep the OUTGOING row mounted briefly in the
-    // appropriate far slot and slide the whole stack so the kid sees
-    // continuous motion.
+    // mount 3 components (prev hint / active / next hint, clamped).
+    // When focus.row changes we ALSO mount the outgoing row as a
+    // second <ActiveRow> at the active slot for SWAP_DURATION_MS so
+    // both the leaving and entering rows are visible together with
+    // independent slide+fade animations.
     //
-    // animDir tracks which direction the most recent swap moved. While
-    // it's "down" or "up" the outgoing row is mounted; when the
-    // transition lands we reset it to null, which drops the outgoing
-    // row from the render tree.
-    type AnimDir = "up" | "down" | null;
-    const [animDir, setAnimDir] = useState<AnimDir>(null);
+    // swap stores enough info to render the leaving row off the
+    // current data array (the row reference might disappear after a
+    // hide event, so we snapshot it). Cleared by a setTimeout that
+    // cancels itself on any new swap to avoid mid-animation leaks.
+    type SwapState = {
+        leavingKey: string;
+        leavingRow: BrowseRow;
+        leavingFocusCol: number;
+        enteringKey: string;
+        dir: "down" | "up";
+    };
+    const [swap, setSwap] = useState<SwapState | null>(null);
     const prevFocusRowRef = useRef(focus.row);
+    const prevFocusColRef = useRef(focus.col);
     const stackRef = useRef<HTMLDivElement | null>(null);
     const swapTimerRef = useRef<number | null>(null);
 
-    // Compute the visible row mountset whenever focus.row changes.
-    // useLayoutEffect so the start-of-animation transform is applied
-    // BEFORE the browser paints the new tree at its rest position.
+    // Compute the swap state whenever focus.row changes.
+    // useLayoutEffect so the leaving-row mount + CSS animation classes
+    // are committed BEFORE the next paint - any frame gap would show a
+    // visible "leaving row pops in then animates" flash.
     useLayoutEffect(() => {
         const prevRow = prevFocusRowRef.current;
-        if (focus.row === prevRow) return;
-        const dir: AnimDir = focus.row > prevRow ? "down" : "up";
+        const prevCol = prevFocusColRef.current;
         prevFocusRowRef.current = focus.row;
+        prevFocusColRef.current = focus.col;
+        if (focus.row === prevRow) return;
+        const dir: "down" | "up" = focus.row > prevRow ? "down" : "up";
 
         const isSlow = document.body?.dataset.perf === "slow";
         const skipSwap = skipNextSwapRef.current;
         skipNextSwapRef.current = false;
         const el = stackRef.current;
-        if (!el || isSlow || skipSwap) {
+        const rowsNow = data?.rows;
+        const leavingRow = rowsNow ? rowsNow[prevRow] : undefined;
+        const enteringRow = rowsNow ? rowsNow[focus.row] : undefined;
+        if (!el || isSlow || skipSwap || !leavingRow || !enteringRow) {
             // Snap: slow-perf, or the back-to-tab handler asked for a
-            // hard reset, or no stack element yet (initial mount). No
-            // translate, no transition.
-            setAnimDir(null);
+            // hard reset, or no stack element yet (initial mount), or
+            // data shifted under us. Drop any in-flight swap.
+            if (swapTimerRef.current !== null) {
+                window.clearTimeout(swapTimerRef.current);
+                swapTimerRef.current = null;
+            }
+            setSwap(null);
             return;
         }
 
         // Cancel any in-flight swap so back-to-back arrow presses don't
-        // leave the stack mid-animation when the next press arrives.
+        // leave a stale leaving-row mounted when the next press lands.
         if (swapTimerRef.current !== null) {
             window.clearTimeout(swapTimerRef.current);
             swapTimerRef.current = null;
         }
 
-        setAnimDir(dir);
+        setSwap({
+            leavingKey: rowKeyOf(leavingRow),
+            leavingRow,
+            leavingFocusCol: prevCol,
+            enteringKey: rowKeyOf(enteringRow),
+            dir,
+        });
 
-        // Initial transform: snap the stack to the "old visual state."
-        // For ArrowDown (focus moved from N to N+1) each role moved up
-        // by one slot, so to make the kid see the OLD positions while
-        // rendering the NEW tree we translate the stack DOWN by one
-        // slot. Then on the next frame we transition the transform to
-        // 0 and the kid sees everything slide UP into place.
-        const slotShift = dir === "down" ? "var(--browse-slot-h)" : "calc(-1 * var(--browse-slot-h))";
+        // Stack-level transform: stage the OLD visual state then
+        // transition back to 0. Hint titles ride this; the entering
+        // ActiveRow inherits the natural next/prev->active slide; the
+        // leaving ActiveRow uses its own swap-class transform to
+        // counter-position itself one slot AWAY in the swap direction
+        // so the same stack transition carries it from active slot at
+        // t=0 to prev/next slot at t=duration with the opacity fade
+        // its keyframe drives.
+        const slotShift =
+            dir === "down"
+                ? "var(--browse-slot-h)"
+                : "calc(-1 * var(--browse-slot-h))";
         el.style.transition = "none";
         el.style.transform = `translate3d(0, ${slotShift}, 0)`;
         // Force a reflow so the browser commits the start-state before
-        // we attach the transition. Reading offsetHeight is the
-        // canonical reflow-flush trick.
+        // attaching the transition.
         void el.offsetHeight;
         el.style.transition = `transform ${SWAP_DURATION_MS}ms ${SWAP_EASING}`;
         el.style.transform = "translate3d(0, 0, 0)";
 
         swapTimerRef.current = window.setTimeout(() => {
-            // Settle: clear the transition + drop the outgoing row.
             const node = stackRef.current;
             if (node) {
                 node.style.transition = "none";
                 node.style.transform = "translate3d(0, 0, 0)";
             }
-            setAnimDir(null);
+            setSwap(null);
             swapTimerRef.current = null;
-        }, SWAP_DURATION_MS);
-    }, [focus.row]);
+        }, SWAP_DURATION_MS + 16);
+    }, [focus.row, focus.col, data]);
 
     useEffect(() => {
         return () => {
@@ -702,81 +730,136 @@ export default function Browse() {
 
     // === Sliding-window mountset ===
     //
-    // In steady state mount {prev, active, next} (clamped to row
-    // bounds). During a swap also mount the outgoing row in the
-    // appropriate far slot so the kid sees it slide off-screen.
+    // Steady state: {prev hint, active, next hint} clamped to bounds.
+    // During swap: ALSO mount the leaving row as a second ActiveRow
+    // at the active slot, and skip the new hint title whose row key
+    // matches the leaving row (so the same row doesn't double-render
+    // as both a leaving ActiveRow and a fresh hint title during the
+    // 380ms swap window).
     const rows = data.rows;
     const activeIdx = focus.row;
-    const mounts: Array<{ rowIndex: number; slot: SlotName }> = [];
-    if (activeIdx - 1 >= 0) {
-        mounts.push({ rowIndex: activeIdx - 1, slot: "prev" });
+    const enteringKey = rowKeyOf(rows[activeIdx]);
+
+    // The new prev/next hint row keys, used to decide whether to skip
+    // them during a swap (because the leaving ActiveRow IS the same
+    // row).
+    const prevHintRow = activeIdx - 1 >= 0 ? rows[activeIdx - 1] : null;
+    const nextHintRow = activeIdx + 1 < rows.length ? rows[activeIdx + 1] : null;
+
+    type Mount =
+        | { kind: "hint"; row: BrowseRow; rowKey: string; slot: "prev" | "next" }
+        | {
+              kind: "active";
+              row: BrowseRow;
+              rowKey: string;
+              rowIndex: number;
+              role: "active" | "leaving";
+          };
+    const mounts: Mount[] = [];
+
+    if (prevHintRow) {
+        const k = rowKeyOf(prevHintRow);
+        if (!swap || k !== swap.leavingKey) {
+            mounts.push({ kind: "hint", row: prevHintRow, rowKey: k, slot: "prev" });
+        }
     }
-    mounts.push({ rowIndex: activeIdx, slot: "active" });
-    if (activeIdx + 1 < rows.length) {
-        mounts.push({ rowIndex: activeIdx + 1, slot: "next" });
+    mounts.push({
+        kind: "active",
+        row: rows[activeIdx],
+        rowKey: enteringKey,
+        rowIndex: activeIdx,
+        role: "active",
+    });
+    if (nextHintRow) {
+        const k = rowKeyOf(nextHintRow);
+        if (!swap || k !== swap.leavingKey) {
+            mounts.push({ kind: "hint", row: nextHintRow, rowKey: k, slot: "next" });
+        }
     }
-    if (animDir === "down" && activeIdx - 2 >= 0) {
-        // ArrowDown: the row that USED to be prev (activeIdx-2) is
-        // now leaving off the top edge.
-        mounts.push({ rowIndex: activeIdx - 2, slot: "far-prev" });
-    }
-    if (animDir === "up" && activeIdx + 2 < rows.length) {
-        // ArrowUp: the row that USED to be next (activeIdx+2) is now
-        // leaving off the bottom edge.
-        mounts.push({ rowIndex: activeIdx + 2, slot: "far-next" });
+    if (swap && swap.leavingKey !== enteringKey) {
+        // Leaving ActiveRow rendered AT the active slot but with a
+        // CSS class that offsets it by one slot in the swap direction
+        // so its visual start position is the active slot (counter to
+        // the stack-level transform's start state) and end position
+        // is the prev/next slot with opacity 0.
+        mounts.push({
+            kind: "active",
+            row: swap.leavingRow,
+            rowKey: swap.leavingKey,
+            rowIndex: -1,
+            role: "leaving",
+        });
     }
 
     return (
         <div className="browse">
             <div className="browse-stack" ref={stackRef}>
-                {mounts.map(({ rowIndex, slot }) => {
-                    const row = rows[rowIndex];
-                    const rowKey = rowKeyOf(row);
-                    if (slot === "active") {
+                {mounts.map((m) => {
+                    if (m.kind === "hint") {
                         return (
-                            <ActiveRow
-                                key={rowKey}
-                                row={row}
-                                rowKey={rowKey}
-                                rowIndex={rowIndex}
-                                focusCol={focus.col}
-                                focusedItem={focusedItem}
-                                focusedDetail={focusedDetail}
-                                session={session}
-                                tabFocused={tabFocused}
-                                warmRowsRef={warmRowsRef}
-                                rowState={getRowState(rowKey)}
-                                setFocus={setFocus}
-                                onPlay={(item) => {
-                                    rememberLastFocused(item.Id);
-                                    nav(
-                                        `/play/${encodeURIComponent(item.Id)}${location.search}`,
-                                    );
-                                }}
-                                onTerminal={() => {
-                                    if (row.hasMore) {
-                                        void loadMoreForRow(rowIndex);
-                                    } else {
-                                        setFocus({
-                                            kind: "tile",
-                                            row: rowIndex,
-                                            col: 0,
-                                        });
-                                    }
-                                }}
-                                terminalLoading={loadingMore.has(rowIndex)}
-                                registerTileRef={(col, el) => {
-                                    tileRefs.current[`${rowIndex}:${col}`] = el;
-                                }}
+                            <HintRowTitle
+                                key={m.rowKey}
+                                row={m.row}
+                                rowKey={m.rowKey}
+                                slot={m.slot}
                             />
                         );
                     }
+                    const isLeaving = m.role === "leaving";
+                    const rowKey = m.rowKey;
+                    const row = m.row;
+                    const rowIndex = m.rowIndex;
+                    const swapClass = swap
+                        ? isLeaving
+                            ? swap.dir === "down"
+                                ? "browse-row-leaving-down"
+                                : "browse-row-leaving-up"
+                            : swap.dir === "down"
+                                ? "browse-row-entering-down"
+                                : "browse-row-entering-up"
+                        : "";
                     return (
-                        <HintRowTitle
-                            key={rowKey}
+                        <ActiveRow
+                            key={rowKey + (isLeaving ? ":leaving" : "")}
                             row={row}
                             rowKey={rowKey}
-                            slot={slot}
+                            rowIndex={isLeaving ? -1 : rowIndex}
+                            focusCol={isLeaving ? swap!.leavingFocusCol : focus.col}
+                            focusedItem={isLeaving ? undefined : focusedItem}
+                            focusedDetail={isLeaving ? null : focusedDetail}
+                            session={session}
+                            tabFocused={tabFocused}
+                            warmRowsRef={warmRowsRef}
+                            rowState={getRowState(rowKey)}
+                            setFocus={setFocus}
+                            leaving={isLeaving}
+                            swapClass={swapClass}
+                            onPlay={(item) => {
+                                if (isLeaving) return;
+                                rememberLastFocused(item.Id);
+                                nav(
+                                    `/play/${encodeURIComponent(item.Id)}${location.search}`,
+                                );
+                            }}
+                            onTerminal={() => {
+                                if (isLeaving) return;
+                                if (row.hasMore) {
+                                    void loadMoreForRow(rowIndex);
+                                } else {
+                                    setFocus({
+                                        kind: "tile",
+                                        row: rowIndex,
+                                        col: 0,
+                                    });
+                                }
+                            }}
+                            terminalLoading={
+                                isLeaving ? false : loadingMore.has(rowIndex)
+                            }
+                            registerTileRef={(col, el) => {
+                                if (isLeaving) return;
+                                tileRefs.current[`${rowIndex}:${col}`] = el;
+                            }}
                         />
                     );
                 })}
@@ -809,7 +892,7 @@ function HintRowTitleImpl({
 }: {
     row: BrowseRow;
     rowKey: string;
-    slot: SlotName;
+    slot: "prev" | "next";
 }) {
     // Image preload: warm the row's first ~6 poster URLs. These never
     // render to the DOM but the browser caches the responses for when
@@ -839,12 +922,10 @@ function HintRowTitleImpl({
     }, [rowKey, row.items]);
 
     const isPrev = slot === "prev";
-    const isFar = slot === "far-prev" || slot === "far-next";
     return (
         <section
             className="browse-hint"
             data-slot={slot}
-            aria-hidden={isFar ? true : undefined}
         >
             <h2 className="browse-hint-title">
                 {isPrev ? (
@@ -890,6 +971,8 @@ type ActiveRowProps = {
     onTerminal: () => void;
     terminalLoading: boolean;
     registerTileRef: (col: number, el: HTMLElement | null) => void;
+    leaving?: boolean;
+    swapClass?: string;
 };
 
 function ActiveRow({
@@ -908,13 +991,18 @@ function ActiveRow({
     onTerminal,
     terminalLoading,
     registerTileRef,
+    leaving,
+    swapClass,
 }: ActiveRowProps) {
     // Persist the focused column for future remount. Effect (not
     // direct write) so the rowState ref is updated AFTER the render
     // commits - matches the "memory follows the user" semantics.
+    // Skip for leaving rows: they're transient and shouldn't clobber
+    // the rowState that the entering ActiveRow will read on mount.
     useEffect(() => {
+        if (leaving) return;
         rowState.scrollColumn = focusCol;
-    }, [focusCol, rowState]);
+    }, [focusCol, rowState, leaving]);
 
     // Image priority latch: once the row has been ActiveRow it stays
     // warm so a future re-mount (after arrowing away and back) skips
@@ -926,10 +1014,20 @@ function ActiveRow({
     const priority = true; // ActiveRow is always priority warm.
 
     const lastCol = row.items.length;
+    // For leaving rows: still mark the previously-focused tile as
+    // "focused" so the scale + selection ring stay (otherwise the row
+    // visually loses its focus state in the same frame it starts
+    // fading, which reads as a jarring snap). focusedItem stays
+    // undefined for leaving so the meta card combo is suppressed -
+    // the parent's focusedItem belongs to the entering row.
     const focusedKey = !tabFocused ? focusCol : -1;
 
     return (
-        <section className="browse-row" data-slot="active">
+        <section
+            className={`browse-row${swapClass ? ` ${swapClass}` : ""}`}
+            data-slot="active"
+            aria-hidden={leaving ? true : undefined}
+        >
             <h2 className="browse-row-title">
                 <RowIcon name={row.icon} />
                 {row.title}
