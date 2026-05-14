@@ -791,13 +791,16 @@ export default function Browse() {
     // Steady state: {prev hint, active, next hint} clamped to bounds
     // (3 components max).
     //
-    // During swap: ALSO mount the leaving ActiveRow + animate one
-    // leaving hint title + one entering hint title. The new prev or
-    // next hint whose row key matches the leaving ActiveRow's key is
-    // intentionally skipped during the swap window - the leaving
-    // ActiveRow's fade-out trajectory ends at the prev/next slot
-    // visually so a separate hint title there would double-render the
-    // same row. 4 components max during swap.
+    // During swap: ALSO mount the leaving ActiveRow + animate both
+    // new hint titles into place. ArrowDown: the leaving ActiveRow's
+    // row key matches the new prev hint's row key (it WAS the active
+    // row a frame ago), but they're separate React elements with
+    // separate animations - the leaving ActiveRow fades out past the
+    // prev slot, while a new HintRowTitle slides up into the prev
+    // slot. ArrowUp mirrors. Pre-t50 the matching hint was skipped on
+    // the assumption the leaving row covered it visually, but the
+    // post-swap mount flashed in with no animation. 5 components max
+    // during swap (1 active + 2 leaving + 2 entering hints).
     const rows = data.rows;
     const activeIdx = focus.row;
     const enteringKey = rowKeyOf(rows[activeIdx]);
@@ -824,28 +827,39 @@ export default function Browse() {
           };
     const mounts: Mount[] = [];
 
-    // Steady-state prev hint: mounted unless during swap it's the
-    // same row as the leaving ActiveRow (ArrowDown case - the leaving
-    // row's slide-and-fade trajectory ends visually at this slot).
-    // During an ArrowUp swap the steady-state prev hint is the
-    // ENTERING hint, and we tag it accordingly so the keyframe slides
-    // it down + fades it in.
+    // Steady-state prev/next hint role tagging. The hint at a given
+    // slot is "entering" when either:
+    //   - It's the swap's enteringHintKey (the brand-new hint at the
+    //     far side of the active row - new next on ArrowDown, new
+    //     prev on ArrowUp).
+    //   - It's the same row as the leaving ActiveRow (t50: the
+    //     formerly-active row that becomes the new prev hint on
+    //     ArrowDown / new next hint on ArrowUp). Pre-t50 this case
+    //     was skipped during the swap - the leaving ActiveRow's
+    //     trajectory ended visually at this slot, so we relied on
+    //     the steady-state mount to fill it after the swap. That
+    //     left the hint flashing into existence with no animation
+    //     once the swap timer cleared. Now we mount it as entering
+    //     so it slides+fades into place in lockstep with the rest
+    //     of the swap. The leaving ActiveRow and the new hint are
+    //     separate DOM nodes that animate independently; they share
+    //     the same rowKey but different React keys (the leaving one
+    //     gets a ":leaving" suffix in render).
     if (prevHintRow) {
         const k = rowKeyOf(prevHintRow);
-        const isLeavingRowSlot = swap && k === swap.leavingKey;
-        if (!isLeavingRowSlot) {
-            const role: HintRole =
-                swap && swap.dir === "up" && swap.enteringHintKey === k
-                    ? "entering"
-                    : "steady";
-            mounts.push({
-                kind: "hint",
-                row: prevHintRow,
-                rowKey: k,
-                slot: "prev",
-                role,
-            });
-        }
+        const enteringFromActive =
+            !!swap && swap.dir === "down" && k === swap.leavingKey;
+        const enteringFromOffscreen =
+            !!swap && swap.dir === "up" && swap.enteringHintKey === k;
+        const role: HintRole =
+            enteringFromActive || enteringFromOffscreen ? "entering" : "steady";
+        mounts.push({
+            kind: "hint",
+            row: prevHintRow,
+            rowKey: k,
+            slot: "prev",
+            role,
+        });
     }
     mounts.push({
         kind: "active",
@@ -856,20 +870,19 @@ export default function Browse() {
     });
     if (nextHintRow) {
         const k = rowKeyOf(nextHintRow);
-        const isLeavingRowSlot = swap && k === swap.leavingKey;
-        if (!isLeavingRowSlot) {
-            const role: HintRole =
-                swap && swap.dir === "down" && swap.enteringHintKey === k
-                    ? "entering"
-                    : "steady";
-            mounts.push({
-                kind: "hint",
-                row: nextHintRow,
-                rowKey: k,
-                slot: "next",
-                role,
-            });
-        }
+        const enteringFromActive =
+            !!swap && swap.dir === "up" && k === swap.leavingKey;
+        const enteringFromOffscreen =
+            !!swap && swap.dir === "down" && swap.enteringHintKey === k;
+        const role: HintRole =
+            enteringFromActive || enteringFromOffscreen ? "entering" : "steady";
+        mounts.push({
+            kind: "hint",
+            row: nextHintRow,
+            rowKey: k,
+            slot: "next",
+            role,
+        });
     }
     if (swap) {
         if (swap.leavingKey !== enteringKey) {

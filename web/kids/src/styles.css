@@ -1609,15 +1609,24 @@ body.kids-scroll-active .kids-home-content {
 .kids-home-bg {
     position: fixed;
     /* The element must remain covering the viewport at every value of
-       the translateY below. Browse writes --kids-bg-pos-y in the range
-       [-3920px, 0] (rows 0..7 * -560px each). Element naturally
-       extends from viewport top to 5000px below the viewport bottom,
-       so when translated up by 3920px the bottom is still ~1080px
-       below the viewport bottom (no exposed edge). top stays at 0
-       because translateY is always <= 0 - we never shift the element
-       downward. */
+       the translateY below. Browse writes --kids-bg-pos-y as
+       focus.row * -560px, so its magnitude grows with row count.
+       Element naturally extends from viewport top to 50000px below
+       the viewport bottom, which covers ~89 rows of translate. top
+       stays at 0 because translateY is always <= 0 - we never shift
+       the element downward.
+       t50: bumped from -5000px (t47's value, assumed max 8 rows) to
+       -50000px because layouts with tag_fanout rows easily exceed 9
+       rows, and at row 9+ the bg element's bottom edge was visible
+       in the viewport, exposing a black band that read as "the
+       gradient stopped repeating." repeat-y was always present - the
+       element just wasn't tall enough to host more tiles below. The
+       layer is still a single compositor surface (transform-only
+       animation, will-change: transform) so the cost is bounded by
+       Chrome's tile-based rasterization of the layer, not the raw
+       1280x50720 dimensions. */
     top: 0;
-    bottom: -5000px;
+    bottom: -50000px;
     left: 0;
     right: 0;
     z-index: 0;
@@ -6246,6 +6255,18 @@ body[data-perf="slow"] .focused-row-combo--dimmed {
         cubic-bezier(0.22, 1, 0.36, 1) forwards;
     transition: none;
 }
+/* ArrowDown: new prev hint (the formerly-active row whose title now
+   becomes the prev hint) slides up from just below the prev slot into
+   the prev slot, fading in. t50: pre-fix this hint was skipped during
+   the swap on the assumption the leaving ActiveRow covered it - it
+   didn't, the leaving row was a full-width tile track sliding past,
+   while the prev hint is a centered title. The skip left the new
+   hint flashing into existence when the swap timer cleared. */
+.browse-hint.browse-hint-entering-up[data-slot="prev"] {
+    animation: browse-hint-prev-enter-up 380ms
+        cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    transition: none;
+}
 /* ArrowUp: old next hint slides further down past the next slot and
    fades out. */
 .browse-hint.browse-hint-leaving-down[data-slot="next"] {
@@ -6257,6 +6278,14 @@ body[data-perf="slow"] .focused-row-combo--dimmed {
    down to it, fading in. */
 .browse-hint.browse-hint-entering-down[data-slot="prev"] {
     animation: browse-hint-prev-enter-down 380ms
+        cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    transition: none;
+}
+/* ArrowUp: new next hint (formerly-active row) slides down from just
+   above the next slot into the next slot, fading in. Symmetric with
+   the ArrowDown new-prev-hint case above. */
+.browse-hint.browse-hint-entering-down[data-slot="next"] {
+    animation: browse-hint-next-enter-down 380ms
         cubic-bezier(0.22, 1, 0.36, 1) forwards;
     transition: none;
 }
@@ -6318,6 +6347,42 @@ body[data-perf="slow"] .focused-row-combo--dimmed {
                     var(--browse-hint-prev-extra, 0vh)
             )
         );
+        opacity: 0.65;
+    }
+}
+/* t50: new prev hint (ArrowDown). Mirrors browse-hint-next-enter-up
+   but on the prev side - starts 0.4*slot-h below the prev slot and
+   slides up into it. Same 380ms easing as the row swap so the hint
+   and the active-row slide stay coupled visually. */
+@keyframes browse-hint-prev-enter-up {
+    from {
+        transform: translateY(
+            calc(
+                -50% - 0.6 * var(--browse-slot-h) -
+                    var(--browse-hint-prev-extra, 0vh)
+            )
+        );
+        opacity: 0;
+    }
+    to {
+        transform: translateY(
+            calc(
+                -50% - var(--browse-slot-h) -
+                    var(--browse-hint-prev-extra, 0vh)
+            )
+        );
+        opacity: 0.65;
+    }
+}
+/* t50: new next hint (ArrowUp). Symmetric mirror of the above: starts
+   0.4*slot-h above the next slot and slides down into it. */
+@keyframes browse-hint-next-enter-down {
+    from {
+        transform: translateY(calc(-50% + 0.6 * var(--browse-slot-h)));
+        opacity: 0;
+    }
+    to {
+        transform: translateY(calc(-50% + var(--browse-slot-h)));
         opacity: 0.65;
     }
 }
