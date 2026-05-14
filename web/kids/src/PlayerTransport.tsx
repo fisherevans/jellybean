@@ -57,6 +57,11 @@ type PlayerTransportProps = {
     // and Enter.
     onToggleFavorite?: () => void;
     favoriteRef?: React.RefObject<HTMLElement | null>;
+    // Held-Enter (1000ms) gesture, mirrors the long-press the kid
+    // uses on a focused tile elsewhere. Parent opens the override
+    // modal. Short-press behavior (reveal/pause/button activate)
+    // is unchanged - long-press just adds a timer on top of it.
+    onLongPress?: () => void;
 };
 
 type FocusState =
@@ -105,6 +110,7 @@ export default function PlayerTransport({
     backRef,
     onToggleFavorite,
     favoriteRef,
+    onLongPress,
 }: PlayerTransportProps) {
     // High-level UI state. These flip on human-cadence events so they
     // can drive React renders without thrashing.
@@ -184,6 +190,32 @@ export default function PlayerTransport({
         lastEventAt: number;
         lastSeekAt: number;
     } | null>(null);
+
+    // Held-Enter state for the long-press override gesture. Same
+    // time-since-last-event pattern as seekHoldRef: e.repeat is
+    // unreliable on the Skyworth Android TV WebView for the OK
+    // button (auto-repeat keydowns arrive with repeat=false), so
+    // we identify a continuing hold by "another Enter keydown
+    // within 250ms of the last one." Without this, every repeat
+    // re-fires the play/pause button activation - which is what
+    // the kid sees as "flashing between play and pause" and which
+    // also re-arms the long-press timer so it never reaches 1s.
+    const enterHoldRef = useRef<{
+        startedAt: number;
+        lastEventAt: number;
+    } | null>(null);
+    const enterHoldTimerRef = useRef<number | null>(null);
+    // Set when the long-press timer fires so any further repeat
+    // keydowns before keyup don't fall through to button
+    // activation behind the just-opened override modal. Cleared on
+    // keyup.
+    const enterLongPressFiredRef = useRef(false);
+    // Latest onLongPress without re-binding the keydown effect on
+    // every Play.tsx render (parent re-renders for transportVisible /
+    // status / etc., but the keydown effect's dep list intentionally
+    // excludes those to avoid re-binding mid-gesture).
+    const onLongPressRef = useRef(onLongPress);
+    onLongPressRef.current = onLongPress;
 
     // bufferingRef tracks whether the <video> is currently waiting on
     // data (buffering). The auto-hide timer is suppressed while
@@ -546,6 +578,58 @@ export default function PlayerTransport({
             // arrow press starts from the smallest step.
             seekHoldRef.current = null;
 
+            // Enter/Space gating + long-press timer. Done before the
+            // generic e.repeat skip because that flag is unreliable
+            // for OK on this WebView; we use elapsed-time-since-last
+            // -event to distinguish a held key from a fresh tap.
+            //   - Continuing hold (last event <250ms ago): swallow
+            //     entirely. The original press already ran the
+            //     short-press path; auto-repeats must NOT re-fire it
+            //     (otherwise the kid sees pause/play/pause/play
+            //     toggling). Long-press timer is left running.
+            //   - Long-press already fired this hold: also swallow.
+            //     The override modal opened; further keydowns
+            //     before keyup must not fall through to button
+            //     activation behind it.
+            //   - New press: init hold tracker, arm 1000ms long-
+            //     press timer, fall through to existing short-press
+            //     logic below.
+            if (e.key === "Enter" || e.key === " ") {
+                const now = performance.now();
+                if (enterLongPressFiredRef.current) {
+                    e.preventDefault();
+                    return;
+                }
+                const hold = enterHoldRef.current;
+                const isContinuing = hold !== null &&
+                    now - hold.lastEventAt < 250;
+                if (isContinuing) {
+                    hold!.lastEventAt = now;
+                    e.preventDefault();
+                    return;
+                }
+                enterHoldRef.current = { startedAt: now, lastEventAt: now };
+                if (enterHoldTimerRef.current !== null) {
+                    window.clearTimeout(enterHoldTimerRef.current);
+                    enterHoldTimerRef.current = null;
+                }
+                if (onLongPressRef.current) {
+                    enterHoldTimerRef.current = window.setTimeout(() => {
+                        enterHoldTimerRef.current = null;
+                        enterLongPressFiredRef.current = true;
+                        // Drop DOM focus so a still-held key's
+                        // eventual keyup doesn't synthesize a click
+                        // on a button behind the override modal.
+                        const active = document.activeElement;
+                        if (active instanceof HTMLElement &&
+                            active !== document.body) {
+                            active.blur();
+                        }
+                        onLongPressRef.current?.();
+                    }, 1000);
+                }
+            }
+
             // TV remotes auto-repeat keydown when the OK button is held
             // even briefly - a single user tap can fire keydown
             // (repeat=false), keydown (repeat=true), keyup within
@@ -732,8 +816,27 @@ export default function PlayerTransport({
             }
         }
 
+        function onKeyUp(e: KeyboardEvent) {
+            // Drop all held-Enter state on release. If the timer
+            // hadn't fired yet, this is a short-press release - it
+            // already ran on the original keydown so we don't need
+            // to re-fire it here. If it had fired, we just clear
+            // the long-press-fired latch so the next press starts
+            // clean.
+            if (e.key !== "Enter" && e.key !== " ") return;
+            enterHoldRef.current = null;
+            enterLongPressFiredRef.current = false;
+            if (enterHoldTimerRef.current !== null) {
+                window.clearTimeout(enterHoldTimerRef.current);
+                enterHoldTimerRef.current = null;
+            }
+        }
         window.addEventListener("keydown", onKey);
-        return () => window.removeEventListener("keydown", onKey);
+        window.addEventListener("keyup", onKeyUp);
+        return () => {
+            window.removeEventListener("keydown", onKey);
+            window.removeEventListener("keyup", onKeyUp);
+        };
     }, [focus, buttons, showOnInput, videoRef, onBack]);
 
     // Cancel any pending debounced seek commit on UNMOUNT only. A
@@ -749,6 +852,10 @@ export default function PlayerTransport({
             if (seekCommitTimerRef.current !== null) {
                 clearTimeout(seekCommitTimerRef.current);
                 seekCommitTimerRef.current = null;
+            }
+            if (enterHoldTimerRef.current !== null) {
+                clearTimeout(enterHoldTimerRef.current);
+                enterHoldTimerRef.current = null;
             }
         };
     }, []);
