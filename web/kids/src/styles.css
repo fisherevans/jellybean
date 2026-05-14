@@ -5869,6 +5869,44 @@ body[data-perf="slow"] .focused-row-combo {
     outline-offset: 6px;
 }
 
+/* t48: dimmed variant - the combo stays mounted at the same size when
+   focus leaves row 0 for the TabPill, so the return trip is a paint-
+   only opacity transition rather than an unmount/remount that visibly
+   "flashes big." Layout, sizing, and inner content are unchanged from
+   the active state; only opacity + saturation + the focus ring move.
+
+   The opacity transition is compositor-friendly (no layout, no paint
+   beyond the affected layer), so even on Skyworth-class WebViews it
+   doesn't stutter the TabPill key handling.
+
+   Slow-perf snaps (no transition) to match the rest of the page's
+   slow-perf treatment. */
+.focused-row-combo {
+    /* Place the transition on the base class so going active -> dimmed
+       and dimmed -> active both animate without needing a paired
+       reverse transition on the modifier. */
+    transition:
+        opacity 150ms ease-out,
+        filter 150ms ease-out,
+        box-shadow 150ms ease-out;
+}
+.focused-row-combo--dimmed {
+    /* Ring suppressed entirely - the dim state shouldn't read as
+       "still focused, just quiet." The kid's eye should land on the
+       TabPill above, with the combo acting as a remembered anchor. */
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34);
+    opacity: 0.55;
+    filter: saturate(0.7);
+}
+body[data-perf="slow"] .focused-row-combo {
+    transition: none;
+}
+body[data-perf="slow"] .focused-row-combo--dimmed {
+    /* Slow-perf also drops the outline (the active variant uses an
+       outline instead of box-shadow on slow). */
+    outline: none;
+}
+
 .focused-meta-card {
     /* Card surface: a soft white pill that reads on the rainbow bg
        without competing with the focused tile's white ring. The
