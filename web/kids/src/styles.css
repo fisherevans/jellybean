@@ -1583,38 +1583,65 @@ body.kids-scroll-active .kids-home-content {
    each page chooses its own per-session random offset by writing
    --kids-bg-offset-y on documentElement. On /browse the tile also
    shifts in lockstep with the stack via --kids-bg-pos-y; on
-   Library/Tags that variable stays unset so the bg is static. */
+   Library/Tags that variable stays unset so the bg is static.
+
+   t47: the per-row shift used to animate background-position-y, which
+   forced a fullscreen repaint of the SVG-tiled fixed layer every frame
+   during the 380ms transition. That paint pressure was severe enough
+   to block the main thread for ~140ms in the middle of the row-swap
+   animation - rows would progress on the compositor but no new frame
+   was committed during the freeze, so the user saw a few frames of
+   smooth motion, then a snap to near-end positions, then settle. This
+   is the bug the M3-reported flash kept tracking back to; t41, t45,
+   and t46 all chased the symptom in the row keyframes themselves, but
+   the cause was the concurrent bg transition running on a fullscreen
+   non-compositable layer.
+
+   Fix: oversize the .kids-home-bg element well beyond the viewport
+   (top/bottom extents so it can shift up or down without exposing
+   empty edges) and move the per-row shift onto a transform. transform
+   on a position:fixed element with will-change: transform composites
+   on a dedicated GPU layer, so the row-swap shift is now a pure
+   compositor operation with zero paint cost. The static per-tab
+   random offset stays on background-position-y where it never
+   animates - that write happens once on mount and doesn't need a
+   transition. */
 .kids-home-bg {
     position: fixed;
-    inset: 0;
+    /* The element must remain covering the viewport at every value of
+       the translateY below. Browse writes --kids-bg-pos-y in the range
+       [-3920px, 0] (rows 0..7 * -560px each). Element naturally
+       extends from viewport top to 5000px below the viewport bottom,
+       so when translated up by 3920px the bottom is still ~1080px
+       below the viewport bottom (no exposed edge). top stays at 0
+       because translateY is always <= 0 - we never shift the element
+       downward. */
+    top: 0;
+    bottom: -5000px;
+    left: 0;
+    right: 0;
     z-index: 0;
     pointer-events: none;
     background: url("/player/browse-bg-tile.svg") repeat-y;
     background-size: 100% auto;
-    background-position-y: var(
-        --kids-bg-pos-y,
-        var(--kids-bg-offset-y, 0)
-    );
-    /* t34: bg-pos-y is now driven per-row by Browse.tsx so the rainbow
-       shifts in lockstep with the active-row swap. Match the row-swap
-       easing + duration (t39: 380ms ease-out-quint) so the bg + rows
-       feel coupled rather than independently animating. Library/Tags
-       don't write --kids-bg-pos-y so they stay static (the transition
-       runs only when the var changes). */
-    transition: background-position-y 380ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-/* Snap mode for the bg: when Browse mounts (or back-navigation lands
-   on a non-zero row), Browse.tsx sets data-kids-bg-snap="1" on the
-   documentElement around the initial bg-pos-y write so the bg jumps
-   to its starting position instead of animating in from 0. The
-   attribute clears once the initial style has flushed. */
-:root[data-kids-bg-snap="1"] .kids-home-bg {
-    transition: none;
+    /* Per-tab random offset only. The per-row shift is handled by the
+       transform below; we no longer animate background-position-y. */
+    background-position-y: var(--kids-bg-offset-y, 0);
+    /* Per-row shift: compositor-only translate. transform on a fixed
+       element with will-change goes to its own GPU layer in Chromium,
+       so this transition produces no paint work during the 380ms
+       window. Match the row-swap easing + duration so the bg + rows
+       feel coupled. Library/Tags don't write --kids-bg-pos-y so it
+       resolves to 0px and the layer sits at its base position. */
+    transform: translate3d(0, var(--kids-bg-pos-y, 0px), 0);
+    transition: transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform;
 }
 /* Slow-perf: no transition on the bg either. The bg-pos-y still
-   updates (so the static per-tab offset still works), but it snaps
-   between rows on cheap WebViews where animating a fixed background
-   would force a fullscreen repaint each frame. */
+   updates (so the bg snaps to each row's position) but doesn't
+   animate. Kept as a defense in depth even though the fast-perf
+   path is now also compositor-only - if a future change reintroduces
+   a paint-heavy bg animation, slow-perf will still skip it. */
 body[data-perf="slow"] .kids-home-bg {
     transition: none;
 }
@@ -6278,6 +6305,19 @@ body[data-perf="slow"] .browse-hint.browse-hint-leaving-down {
     opacity: 0;
     transform: translate3d(0, -100%, 0) !important;
     pointer-events: none;
+}
+/* t47: when the TabPill is hidden, also collapse the slot's reserved
+   height so any layout that consumes the slot in normal flow (e.g.
+   a future Library/Tags variant) doesn't keep a 90px gap above its
+   content. On Browse the slot is position:absolute so this is
+   strictly defensive - .browse-stack already shifts to top:0 via
+   body.kids-tabpill-hidden - but the rule keeps the slot's intrinsic
+   size honest. The original min-height comment said the slot still
+   needed to "reserve the tabpill area when it's empty," but that's
+   only true while the pill is visible. */
+body.kids-tabpill-hidden .kids-tabpill-slot {
+    min-height: 0;
+    height: 0;
 }
 
 /* Slow-perf: snap with no transitions. The Skyworth WebView's
