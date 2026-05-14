@@ -32,33 +32,37 @@ import { sessionCache } from "./kidsCache";
 import { useHomeTabFocus } from "./useHomeTabFocus";
 import { posterWidthForViewport } from "./perfMode";
 
-// Browse is the kid home (M8 #48). t41/t45 rewrite:
+// Browse is the kid home (M8 #48). t41/t45/t46 rewrite:
 //
 // Instead of mounting every row simultaneously and gating visibility
 // via display:none + data-pos flips, we maintain a sliding window of
-// at most 4 mounted rows (3 in steady state, +1 outgoing during a
-// row-swap animation). Each visual role - hint-prev title, active
-// row, hint-next title - is its OWN React component. Roles are not
-// reassigned mid-animation by flipping a data attribute on a shared
-// DOM element; instead the React tree mounts and unmounts the right
-// per-role component as focus.row changes. The horizontal title
-// flash that prompted the rewrite goes away because the active row's
-// title is rendered by <ActiveRow> while the hint title is rendered
-// by <HintRowTitle> - they are different DOM nodes with different
-// visual languages.
+// at most 4 mounted components (2 hint titles + 2 active rows during
+// a swap, 3 in steady state). Each visual role - hint-prev title,
+// active row, hint-next title - is its OWN React component. Roles
+// are not reassigned mid-animation by flipping a data attribute on a
+// shared DOM element; instead the React tree mounts and unmounts the
+// right per-role component as focus.row changes. The horizontal
+// title flash that prompted the rewrite goes away because the active
+// row's title is rendered by <ActiveRow> while the hint title is
+// rendered by <HintRowTitle> - they are different DOM nodes with
+// different visual languages.
 //
-// Animation (t45): during a swap, two <ActiveRow> components are
-// mounted at the active slot simultaneously - the leaving one (the
-// row focus moved off of) and the entering one (the row focus moved
-// onto). Each gets a CSS animation class that drives a slide + fade
-// in opposite directions. The leaving row's static transform
-// counter-positions it by one slot so the parent stack's lockstep
-// translate moves it visually from active slot to prev/next slot
-// while it fades out; the entering row inherits the stack's natural
-// slide (next/prev slot -> active slot) and adds a fade-in. After
-// SWAP_DURATION_MS the leaving row unmounts. The stack-level
-// transition is preserved because it still carries hint title
-// motion.
+// Animation (t46): during a swap we mount up to 4 components at
+// once - the leaving ActiveRow, the entering ActiveRow, plus one
+// leaving HintRowTitle (the old prev for ArrowDown / old next for
+// ArrowUp) and one entering HintRowTitle (the new next for ArrowDown
+// / new prev for ArrowUp). Each gets a CSS keyframe that drives BOTH
+// translateY and opacity end-to-end - the stack-level transform from
+// t45 is gone because two concurrent transforms on the same elements
+// (the stack's transition + each row's keyframe) were aborting the
+// animation mid-flight in WebKit. Now every animating element owns
+// its motion exclusively.
+//
+// Leaving rows snapshot their focused state (column + focusedItem +
+// focusedDetail) at the moment of swap so the leaving row's focused
+// tile keeps its combo styling (poster + meta card + ring) for the
+// entire fade-out - otherwise it'd re-render unfocused on the same
+// frame the swap starts.
 
 type Focus = { kind: "tile"; row: number; col: number };
 
@@ -85,10 +89,11 @@ function browseCacheKey(profileId: string | null): string {
     return CACHE_KEY_PREFIX + (profileId ?? "kid");
 }
 
-// Row swap animation timing - matches t39's curve so the slide feels
-// substantial. Slow-perf devices snap to the new state.
+// Row swap animation timing - matches the per-row keyframe durations
+// in styles.css. The +50ms in the cleanup setTimeout below absorbs
+// any animationend slop from WebKit so we don't tear down leaving
+// components before their keyframes finish. Slow-perf devices snap.
 const SWAP_DURATION_MS = 380;
-const SWAP_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
 
 // Per-row state that survives mount/unmount of a row's components.
 // Indexed by rowKey so a row that becomes active again (e.g. after
@@ -583,23 +588,37 @@ export default function Browse() {
         }
     }, [focus, tabFocused]);
 
-    // === Row-swap animation state (t45) ===
+    // === Row-swap animation state (t46) ===
     //
     // The visible tree is computed from focus.row. In steady state we
     // mount 3 components (prev hint / active / next hint, clamped).
-    // When focus.row changes we ALSO mount the outgoing row as a
-    // second <ActiveRow> at the active slot for SWAP_DURATION_MS so
-    // both the leaving and entering rows are visible together with
-    // independent slide+fade animations.
+    // When focus.row changes we ALSO mount:
+    //   - the outgoing row as a second <ActiveRow> (leaving role)
+    //   - the OLD prev hint (ArrowDown) or OLD next hint (ArrowUp) as
+    //     a leaving HintRowTitle
+    // and the NEW next hint (ArrowDown) or NEW prev hint (ArrowUp)
+    // mounts as an entering HintRowTitle. All four animate via
+    // per-role keyframes that drive both translateY AND opacity end
+    // to end - no parent stack transform is involved, which is what
+    // killed t45's animation mid-flight (two concurrent transforms
+    // on the same DOM aborted the keyframe).
     //
-    // swap stores enough info to render the leaving row off the
-    // current data array (the row reference might disappear after a
-    // hide event, so we snapshot it). Cleared by a setTimeout that
+    // swap stores enough info to render the leaving row + leaving
+    // hint off the current data array (the row reference might
+    // disappear after a hide event). Cleared by a setTimeout that
     // cancels itself on any new swap to avoid mid-animation leaks.
+    // Snapshot leavingFocusedItem + leavingFocusedDetail so the
+    // leaving ActiveRow keeps painting the focused-row-combo styling
+    // for its full leaving lifecycle (problem #1).
     type SwapState = {
         leavingKey: string;
         leavingRow: BrowseRow;
         leavingFocusCol: number;
+        leavingFocusedItem: BrowseRow["items"][number] | undefined;
+        leavingHintRow: BrowseRow | null;
+        leavingHintKey: string | null;
+        enteringHintRow: BrowseRow | null;
+        enteringHintKey: string | null;
         enteringKey: string;
         dir: "down" | "up";
     };
@@ -624,14 +643,13 @@ export default function Browse() {
         const isSlow = document.body?.dataset.perf === "slow";
         const skipSwap = skipNextSwapRef.current;
         skipNextSwapRef.current = false;
-        const el = stackRef.current;
         const rowsNow = data?.rows;
         const leavingRow = rowsNow ? rowsNow[prevRow] : undefined;
         const enteringRow = rowsNow ? rowsNow[focus.row] : undefined;
-        if (!el || isSlow || skipSwap || !leavingRow || !enteringRow) {
+        if (isSlow || skipSwap || !leavingRow || !enteringRow) {
             // Snap: slow-perf, or the back-to-tab handler asked for a
-            // hard reset, or no stack element yet (initial mount), or
-            // data shifted under us. Drop any in-flight swap.
+            // hard reset, or data shifted under us. Drop any in-flight
+            // swap.
             if (swapTimerRef.current !== null) {
                 window.clearTimeout(swapTimerRef.current);
                 swapTimerRef.current = null;
@@ -647,43 +665,59 @@ export default function Browse() {
             swapTimerRef.current = null;
         }
 
+        // For ArrowDown the leaving hint is the OLD prev hint
+        // (rows[prevRow-1]); the entering hint is the NEW next hint
+        // (rows[focus.row+1]). For ArrowUp the leaving hint is the OLD
+        // next hint (rows[prevRow+1]); the entering hint is the NEW
+        // prev hint (rows[focus.row-1]). Either may not exist at
+        // boundary rows - null means "no leaving/entering hint to
+        // mount."
+        const leavingHintRow =
+            dir === "down"
+                ? prevRow - 1 >= 0
+                    ? rowsNow![prevRow - 1]
+                    : null
+                : prevRow + 1 < rowsNow!.length
+                  ? rowsNow![prevRow + 1]
+                  : null;
+        const enteringHintRow =
+            dir === "down"
+                ? focus.row + 1 < rowsNow!.length
+                    ? rowsNow![focus.row + 1]
+                    : null
+                : focus.row - 1 >= 0
+                  ? rowsNow![focus.row - 1]
+                  : null;
+
+        // Snapshot the leaving row's focused item. focusedItem in this
+        // render is already the ENTERING row's focused item (recomputed
+        // when focus.row changed), so we derive the leaving focused
+        // item from rowsNow[prevRow] + prevCol directly.
+        const leavingFocusedItem = leavingRow.items[prevCol];
+
         setSwap({
             leavingKey: rowKeyOf(leavingRow),
             leavingRow,
             leavingFocusCol: prevCol,
+            leavingFocusedItem,
+            leavingHintRow,
+            leavingHintKey: leavingHintRow ? rowKeyOf(leavingHintRow) : null,
+            enteringHintRow,
+            enteringHintKey: enteringHintRow ? rowKeyOf(enteringHintRow) : null,
             enteringKey: rowKeyOf(enteringRow),
             dir,
         });
 
-        // Stack-level transform: stage the OLD visual state then
-        // transition back to 0. Hint titles ride this; the entering
-        // ActiveRow inherits the natural next/prev->active slide; the
-        // leaving ActiveRow uses its own swap-class transform to
-        // counter-position itself one slot AWAY in the swap direction
-        // so the same stack transition carries it from active slot at
-        // t=0 to prev/next slot at t=duration with the opacity fade
-        // its keyframe drives.
-        const slotShift =
-            dir === "down"
-                ? "var(--browse-slot-h)"
-                : "calc(-1 * var(--browse-slot-h))";
-        el.style.transition = "none";
-        el.style.transform = `translate3d(0, ${slotShift}, 0)`;
-        // Force a reflow so the browser commits the start-state before
-        // attaching the transition.
-        void el.offsetHeight;
-        el.style.transition = `transform ${SWAP_DURATION_MS}ms ${SWAP_EASING}`;
-        el.style.transform = "translate3d(0, 0, 0)";
-
+        // Cleanup buffer: keyframe duration + a frame's worth of
+        // safety margin so React doesn't tear down the leaving
+        // components before their keyframes finish. The WebKit
+        // animation engine occasionally fires the animationend event
+        // a hair before the keyframe's stated end - the buffer keeps
+        // the leaving classes attached until visual settle.
         swapTimerRef.current = window.setTimeout(() => {
-            const node = stackRef.current;
-            if (node) {
-                node.style.transition = "none";
-                node.style.transform = "translate3d(0, 0, 0)";
-            }
             setSwap(null);
             swapTimerRef.current = null;
-        }, SWAP_DURATION_MS + 16);
+        }, SWAP_DURATION_MS + 50);
     }, [focus.row, focus.col, data]);
 
     useEffect(() => {
@@ -730,24 +764,33 @@ export default function Browse() {
 
     // === Sliding-window mountset ===
     //
-    // Steady state: {prev hint, active, next hint} clamped to bounds.
-    // During swap: ALSO mount the leaving row as a second ActiveRow
-    // at the active slot, and skip the new hint title whose row key
-    // matches the leaving row (so the same row doesn't double-render
-    // as both a leaving ActiveRow and a fresh hint title during the
-    // 380ms swap window).
+    // Steady state: {prev hint, active, next hint} clamped to bounds
+    // (3 components max).
+    //
+    // During swap: ALSO mount the leaving ActiveRow + animate one
+    // leaving hint title + one entering hint title. The new prev or
+    // next hint whose row key matches the leaving ActiveRow's key is
+    // intentionally skipped during the swap window - the leaving
+    // ActiveRow's fade-out trajectory ends at the prev/next slot
+    // visually so a separate hint title there would double-render the
+    // same row. 4 components max during swap.
     const rows = data.rows;
     const activeIdx = focus.row;
     const enteringKey = rowKeyOf(rows[activeIdx]);
 
-    // The new prev/next hint row keys, used to decide whether to skip
-    // them during a swap (because the leaving ActiveRow IS the same
-    // row).
+    // Steady-state prev/next hint rows (the entering ones during swap).
     const prevHintRow = activeIdx - 1 >= 0 ? rows[activeIdx - 1] : null;
     const nextHintRow = activeIdx + 1 < rows.length ? rows[activeIdx + 1] : null;
 
+    type HintRole = "steady" | "leaving" | "entering";
     type Mount =
-        | { kind: "hint"; row: BrowseRow; rowKey: string; slot: "prev" | "next" }
+        | {
+              kind: "hint";
+              row: BrowseRow;
+              rowKey: string;
+              slot: "prev" | "next";
+              role: HintRole;
+          }
         | {
               kind: "active";
               row: BrowseRow;
@@ -757,10 +800,27 @@ export default function Browse() {
           };
     const mounts: Mount[] = [];
 
+    // Steady-state prev hint: mounted unless during swap it's the
+    // same row as the leaving ActiveRow (ArrowDown case - the leaving
+    // row's slide-and-fade trajectory ends visually at this slot).
+    // During an ArrowUp swap the steady-state prev hint is the
+    // ENTERING hint, and we tag it accordingly so the keyframe slides
+    // it down + fades it in.
     if (prevHintRow) {
         const k = rowKeyOf(prevHintRow);
-        if (!swap || k !== swap.leavingKey) {
-            mounts.push({ kind: "hint", row: prevHintRow, rowKey: k, slot: "prev" });
+        const isLeavingRowSlot = swap && k === swap.leavingKey;
+        if (!isLeavingRowSlot) {
+            const role: HintRole =
+                swap && swap.dir === "up" && swap.enteringHintKey === k
+                    ? "entering"
+                    : "steady";
+            mounts.push({
+                kind: "hint",
+                row: prevHintRow,
+                rowKey: k,
+                slot: "prev",
+                role,
+            });
         }
     }
     mounts.push({
@@ -772,23 +832,46 @@ export default function Browse() {
     });
     if (nextHintRow) {
         const k = rowKeyOf(nextHintRow);
-        if (!swap || k !== swap.leavingKey) {
-            mounts.push({ kind: "hint", row: nextHintRow, rowKey: k, slot: "next" });
+        const isLeavingRowSlot = swap && k === swap.leavingKey;
+        if (!isLeavingRowSlot) {
+            const role: HintRole =
+                swap && swap.dir === "down" && swap.enteringHintKey === k
+                    ? "entering"
+                    : "steady";
+            mounts.push({
+                kind: "hint",
+                row: nextHintRow,
+                rowKey: k,
+                slot: "next",
+                role,
+            });
         }
     }
-    if (swap && swap.leavingKey !== enteringKey) {
-        // Leaving ActiveRow rendered AT the active slot but with a
-        // CSS class that offsets it by one slot in the swap direction
-        // so its visual start position is the active slot (counter to
-        // the stack-level transform's start state) and end position
-        // is the prev/next slot with opacity 0.
-        mounts.push({
-            kind: "active",
-            row: swap.leavingRow,
-            rowKey: swap.leavingKey,
-            rowIndex: -1,
-            role: "leaving",
-        });
+    if (swap) {
+        if (swap.leavingKey !== enteringKey) {
+            // Leaving ActiveRow: starts at active slot, slides past
+            // prev/next slot and fades out via per-row keyframe.
+            mounts.push({
+                kind: "active",
+                row: swap.leavingRow,
+                rowKey: swap.leavingKey,
+                rowIndex: -1,
+                role: "leaving",
+            });
+        }
+        if (swap.leavingHintRow && swap.leavingHintKey) {
+            // Leaving hint: the OLD prev hint (ArrowDown) or OLD next
+            // hint (ArrowUp) that needs to slide further out of frame
+            // before unmount.
+            const slot: "prev" | "next" = swap.dir === "down" ? "prev" : "next";
+            mounts.push({
+                kind: "hint",
+                row: swap.leavingHintRow,
+                rowKey: swap.leavingHintKey,
+                slot,
+                role: "leaving",
+            });
+        }
     }
 
     return (
@@ -796,12 +879,32 @@ export default function Browse() {
             <div className="browse-stack" ref={stackRef}>
                 {mounts.map((m) => {
                     if (m.kind === "hint") {
+                        const isLeaving = m.role === "leaving";
+                        const isEntering = m.role === "entering";
+                        // Hint swap classes encode (role x direction).
+                        // The CSS keyframes drive both translateY and
+                        // opacity end to end.
+                        let hintClass = "";
+                        if (swap) {
+                            if (isLeaving) {
+                                hintClass =
+                                    swap.dir === "down"
+                                        ? "browse-hint-leaving-up"
+                                        : "browse-hint-leaving-down";
+                            } else if (isEntering) {
+                                hintClass =
+                                    swap.dir === "down"
+                                        ? "browse-hint-entering-up"
+                                        : "browse-hint-entering-down";
+                            }
+                        }
                         return (
                             <HintRowTitle
-                                key={m.rowKey}
+                                key={m.rowKey + (isLeaving ? ":leaving" : "")}
                                 row={m.row}
                                 rowKey={m.rowKey}
                                 slot={m.slot}
+                                hintClass={hintClass}
                             />
                         );
                     }
@@ -818,6 +921,17 @@ export default function Browse() {
                                 ? "browse-row-entering-down"
                                 : "browse-row-entering-up"
                         : "";
+                    // Leaving row: use the snapshot focused item from
+                    // swap state. Detail is set to null because the
+                    // detail hook reacts on the CURRENT focused item -
+                    // we can't reconstruct the prior detail cheaply.
+                    // The meta card renders its synchronous shell
+                    // (title + year + runtime) without detail, which
+                    // is sufficient for a 380ms fade-out.
+                    const rowFocusedItem = isLeaving
+                        ? swap!.leavingFocusedItem
+                        : focusedItem;
+                    const rowFocusedDetail = isLeaving ? null : focusedDetail;
                     return (
                         <ActiveRow
                             key={rowKey + (isLeaving ? ":leaving" : "")}
@@ -825,8 +939,8 @@ export default function Browse() {
                             rowKey={rowKey}
                             rowIndex={isLeaving ? -1 : rowIndex}
                             focusCol={isLeaving ? swap!.leavingFocusCol : focus.col}
-                            focusedItem={isLeaving ? undefined : focusedItem}
-                            focusedDetail={isLeaving ? null : focusedDetail}
+                            focusedItem={rowFocusedItem}
+                            focusedDetail={rowFocusedDetail}
                             session={session}
                             tabFocused={tabFocused}
                             warmRowsRef={warmRowsRef}
@@ -889,10 +1003,12 @@ function HintRowTitleImpl({
     row,
     rowKey,
     slot,
+    hintClass,
 }: {
     row: BrowseRow;
     rowKey: string;
     slot: "prev" | "next";
+    hintClass?: string;
 }) {
     // Image preload: warm the row's first ~6 poster URLs. These never
     // render to the DOM but the browser caches the responses for when
@@ -924,7 +1040,7 @@ function HintRowTitleImpl({
     const isPrev = slot === "prev";
     return (
         <section
-            className="browse-hint"
+            className={`browse-hint${hintClass ? ` ${hintClass}` : ""}`}
             data-slot={slot}
         >
             <h2 className="browse-hint-title">
@@ -1014,12 +1130,17 @@ function ActiveRow({
     const priority = true; // ActiveRow is always priority warm.
 
     const lastCol = row.items.length;
-    // For leaving rows: still mark the previously-focused tile as
-    // "focused" so the scale + selection ring stay (otherwise the row
-    // visually loses its focus state in the same frame it starts
-    // fading, which reads as a jarring snap). focusedItem stays
-    // undefined for leaving so the meta card combo is suppressed -
-    // the parent's focusedItem belongs to the entering row.
+    // t46: leaving rows pass their SNAPSHOT focused item via
+    // focusedItem prop so the focused-row-combo (poster + meta card +
+    // ring) keeps painting for the full leaving lifecycle. Without
+    // this snapshot the leaving row re-renders with focusedItem ==
+    // entering row's item, mismatches every column, falls through to
+    // the plain Tile branch, and the kid sees the focused tile snap
+    // to an unfocused size while the row is still mid-fade.
+    // focusedDetail is null for leaving rows because the detail hook
+    // reacts on the CURRENT focused item; the meta card renders its
+    // synchronous title+meta shell without detail, which is enough
+    // for a sub-400ms fade-out.
     const focusedKey = !tabFocused ? focusCol : -1;
 
     return (
