@@ -9,6 +9,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Heart } from "@phosphor-icons/react";
 import { authHeaders, withAuthRetry } from "./auth";
 import HlsVideo from "./HlsVideo";
+import OverrideModal from "./OverrideModal";
 import PlayerTransport from "./PlayerTransport";
 import { type MediaErrorKind, playSessionIdFromUrl } from "./playerHelpers";
 
@@ -134,6 +135,23 @@ export default function Play() {
     // (initial fetch, next-episode swap).
     const [isFavorite, setIsFavorite] = useState(false);
 
+    // Long-press OK during playback opens the override modal (M9).
+    // Mirrors the gesture surface used on Browse / Library /
+    // TagDetail / Watch tiles. Held for 1000ms; PlayerTransport
+    // owns the detection. We also pause the video when it opens
+    // so the kid isn't hearing the show while the parent uses the
+    // menu - matches the short-press reveal-pause behavior.
+    const [override, setOverride] = useState<
+        {
+            itemId: string;
+            itemName: string;
+            itemType: string;
+            seriesId?: string;
+            seriesName?: string;
+            played?: boolean;
+        } | null
+    >(null);
+
     // Up Next overlay state. When the kid is watching an episode and
     // the playhead crosses 90%, we prefetch the next episode and show
     // a 10s countdown overlay; on countdown=0 OR video.ended the kid
@@ -204,6 +222,27 @@ export default function Play() {
         }
     }, [isFavorite, stream?.favoriteItemId]);
 
+    // Open the override modal scoped to the currently-playing item.
+    // For an episode the override targets the episode itself; the
+    // modal does the series-scoping for tags/hide/content-time
+    // internally based on itemType + seriesId. We also pause the
+    // video so the show isn't running behind the modal.
+    const handleLongPress = useCallback(() => {
+        if (!stream) return;
+        const v = videoRef.current;
+        if (v && !v.paused) v.pause();
+        const pct = stream.userData?.PlayedPercentage ?? 0;
+        const playedFlag = stream.userData?.Played ?? false;
+        setOverride({
+            itemId: stream.itemId,
+            itemName: stream.itemName,
+            itemType: stream.itemType ?? "",
+            seriesId: stream.seriesId,
+            seriesName: stream.seriesName,
+            played: playedFlag || pct >= 90,
+        });
+    }, [stream]);
+
     // Back target for the player. Prefer the series page when we're on
     // an episode so the kid lands on the episode picker, else the item
     // itself. Falls through to library when stream isn't loaded yet.
@@ -221,8 +260,11 @@ export default function Play() {
     }, [stream?.streamUrl]);
 
     // Esc -> back to the watch menu (M7 #44). Outside the transport's
-    // scope.
+    // scope. Suppressed while the override modal is open so its own
+    // back handling (via useProgressiveBack) closes the modal instead
+    // of navigating away from the player.
     useEffect(() => {
+        if (override) return;
         function onKey(e: KeyboardEvent) {
             if (e.key === "Escape") {
                 // True history-back so the /watch auto-skip marker
@@ -235,7 +277,7 @@ export default function Play() {
         }
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [nav, watchHref]);
+    }, [nav, watchHref, override]);
 
     // Resolve the stream URL for this itemId. Movies short-circuit;
     // Series resolve through /next-up to get an actual episode.
@@ -764,6 +806,7 @@ export default function Play() {
                     stream.favoriteItemId ? toggleFavorite : undefined
                 }
                 favoriteRef={favoriteRef}
+                onLongPress={override === null ? handleLongPress : undefined}
             />
             {upNextStatus === "shown" && upNext && (
                 <UpNextOverlay
@@ -771,6 +814,17 @@ export default function Play() {
                     countdown={upNextCountdown}
                     onSkipNow={handleNextEpisode}
                     onDismiss={() => setUpNextStatus("dismissed")}
+                />
+            )}
+            {override && (
+                <OverrideModal
+                    itemId={override.itemId}
+                    itemName={override.itemName}
+                    itemType={override.itemType}
+                    seriesId={override.seriesId}
+                    seriesName={override.seriesName}
+                    played={override.played}
+                    onClose={() => setOverride(null)}
                 />
             )}
         </div>
