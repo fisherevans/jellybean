@@ -279,15 +279,25 @@ export default function Browse() {
 
     // Bg-pos-y shift: the rainbow background re-anchors per active row
     // so the kid sees the painted texture shift as they scroll. Only
-    // on fast devices; slow snaps. Preserved from t34.
+    // on fast devices; slow snaps.
+    //
+    // t47: this used to write `baseOffset + focus.row * ROW_BG_OFFSET`
+    // into --kids-bg-pos-y and the CSS drove `background-position-y`
+    // off it with a 380ms transition. That transition forced a
+    // fullscreen repaint on the position:fixed .kids-home-bg every
+    // frame (background-position changes can't be composited), which
+    // produced ~140ms main-thread blocking spikes during the row swap
+    // and read as "rows animate halfway, then snap to end" - the
+    // M3-reported flash that survived t41/t45/t46. The fix below moves
+    // the per-row shift onto a compositor-only transform (see styles.css
+    // .kids-home-bg). --kids-bg-pos-y here is just the row delta now;
+    // the per-tab random offset stays on background-position-y where
+    // it doesn't animate.
     useEffect(() => {
         if (tabFocused) return;
         if (document.body?.dataset.perf === "slow") return;
-        const baseOffset = Number(
-            document.documentElement.dataset.kidsBgOffsetY ?? 0,
-        );
         const ROW_BG_OFFSET = -560;
-        const y = baseOffset + focus.row * ROW_BG_OFFSET;
+        const y = focus.row * ROW_BG_OFFSET;
         document.documentElement.style.setProperty(
             "--kids-bg-pos-y",
             `${y}px`,
