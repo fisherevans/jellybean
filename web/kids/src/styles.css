@@ -2211,15 +2211,18 @@ body[data-perf="slow"] .kids-tag-card.focused {
 body.kids-tabpill-hidden .browse-stack {
     top: 0;
     /* t42: pull the prev-hint title up into the space the TabPill
-       vacated. Without this the prev hint just floats ~8vh from the
-       top of the viewport with rainbow above it - the user reads it
-       as "the freed header space isn't being used". --browse-hint-
-       prev-extra adds onto the slot-anchor's translateY so we lift
-       the prev hint without changing slot-h (which doubles as the
-       row-swap animation distance). 6vh sits the hint roughly where
-       the TabPill's bottom edge used to be at 1080p, leaving a small
-       cushion against the very top edge. */
-    --browse-hint-prev-extra: 6vh;
+       vacated. --browse-hint-prev-extra adds onto the slot-anchor's
+       translateY so we lift the prev hint without changing slot-h
+       (which doubles as the row-swap animation distance).
+
+       t44: the original 6vh shift dropped the hint to ~2vh from the
+       top edge, which read as "flush against the edge" rather than
+       "filling the freed space". 0vh leaves the hint at its base
+       8vh anchor (50vh - 42vh slot-h), which sits roughly halfway
+       between the viewport top and the active row's top edge after
+       the active-row centering fix below. Kept as a variable so the
+       knob is still here if a future tweak wants it back. */
+    --browse-hint-prev-extra: 0vh;
 }
 /* Body lock for Browse (kept under .browse-active for back-compat
    with the class KidsHome adds for /browse). Same effect as
@@ -2266,16 +2269,18 @@ body.browse-active {
    to the center of the stack via data-slot="active". Hint rows are
    a separate .browse-hint component (centered horizontally, no tile
    track) so this rule applies only to the active row.
-   Paint containment keeps the tile track + focused-combo transforms
-   from invalidating page-level layout when the kid arrows around
-   inside the row. */
+   t44: dropped `contain: paint` to `contain: layout` only - the
+   row-title is now absolutely positioned above the section's box
+   (bottom:100%) so paint clipping would chop it off. Layout
+   containment still isolates the tile track + focused-combo
+   transforms from page-level reflow. */
 .browse-row {
     position: absolute;
     left: 0;
     right: 0;
     margin: 0;
     padding: 0;
-    contain: layout paint;
+    contain: layout;
 }
 .browse-row[data-slot="active"] {
     top: 50%;
@@ -2283,13 +2288,37 @@ body.browse-active {
     z-index: 3;
     pointer-events: auto;
 }
+/* t44: the active row's section centers vertically via top:50% +
+   translateY(-50%). With the title in normal flow it inflated the
+   section's height by ~3.5rem at the top, which pushed the tile
+   track (and the focused-combo) visibly below the viewport center.
+   Pull the title out of flow so the section's height is just the
+   tile track + its paddings - the centering math then anchors the
+   posters at viewport center instead of (title + posters).
+   Title still paints above the tile track via bottom:100% and
+   keeps its cursor-x left anchor for visual alignment with the
+   focused tile. margin overrides reset the in-flow margins that
+   were spacing the title relative to the items div - the gap is
+   now driven by the items div's padding-top (1.75rem). */
 .browse-row-title {
     font-size: 2rem;
     font-weight: 700;
-    margin: 0.9rem 0 0.6rem;
+    margin: 0;
     color: var(--fg);
     padding-left: var(--browse-cursor-x);
     text-shadow: 0 1px 4px rgba(255, 255, 255, 0.6);
+}
+.browse-row[data-slot="active"] > .browse-row-title {
+    position: absolute;
+    left: 0;
+    right: 0;
+    /* Anchor the title just above the items div. The items div has
+       padding-top: 1.75rem; that padding becomes the visual gap
+       between the title baseline and the top of the tile track.
+       Margin reset wins over the 720p media-query margin (same
+       selector specificity, this rule is later in source). */
+    bottom: 100%;
+    margin: 0;
 }
 .browse-row-icon {
     color: var(--accent);
@@ -5633,10 +5662,13 @@ body[data-perf="slow"] .focused-meta-card-fade {
        min(60vh, 600px) caps the absolute size on huge displays so
        the combo doesn't dwarf the meta card's content. The 320px
        floor keeps very short viewports usable. The .browse-row-items
-       padding-bottom (2.25rem) absorbs the bottom bleed; .browse-row-
-       title height + 1.75rem padding-top absorbs the top bleed.
-       Active row's translateY(-50%) anchors mid-stack so the grown
-       combo sits centered. */
+       padding-bottom (2.25rem) + padding-top (1.75rem) absorb the
+       combo's vertical bleed.
+       t44: the .browse-row-title is pulled out of flow (absolute
+       above .browse-row-items), so the active section's height is
+       just the items div - its translateY(-50%) now centers the
+       tile track on viewport center rather than centering
+       (title + tile track). */
     --focused-poster-h: clamp(320px, 58vh, 600px);
     flex: 0 0 auto;
     display: flex;
