@@ -5893,10 +5893,13 @@ body[data-perf="slow"] .focused-row-combo {
 .focused-row-combo--dimmed {
     /* Ring suppressed entirely - the dim state shouldn't read as
        "still focused, just quiet." The kid's eye should land on the
-       TabPill above, with the combo acting as a remembered anchor. */
+       TabPill above, with the combo acting as a remembered anchor.
+       Opacity sits in the 0.75-0.8 range so the anchor stays clearly
+       legible; saturation drop kept light so the dim reads as
+       "quieted" rather than "disabled." */
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34);
-    opacity: 0.55;
-    filter: saturate(0.7);
+    opacity: 0.78;
+    filter: saturate(0.85);
 }
 body[data-perf="slow"] .focused-row-combo {
     transition: none;
