@@ -2288,55 +2288,85 @@ body.browse-active {
     z-index: 3;
     pointer-events: auto;
 }
-/* t45: row-swap animations. During a swap two ActiveRows mount at
+/* t46: row-swap animations. During a swap two ActiveRows mount at
    the active slot - one entering, one leaving - and each gets a
-   class below. The stack-level transform still slides the whole
-   set by one slot (so hint titles + the entering row carry their
-   motion); the leaving row's static transform offsets it BY one
-   slot in the swap direction, which means the stack transform
-   carries it from "active slot at t=0" to "prev/next slot at
-   t=380ms" while its opacity keyframe fades it out. Z-index keeps
-   the entering row painted above the leaving row so the focused
-   combo on the entering row stays legible during the overlap. */
-.browse-row.browse-row-entering-down,
+   class below. Each keyframe drives BOTH translateY and opacity end
+   to end; no parent stack transform is involved (t45 had a
+   stack-level transition layered on top of these keyframes, which
+   WebKit aborted mid-flight when both ended up on the same element).
+   The translateY extents OVERSHOOT the prev/next slot by ~0.4 slot-h
+   so the leaving row visibly clears the active slot before fading
+   out and the entering row enters from below the next slot, which
+   makes the swap read as two distinct motions rather than a blur of
+   two rows occupying the same y. Z-index keeps the entering row
+   painted above the leaving row so the focused combo on the
+   entering row stays legible during the overlap. */
+.browse-row.browse-row-entering-down {
+    z-index: 4;
+    animation: browse-row-enter-down 380ms cubic-bezier(0.22, 1, 0.36, 1)
+        forwards;
+}
 .browse-row.browse-row-entering-up {
     z-index: 4;
-    animation: browse-row-fade-in 380ms cubic-bezier(0.22, 1, 0.36, 1)
+    animation: browse-row-enter-up 380ms cubic-bezier(0.22, 1, 0.36, 1)
         forwards;
 }
 .browse-row.browse-row-leaving-down {
     z-index: 3;
-    /* Counter-position by -slot-h so the stack's +slot-h start state
-       (ArrowDown) puts this row visually at the active slot at t=0;
-       at t=380ms (stack=0) it lands at the prev slot. */
-    transform: translateY(calc(-50% - var(--browse-slot-h)));
     pointer-events: none;
-    animation: browse-row-fade-out 380ms cubic-bezier(0.22, 1, 0.36, 1)
+    animation: browse-row-leave-down 380ms cubic-bezier(0.22, 1, 0.36, 1)
         forwards;
 }
 .browse-row.browse-row-leaving-up {
     z-index: 3;
-    /* ArrowUp mirror: stack starts at -slot-h, counter +slot-h puts
-       the row at active slot at t=0; lands at next slot at t=380ms. */
-    transform: translateY(calc(-50% + var(--browse-slot-h)));
     pointer-events: none;
-    animation: browse-row-fade-out 380ms cubic-bezier(0.22, 1, 0.36, 1)
+    animation: browse-row-leave-up 380ms cubic-bezier(0.22, 1, 0.36, 1)
         forwards;
 }
-@keyframes browse-row-fade-in {
+/* ArrowDown: leaving row slides UP from active slot past prev slot
+   and fades out. Entering row slides UP from below next slot to
+   active slot and fades in. The 1.4*slot-h extent gives ~0.4*slot-h
+   of separation past the hint slot so the two rows aren't blended
+   at the midpoint. */
+@keyframes browse-row-leave-down {
     from {
+        transform: translateY(-50%);
+        opacity: 1;
+    }
+    to {
+        transform: translateY(calc(-50% - 1.4 * var(--browse-slot-h)));
+        opacity: 0;
+    }
+}
+@keyframes browse-row-enter-down {
+    from {
+        transform: translateY(calc(-50% + 1.4 * var(--browse-slot-h)));
         opacity: 0;
     }
     to {
+        transform: translateY(-50%);
         opacity: 1;
     }
 }
-@keyframes browse-row-fade-out {
+/* ArrowUp mirrors: everything slides DOWN. */
+@keyframes browse-row-leave-up {
     from {
+        transform: translateY(-50%);
         opacity: 1;
     }
     to {
+        transform: translateY(calc(-50% + 1.4 * var(--browse-slot-h)));
         opacity: 0;
+    }
+}
+@keyframes browse-row-enter-up {
+    from {
+        transform: translateY(calc(-50% - 1.4 * var(--browse-slot-h)));
+        opacity: 0;
+    }
+    to {
+        transform: translateY(-50%);
+        opacity: 1;
     }
 }
 body[data-perf="slow"] .browse-row.browse-row-entering-down,
@@ -6039,25 +6069,27 @@ body[data-perf="slow"] .focused-row-combo {
      - prev       : top:50%, translateY(-50% - slot-h)    (above)
      - next       : top:50%, translateY(-50% + slot-h)    (below)
 
-   On a row swap, Browse.tsx writes an inline transform on
-   .browse-stack of +/-slot-h (the "previous visual state") then
-   transitions back to translate3d(0,0,0). All slot anchors are
-   static; only the stack-level transform animates the hint titles
-   and the entering ActiveRow in lockstep.
+   t46: every element animating during a row swap owns its motion via
+   its own keyframe that drives BOTH translateY and opacity end to
+   end. There is NO stack-level transform involved - t45 had a
+   parent .browse-stack transition layered on top of each row's
+   keyframe, which WebKit aborted mid-flight (two concurrent
+   transforms on the same compositor layer ended up racing). All
+   slot anchors are static; only per-element keyframes animate.
 
-   t45: the leaving ActiveRow is also mounted at the active slot
-   during the swap window. It uses a `.browse-row-leaving-{down,up}`
-   class that overrides the active slot's transform by offsetting it
-   by -/+slot-h - this counter-positions it so the stack-level
-   transform carries it from "active slot at t=0" to "prev/next slot
-   at t=duration" while a CSS keyframe fades its opacity to 0. The
-   entering ActiveRow gets a complementary `.browse-row-entering-*`
-   class that fades opacity in from 0 to 1. After the swap window
-   closes the leaving row unmounts and we're back to one ActiveRow
-   at the active slot. Also during the swap, the prev/next hint slot
-   for the leaving row is intentionally skipped in the render tree to
-   avoid double-rendering the same row as both a leaving ActiveRow
-   and a fresh hint title. */
+   During a swap up to 4 elements are mounted: the leaving ActiveRow,
+   the entering ActiveRow, one leaving HintRowTitle, and one entering
+   HintRowTitle. The hint whose row matches the leaving ActiveRow's
+   row (the new prev hint for ArrowDown / new next hint for ArrowUp)
+   is skipped during the swap window because the leaving ActiveRow's
+   fade-out trajectory already ends visually at that slot - mounting
+   a separate hint title there would double-render the same row.
+
+   Keyframe extents overshoot the prev/next slot by ~0.4*slot-h so
+   the leaving row visibly clears the active slot before fading out
+   and the entering row enters from below the next slot, giving the
+   swap two distinct motions rather than a blur of two rows at the
+   same y. */
 
 /* Hint title component: row-name + chevron, centered horizontally.
    Vertical position is owned by the [data-slot] anchor below. */
@@ -6120,6 +6152,117 @@ body[data-perf="slow"] .focused-row-combo {
     top: 50%;
     transform: translateY(calc(-50% + var(--browse-slot-h)));
     z-index: 2;
+}
+
+/* t46: hint title swap animations. Mirror the per-row keyframes -
+   each keyframe drives both translateY and opacity end to end so the
+   hints slide vertically with the active row swap rather than
+   flashing in/out discretely.
+
+   Naming: {leaving|entering}-{up|down} describes the direction of
+   visual motion (up = sliding upward, down = sliding downward), not
+   the arrow key. ArrowDown -> hints slide UP; ArrowUp -> hints slide
+   DOWN. */
+
+/* ArrowDown: old prev hint slides further up past the prev slot and
+   fades out. */
+.browse-hint.browse-hint-leaving-up[data-slot="prev"] {
+    animation: browse-hint-prev-leave-up 380ms
+        cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    transition: none;
+}
+/* ArrowDown: new next hint enters from below the next slot and
+   slides up to it, fading in. */
+.browse-hint.browse-hint-entering-up[data-slot="next"] {
+    animation: browse-hint-next-enter-up 380ms
+        cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    transition: none;
+}
+/* ArrowUp: old next hint slides further down past the next slot and
+   fades out. */
+.browse-hint.browse-hint-leaving-down[data-slot="next"] {
+    animation: browse-hint-next-leave-down 380ms
+        cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    transition: none;
+}
+/* ArrowUp: new prev hint enters from above the prev slot and slides
+   down to it, fading in. */
+.browse-hint.browse-hint-entering-down[data-slot="prev"] {
+    animation: browse-hint-prev-enter-down 380ms
+        cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    transition: none;
+}
+
+@keyframes browse-hint-prev-leave-up {
+    from {
+        transform: translateY(
+            calc(
+                -50% - var(--browse-slot-h) -
+                    var(--browse-hint-prev-extra, 0vh)
+            )
+        );
+        opacity: 0.65;
+    }
+    to {
+        transform: translateY(
+            calc(
+                -50% - 1.4 * var(--browse-slot-h) -
+                    var(--browse-hint-prev-extra, 0vh)
+            )
+        );
+        opacity: 0;
+    }
+}
+@keyframes browse-hint-next-enter-up {
+    from {
+        transform: translateY(calc(-50% + 1.4 * var(--browse-slot-h)));
+        opacity: 0;
+    }
+    to {
+        transform: translateY(calc(-50% + var(--browse-slot-h)));
+        opacity: 0.65;
+    }
+}
+@keyframes browse-hint-next-leave-down {
+    from {
+        transform: translateY(calc(-50% + var(--browse-slot-h)));
+        opacity: 0.65;
+    }
+    to {
+        transform: translateY(calc(-50% + 1.4 * var(--browse-slot-h)));
+        opacity: 0;
+    }
+}
+@keyframes browse-hint-prev-enter-down {
+    from {
+        transform: translateY(
+            calc(
+                -50% - 1.4 * var(--browse-slot-h) -
+                    var(--browse-hint-prev-extra, 0vh)
+            )
+        );
+        opacity: 0;
+    }
+    to {
+        transform: translateY(
+            calc(
+                -50% - var(--browse-slot-h) -
+                    var(--browse-hint-prev-extra, 0vh)
+            )
+        );
+        opacity: 0.65;
+    }
+}
+body[data-perf="slow"] .browse-hint.browse-hint-leaving-up,
+body[data-perf="slow"] .browse-hint.browse-hint-leaving-down,
+body[data-perf="slow"] .browse-hint.browse-hint-entering-up,
+body[data-perf="slow"] .browse-hint.browse-hint-entering-down {
+    animation: none;
+}
+body[data-perf="slow"] .browse-hint.browse-hint-leaving-up,
+body[data-perf="slow"] .browse-hint.browse-hint-leaving-down {
+    /* Slow-perf snaps - leaving hints don't linger. */
+    display: none;
 }
 
 /* TabPill hide/show wired by KidsHome via .kids-tabpill-slot-hidden.
