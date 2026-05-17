@@ -308,10 +308,9 @@ export default function Browse() {
     // the per-tab random offset stays on background-position-y where
     // it doesn't animate.
     useEffect(() => {
-        if (tabFocused) return;
         if (document.body?.dataset.perf === "slow") return;
         const ROW_BG_OFFSET = -560;
-        const y = focus.row * ROW_BG_OFFSET;
+        const y = tabFocused ? 0 : focus.row * ROW_BG_OFFSET;
         document.documentElement.style.setProperty(
             "--kids-bg-pos-y",
             `${y}px`,
