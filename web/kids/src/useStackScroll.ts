@@ -65,9 +65,9 @@ export function useStackScroll(): StackScroll {
             // Clear shared CSS variables so the next page (if it
             // doesn't use this hook) gets a clean slate.
             document.documentElement.style.removeProperty("--kids-scroll-y");
-            // bg-pos-y isn't written here anymore (t40), but Browse
-            // writes it and unmounts can interleave, so wipe it on
-            // teardown too as a belt-and-suspenders cleanup.
+            // applyY now writes --kids-bg-pos-y (t54), and Browse
+            // writes it on its own. Wipe on teardown so the value
+            // doesn't leak across surfaces with different writers.
             document.documentElement.style.removeProperty("--kids-bg-pos-y");
         };
     }, []);
