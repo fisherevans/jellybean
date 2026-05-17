@@ -11,13 +11,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 //
 // The hook writes `--kids-scroll-y` (used by KidsHome's
 // .kids-tabpill-slot to scroll the TabPill in lockstep with the
-// content). It deliberately does NOT write `--kids-bg-pos-y`:
-// Library/Tags/TagDetail scroll in pixels, sometimes thousands of
-// them, and tying bg-position to that raw pixel scroll produced
-// huge bg shifts on those surfaces (t40). The bg now stays at the
-// per-tab random offset (`--kids-bg-offset-y`) on
-// Library/Tags/TagDetail and is only animated per-row by
-// Browse.tsx, which writes `--kids-bg-pos-y` directly.
+// content) and mirrors that same value into `--kids-bg-pos-y` so
+// the page bg scrolls in lockstep too. t40 originally rejected
+// the lockstep here, but the user explicitly asked for it on
+// Library/Tags/TagDetail (t54); the bg tile is oversized to
+// -50000px + repeat-y so even thousands of negative px stay safely
+// covered. Browse keeps its own bg writer untouched.
 //
 // Usage:
 //
@@ -80,12 +79,15 @@ export function useStackScroll(): StackScroll {
             "--kids-scroll-y",
             `${y}px`,
         );
-        // t40: do NOT write --kids-bg-pos-y here. Library/Tags/
-        // TagDetail scroll in pixels (sometimes thousands), and
-        // tying the bg to that raw pixel scroll produced wild bg
-        // shifts on those surfaces. The bg now stays at the per-
-        // tab random offset on these pages; Browse owns the only
-        // bg-pos-y motion path via its per-row writes.
+        // t54: also drive --kids-bg-pos-y so the page bg scrolls in
+        // lockstep with the stack. t40 originally rejected this; the
+        // user requested it explicitly. The bg tile is oversized to
+        // -50000px + repeat-y, so large negative Y values are safe.
+        // Browse still drives this var itself per row-shift.
+        document.documentElement.style.setProperty(
+            "--kids-bg-pos-y",
+            `${y}px`,
+        );
     }, []);
 
     const setStackY = useCallback(

@@ -6466,3 +6466,18 @@ body[data-perf="slow"] .kids-tabpill-slot {
     transition: none;
 }
 
+/* ===== Bg lockstep scroll on Library / Tags / TagDetail (t54) =====
+   useStackScroll now writes --kids-bg-pos-y in lockstep with
+   --kids-scroll-y so the .kids-home-bg layer scrolls with the
+   stack on these surfaces. Browse's 380ms transform transition
+   on .kids-home-bg (defined upstream at the .kids-home-bg base
+   rule) would smear each per-frame scroll write into a quarter-
+   second lag here, which looks awful. Disable the transition
+   only on these three pages; Browse's per-row bg shift keeps the
+   380ms easing untouched. */
+.kids-home[data-active="library"] .kids-home-bg,
+.kids-home[data-active="tags"] .kids-home-bg,
+.kids-tag-detail .kids-home-bg {
+    transition: none;
+}
+
