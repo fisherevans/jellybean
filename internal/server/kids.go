@@ -15,6 +15,8 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/fisherevans/jellybean/internal/auth"
 	"github.com/fisherevans/jellybean/internal/browse"
 	"github.com/fisherevans/jellybean/internal/curation"
@@ -431,25 +433,47 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 	// query (so per-user UserData + search-term filter still apply);
 	// we re-sort after the merge because Jellyfin's order is only
 	// valid within a batch.
-	merged := make([]jellyfin.Item, 0, len(ids))
+	//
+	// Chunks fan out concurrently (capped at IDBatchConcurrency, same
+	// as GetItemsByIDsBatched). On the Cloudflare tunnel each chunk is
+	// RTT-bound, so the previous serial loop was effectively
+	// `chunks * RTT` of wall time. Concurrency drops that to roughly
+	// one RTT for the common <=4-chunk case.
+	var chunks [][]string
 	for i := 0; i < len(ids); i += jellyfin.IDBatchSize {
 		end := i + jellyfin.IDBatchSize
 		if end > len(ids) {
 			end = len(ids)
 		}
-		batch := ids[i:end]
-		res, err := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{
-			IDs:        batch,
-			SortBy:     sortBy,
-			SortOrder:  sortOrder,
-			SearchTerm: search,
-		}, kc.JellyfinToken)
-		if err != nil {
-			s.logger.Error().Err(err).Msg("kids library fetch")
-			writeUpstreamError(w, err, "failed to load library")
-			return
-		}
-		merged = append(merged, res.Items...)
+		chunks = append(chunks, ids[i:end])
+	}
+	chunkResults := make([][]jellyfin.Item, len(chunks))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(jellyfin.IDBatchConcurrency)
+	for idx, chunk := range chunks {
+		idx, chunk := idx, chunk
+		g.Go(func() error {
+			res, err := s.jellyfin.GetItemsAsUser(gctx, jellyfin.ItemsFilter{
+				IDs:        chunk,
+				SortBy:     sortBy,
+				SortOrder:  sortOrder,
+				SearchTerm: search,
+			}, kc.JellyfinToken)
+			if err != nil {
+				return err
+			}
+			chunkResults[idx] = res.Items
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		s.logger.Error().Err(err).Msg("kids library fetch")
+		writeUpstreamError(w, err, "failed to load library")
+		return
+	}
+	merged := make([]jellyfin.Item, 0, len(ids))
+	for _, batch := range chunkResults {
+		merged = append(merged, batch...)
 	}
 
 	// Re-sort across batches. Jellyfin's per-batch order is valid
@@ -925,7 +949,11 @@ func (s *Server) handleKidsStream(w http.ResponseWriter, r *http.Request) {
 		err  error
 	)
 	if kc.JellyfinToken != "" {
-		res, ferr := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{IDs: []string{id}}, kc.JellyfinToken)
+		// Opt into heavy fields here: kidsPreferredAudioStreamIndex
+		// reads MediaStreams to find the audio track matching the
+		// profile's preferred language. Other kid-side fetches stay
+		// on the slim default.
+		res, ferr := s.jellyfin.GetItemsAsUser(ctx, jellyfin.ItemsFilter{IDs: []string{id}, IncludeHeavyFields: true}, kc.JellyfinToken)
 		if ferr == nil && len(res.Items) == 0 {
 			err = jellyfin.ErrNotFound
 		} else if ferr == nil {

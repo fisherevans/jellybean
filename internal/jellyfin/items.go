@@ -57,11 +57,21 @@ func (c *Client) getItemsWith(ctx context.Context, f ItemsFilter, userToken stri
 	if f.ParentID != "" {
 		q.Set("ParentId", f.ParentID)
 	}
-	// Always ask for the metadata fields we use; UserData only meaningful
-	// when authenticated as a user. MediaStreams carries audio language
-	// info the admin curation UI uses to flag non-default-language items.
-	// DateCreated drives the M8 "recently_added" browse row.
-	fields := "Genres,Studios,OfficialRating,ProductionYear,RunTimeTicks,MediaStreams,DateCreated"
+	// Default to the slim Fields set: OfficialRating,ProductionYear,
+	// RunTimeTicks,DateCreated are tiny ints/strings and consumed by
+	// the kid browse-tile shape (toBrowseItem) and admin DTOs alike,
+	// so they stay on by default. MediaStreams + Genres + Studios are
+	// the heavy ones - MediaStreams in particular is per-track
+	// codec/language/bitrate arrays that dominate wire weight over the
+	// Cloudflare tunnel - so they're opt-in via IncludeHeavyFields.
+	// Callers that render AudioLanguage / Genres / Studios (admin
+	// items list) or pick an AudioStreamIndex (kid playback
+	// resolution) flip the bool; everyone else gets the trim.
+	// UserData is only meaningful when authenticated as a user.
+	fields := "OfficialRating,ProductionYear,RunTimeTicks,DateCreated"
+	if f.IncludeHeavyFields {
+		fields = "Genres,Studios,MediaStreams," + fields
+	}
 	if userToken != "" {
 		fields += ",UserData"
 	}
@@ -96,18 +106,19 @@ func (c *Client) getItemsWith(ctx context.Context, f ItemsFilter, userToken stri
 // using the same size as GetItemsByIDsBatched without re-declaring it.
 const IDBatchSize = 100
 
-// idBatchConcurrency caps fan-out inside GetItemsByIDsBatched. Each
-// chunk is one Jellyfin round trip; on the parent's Cloudflare tunnel
-// these are dominated by RTT, so running them in parallel is the
-// difference between a 500-item profile decorating in ~1 RTT vs ~5.
-// Capped at 4 because upstream Jellyfin will rate-limit aggressive
-// callers and the page-decorate use case never produces more than ~5
-// chunks anyway.
-const idBatchConcurrency = 4
+// IDBatchConcurrency caps fan-out inside GetItemsByIDsBatched and any
+// server-side caller that hand-rolls a chunked /Items?Ids= loop with
+// extra filter knobs (SortBy, SearchTerm, Filters). Each chunk is one
+// Jellyfin round trip; on the parent's Cloudflare tunnel these are
+// dominated by RTT, so running them in parallel is the difference
+// between a 500-item profile decorating in ~1 RTT vs ~5. Capped at 4
+// because upstream Jellyfin will rate-limit aggressive callers and the
+// page-decorate use case never produces more than ~5 chunks anyway.
+const IDBatchConcurrency = 4
 
 // GetItemsByIDsBatched fetches items for the supplied id list, chunking
 // internally so the /Items?Ids= query stays under Jellyfin's URL-length
-// limit. Chunks are fetched concurrently (capped at idBatchConcurrency)
+// limit. Chunks are fetched concurrently (capped at IDBatchConcurrency)
 // because the original sequential implementation dominated wall-time on
 // big profiles - 3-4 sequential round trips over the Cloudflare tunnel.
 // Returns items in the order their ids appear in the input, silently
@@ -135,7 +146,7 @@ func (c *Client) GetItemsByIDsBatched(ctx context.Context, ids []string, userTok
 	}
 	results := make([][]Item, len(chunks))
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(idBatchConcurrency)
+	g.SetLimit(IDBatchConcurrency)
 	for idx, chunk := range chunks {
 		idx, chunk := idx, chunk
 		g.Go(func() error {

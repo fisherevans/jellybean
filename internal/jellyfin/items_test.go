@@ -187,6 +187,86 @@ func TestGetItemsByIDsBatchedConcurrent(t *testing.T) {
 	}
 }
 
+// TestGetItemsFields pins the Fields query-param composition for both
+// the slim default and the IncludeHeavyFields opt-in, and verifies
+// UserData / ExtraFields stack on top of either base.
+//
+// Why pin this: the heavy-field trim is the whole point of the t52
+// perf change. Regressing the default back to including MediaStreams
+// would silently re-introduce the wire-weight bloat on every kid-side
+// /Items round trip, and nothing else in the test suite would catch it.
+func TestGetItemsFields(t *testing.T) {
+	tests := []struct {
+		name          string
+		filter        ItemsFilter
+		userToken     string
+		wantHas       []string
+		wantHasNot    []string
+	}{
+		{
+			name:       "slim default (no user)",
+			filter:     ItemsFilter{IDs: []string{"x"}},
+			wantHas:    []string{"OfficialRating", "ProductionYear", "RunTimeTicks", "DateCreated"},
+			wantHasNot: []string{"MediaStreams", "Genres", "Studios", "UserData"},
+		},
+		{
+			name:       "slim default with user token",
+			filter:     ItemsFilter{IDs: []string{"x"}},
+			userToken:  "tok",
+			wantHas:    []string{"OfficialRating", "ProductionYear", "RunTimeTicks", "DateCreated", "UserData"},
+			wantHasNot: []string{"MediaStreams", "Genres", "Studios"},
+		},
+		{
+			name:       "heavy opt-in",
+			filter:     ItemsFilter{IDs: []string{"x"}, IncludeHeavyFields: true},
+			wantHas:    []string{"OfficialRating", "ProductionYear", "RunTimeTicks", "DateCreated", "MediaStreams", "Genres", "Studios"},
+			wantHasNot: []string{"UserData"},
+		},
+		{
+			name:       "heavy + user + extra",
+			filter:     ItemsFilter{IDs: []string{"x"}, IncludeHeavyFields: true, ExtraFields: []string{"Overview"}},
+			userToken:  "tok",
+			wantHas:    []string{"OfficialRating", "ProductionYear", "RunTimeTicks", "DateCreated", "MediaStreams", "Genres", "Studios", "UserData", "Overview"},
+		},
+		{
+			name:       "slim + extra",
+			filter:     ItemsFilter{IDs: []string{"x"}, ExtraFields: []string{"Overview"}},
+			wantHas:    []string{"OfficialRating", "ProductionYear", "RunTimeTicks", "DateCreated", "Overview"},
+			wantHasNot: []string{"MediaStreams", "Genres", "Studios"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.URL.Query().Get("Fields")
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(ItemsResult{})
+			}))
+			defer srv.Close()
+			c := New(srv.URL, "key")
+			if _, err := c.GetItemsAsUser(context.Background(), tt.filter, tt.userToken); err != nil {
+				t.Fatalf("GetItemsAsUser: %v", err)
+			}
+			fields := strings.Split(got, ",")
+			fieldSet := map[string]bool{}
+			for _, f := range fields {
+				fieldSet[f] = true
+			}
+			for _, want := range tt.wantHas {
+				if !fieldSet[want] {
+					t.Errorf("Fields missing %q; got %q", want, got)
+				}
+			}
+			for _, notWant := range tt.wantHasNot {
+				if fieldSet[notWant] {
+					t.Errorf("Fields should not include %q; got %q", notWant, got)
+				}
+			}
+		})
+	}
+}
+
 // TestGetItemsByIDsBatchedEmpty pins the contract for empty input: no
 // upstream call, returns (nil, nil).
 func TestGetItemsByIDsBatchedEmpty(t *testing.T) {
