@@ -58,6 +58,34 @@ export default function AlphaPickerModal({
         return 0;
     }, [indexMap]);
 
+    return (
+        <KidModalShell
+            onClose={onClose}
+            ariaLabel="Jump to letter"
+            backdropClassName="alpha-picker-backdrop"
+            cardClassName="alpha-picker-card"
+        >
+            <AlphaPickerBody
+                indexMap={indexMap}
+                initialFocus={initialFocus}
+                onPick={onPick}
+            />
+        </KidModalShell>
+    );
+}
+
+// AlphaPickerBody lives inside KidModalShell so useDpadCursor's
+// focus-on-armed effect sees the correct KidModalArmedContext value
+// (the provider wraps the portal children, not the shell's caller).
+function AlphaPickerBody({
+    indexMap,
+    initialFocus,
+    onPick,
+}: {
+    indexMap: Record<string, number>;
+    initialFocus: number;
+    onPick: (gridIndex: number) => void;
+}) {
     // Borrow useDpadCursor for cursor state + ref array + the
     // focus-on-armed effect. `enabled: false` skips its vertical-list
     // keyboard listener; we install our own grid-shaped one below.
@@ -132,7 +160,7 @@ export default function AlphaPickerModal({
         window.addEventListener("keydown", onKey, { capture: true });
         return () =>
             window.removeEventListener("keydown", onKey, { capture: true });
-    }, []);
+    }, [setCursor]);
 
     function activate(i: number) {
         const key = ALPHA_KEYS[i];
@@ -142,12 +170,7 @@ export default function AlphaPickerModal({
     }
 
     return (
-        <KidModalShell
-            onClose={onClose}
-            ariaLabel="Jump to letter"
-            backdropClassName="alpha-picker-backdrop"
-            cardClassName="alpha-picker-card"
-        >
+        <>
             <h2 className="alpha-picker-title">Jump to letter</h2>
             <div
                 className="alpha-picker-grid"
@@ -186,6 +209,6 @@ export default function AlphaPickerModal({
             <p className="alpha-picker-hint" aria-hidden>
                 Back to close
             </p>
-        </KidModalShell>
+        </>
     );
 }

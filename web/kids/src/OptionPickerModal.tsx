@@ -37,6 +37,40 @@ export default function OptionPickerModal({
         return i >= 0 ? i : 0;
     }, [options, currentId]);
 
+    return (
+        <KidModalShell
+            onClose={onClose}
+            ariaLabel={title}
+            backdropClassName="alpha-picker-backdrop"
+            cardClassName="alpha-picker-card option-picker-card"
+        >
+            <OptionPickerBody
+                title={title}
+                options={options}
+                currentId={currentId}
+                initialCursor={initialCursor}
+                onSelect={onSelect}
+            />
+        </KidModalShell>
+    );
+}
+
+// OptionPickerBody lives inside KidModalShell so useDpadCursor reads
+// the shell's KidModalArmedContext correctly (provider wraps the
+// portal children, not the shell's caller).
+function OptionPickerBody({
+    title,
+    options,
+    currentId,
+    initialCursor,
+    onSelect,
+}: {
+    title: string;
+    options: OptionPickerOption[];
+    currentId: string;
+    initialCursor: number;
+    onSelect: (id: string) => void;
+}) {
     const dpad = useDpadCursor({
         count: options.length,
         initial: initialCursor,
@@ -47,12 +81,7 @@ export default function OptionPickerModal({
     });
 
     return (
-        <KidModalShell
-            onClose={onClose}
-            ariaLabel={title}
-            backdropClassName="alpha-picker-backdrop"
-            cardClassName="alpha-picker-card option-picker-card"
-        >
+        <>
             <h2 className="alpha-picker-title">{title}</h2>
             <div className="option-picker-list">
                 {options.map((opt, i) => {
@@ -91,6 +120,6 @@ export default function OptionPickerModal({
             <p className="alpha-picker-hint" aria-hidden>
                 Back to close
             </p>
-        </KidModalShell>
+        </>
     );
 }
