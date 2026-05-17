@@ -46,7 +46,6 @@ export default function ItemCard({
     const meta: string[] = [];
     if (item.ProductionYear) meta.push(String(item.ProductionYear));
     if (item.OfficialRating) meta.push(item.OfficialRating);
-    const studios = (item.Studios ?? []).map((s) => s.Name).join(", ");
     const hasPoster = !!item.ImageTags?.Primary;
     const expected = (expectedLanguage ?? "").toLowerCase();
     const available = (item.AudioLanguages ?? [])
@@ -144,7 +143,6 @@ export default function ItemCard({
                             )}
                         </div>
                     )}
-                    {studios && <div className="item-card-studios">{studios}</div>}
                     <div className="item-card-meta">
                         Current: {formatState(item.State)}
                     </div>

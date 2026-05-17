@@ -33,11 +33,21 @@ export type Item = {
     /** ISO 8601 timestamp of when Jellyfin first indexed the item.
      *  Used for sort=added in Browse. */
     DateCreated?: string;
+    /** Present only on the single-item detail endpoint. The list
+     *  endpoint serves the slim DTO from itemcache, which doesn't
+     *  carry Genres / Studios - those round-trip through Jellyfin's
+     *  IncludeHeavyFields=true and aren't worth shipping on every
+     *  list row (they dominated the pre-cache 14s payload). */
     Genres?: string[];
     Studios?: { Name: string; Id?: string }[];
     ImageTags?: { Primary?: string };
     AudioLanguage?: string; // ISO 639-3 of primary audio track ("" if unknown)
     AudioLanguages?: string[]; // every distinct audio language on the item; primary is always present when AudioLanguage is set
+    /** Server-computed flag: true when the file has audio streams but
+     *  no default track carries a non-empty language. Mirrors the
+     *  badge logic used to live in ItemCard. The slim list DTO ships
+     *  this so the UI doesn't need MediaStreams on the wire. */
+    HasNonDefaultAudioLanguage?: boolean;
 
     State: ItemState; // visibility for the active profile (null = unset)
     Suggestion?: Suggestion;

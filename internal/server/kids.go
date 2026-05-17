@@ -20,6 +20,7 @@ import (
 	"github.com/fisherevans/jellybean/internal/auth"
 	"github.com/fisherevans/jellybean/internal/browse"
 	"github.com/fisherevans/jellybean/internal/curation"
+	"github.com/fisherevans/jellybean/internal/itemcache"
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
@@ -400,105 +401,79 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Effective sort + Jellyfin SortBy choice. The "recent" section
-	// keeps its DateCreated default; the new ?sort= param on the
-	// "all" section drives an alternate order. Recency sorts use
-	// the entire visible set in one pass (no pagination) so the
-	// client can render time-bucketed sections without juggling
-	// page boundaries.
 	effectiveSort := sortParam
 	if section == "recent" {
 		effectiveSort = "recently_added"
 	}
-	sortBy := "SortName"
-	sortOrder := "Ascending"
-	switch effectiveSort {
-	case "recently_added":
-		sortBy = "DateCreated"
-		sortOrder = "Descending"
-	case "recently_watched":
-		// LastPlayedDate isn't a Jellyfin SortBy field; we sort
-		// client-side after the merge. Pull in alpha order so the
-		// "never watched" tail stays alphabetical without a
-		// secondary sort.
-		sortBy = "SortName"
-		sortOrder = "Ascending"
-	}
 	bypassPaging := effectiveSort == "recently_added" || effectiveSort == "recently_watched"
 
-	// Batch the IDs filter so we don't blow Jellyfin's URI length
-	// limit. A profile with hundreds of visible items (Nottingham has
-	// ~436) would otherwise produce a single >8KB query string and
-	// trip Jellyfin's 414 URI Too Long. Each chunk is a real Jellyfin
-	// query (so per-user UserData + search-term filter still apply);
-	// we re-sort after the merge because Jellyfin's order is only
-	// valid within a batch.
-	//
-	// Chunks fan out concurrently (capped at IDBatchConcurrency, same
-	// as GetItemsByIDsBatched). On the Cloudflare tunnel each chunk is
-	// RTT-bound, so the previous serial loop was effectively
-	// `chunks * RTT` of wall time. Concurrency drops that to roughly
-	// one RTT for the common <=4-chunk case.
-	var chunks [][]string
-	for i := 0; i < len(ids); i += jellyfin.IDBatchSize {
-		end := i + jellyfin.IDBatchSize
-		if end > len(ids) {
-			end = len(ids)
-		}
-		chunks = append(chunks, ids[i:end])
-	}
-	chunkResults := make([][]jellyfin.Item, len(chunks))
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(jellyfin.IDBatchConcurrency)
-	for idx, chunk := range chunks {
-		idx, chunk := idx, chunk
-		g.Go(func() error {
-			res, err := s.jellyfin.GetItemsAsUser(gctx, jellyfin.ItemsFilter{
-				IDs:        chunk,
-				SortBy:     sortBy,
-				SortOrder:  sortOrder,
-				SearchTerm: search,
-			}, kc.JellyfinToken)
-			if err != nil {
-				return err
-			}
-			chunkResults[idx] = res.Items
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
-		s.logger.Error().Err(err).Msg("kids library fetch")
-		writeUpstreamError(w, err, "failed to load library")
+	// recently_watched needs UserData (LastPlayedDate), which the
+	// cache deliberately doesn't store. Stay on the live Jellyfin
+	// path for that sort; everything else (name / recently_added)
+	// reads from the local cache and skips the Cloudflare tunnel
+	// entirely.
+	if effectiveSort == "recently_watched" {
+		s.handleKidsLibraryFromJellyfin(w, r, ctx, kc, profileID, ids, allowedTypes, effectiveSort, search, limit, startIndex, bypassPaging)
 		return
 	}
-	merged := make([]jellyfin.Item, 0, len(ids))
-	for _, batch := range chunkResults {
-		merged = append(merged, batch...)
+
+	rowsByID, err := s.cache.GetMany(ctx, ids)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("kids library cache lookup")
+		http.Error(w, "failed to load library", http.StatusInternalServerError)
+		return
 	}
 
-	// Re-sort across batches. Jellyfin's per-batch order is valid
-	// only within each chunk; "A" from chunk 2 and "B" from chunk 1
-	// would otherwise come back as B,A.
+	// Any visible ids the cache doesn't cover (Movie/Series added
+	// since the last refresh, or an Episode that snuck into the
+	// visibility set) fall back to a live Jellyfin lookup so the
+	// kid doesn't see a phantom hole in their library.
+	var missing []string
+	for _, id := range ids {
+		if _, ok := rowsByID[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	var liveMissing []jellyfin.Item
+	if len(missing) > 0 {
+		live, err := s.jellyfin.GetItemsByIDsBatched(ctx, missing, kc.JellyfinToken)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("kids library cache miss live fetch")
+			writeUpstreamError(w, err, "failed to load library")
+			return
+		}
+		liveMissing = live
+	}
+
+	merged := make([]browseItem, 0, len(ids))
+	// Cache rows first, in the visibility-list order so favorites /
+	// pinned items keep their place when both paths feed the page.
+	for _, id := range ids {
+		row, ok := rowsByID[id]
+		if !ok {
+			continue
+		}
+		if _, allowed := allowedTypes[row.Type]; !allowed {
+			continue
+		}
+		merged = append(merged, rowToBrowseItem(row))
+	}
+	for _, it := range liveMissing {
+		if _, allowed := allowedTypes[it.Type]; !allowed {
+			continue
+		}
+		merged = append(merged, toBrowseItem(it))
+	}
+
+	// Apply the requested sort. Names compare case-insensitively to
+	// match the prior Jellyfin behavior; recently_added uses the
+	// item's DateCreated string descending (ISO 8601 sorts
+	// lexically), with empty / unparseable values falling to the
+	// bottom.
 	switch effectiveSort {
 	case "recently_added":
 		sort.SliceStable(merged, func(i, j int) bool {
 			return merged[i].DateCreated > merged[j].DateCreated
-		})
-	case "recently_watched":
-		// Watched items first (LastPlayedDate desc); unwatched
-		// trailing alphabetically. Empty LastPlayedDate counts as
-		// "never watched" and gets bucketed by the kid client into
-		// the "Never watched" section.
-		sort.SliceStable(merged, func(i, j int) bool {
-			pi := lastPlayed(merged[i])
-			pj := lastPlayed(merged[j])
-			if (pi == "") != (pj == "") {
-				return pi != ""
-			}
-			if pi != pj {
-				return pi > pj
-			}
-			return strings.ToLower(merged[i].Name) < strings.ToLower(merged[j].Name)
 		})
 	default:
 		sort.SliceStable(merged, func(i, j int) bool {
@@ -506,11 +481,18 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	filtered := make([]jellyfin.Item, 0, len(merged))
-	for _, it := range merged {
-		if _, ok := allowedTypes[it.Type]; ok {
-			filtered = append(filtered, it)
+	// Apply the optional search filter on the merged set. Cheaper to
+	// substring-match in Go than to re-query, and Jellyfin's
+	// SearchTerm was only ever a substring match anyway.
+	if search != "" {
+		needle := strings.ToLower(search)
+		filtered := merged[:0]
+		for _, it := range merged {
+			if strings.Contains(strings.ToLower(it.Name), needle) {
+				filtered = append(filtered, it)
+			}
 		}
+		merged = filtered
 	}
 
 	// LettersByName is only useful for the alpha sort. Skip the
@@ -518,33 +500,30 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 	// jump button there anyway.
 	var letters map[string]int
 	if effectiveSort == "name" {
-		letters = computeLettersByName(filtered)
+		letters = computeLettersByNameBrowse(merged)
 	}
 
 	totalAvailable := len(ids)
 	var (
 		hasMore bool
-		page    []jellyfin.Item
+		page    []browseItem
 	)
 	if bypassPaging {
-		page = filtered
+		page = merged
 	} else {
 		end := startIndex + limit
-		hasMore = end < len(filtered)
-		if startIndex > len(filtered) {
+		hasMore = end < len(merged)
+		if startIndex > len(merged) {
 			page = nil
 		} else {
-			if end > len(filtered) {
-				end = len(filtered)
+			if end > len(merged) {
+				end = len(merged)
 			}
-			page = filtered[startIndex:end]
+			page = merged[startIndex:end]
 		}
 	}
 
-	slim := make([]browseItem, len(page))
-	for i, it := range page {
-		slim[i] = toBrowseItem(it)
-	}
+	slim := page
 
 	resp := kidsLibraryResponse{
 		Items:          slim,
@@ -584,30 +563,174 @@ type kidsLibraryResponse struct {
 func computeLettersByName(items []jellyfin.Item) map[string]int {
 	out := map[string]int{}
 	for i, it := range items {
-		raw := strings.TrimSpace(it.Name)
-		// Article-strip mirror of AlphaBar.tsx's firstIndexByLetter.
-		lower := strings.ToLower(raw)
-		switch {
-		case strings.HasPrefix(lower, "the "):
-			raw = raw[4:]
-		case strings.HasPrefix(lower, "an "):
-			raw = raw[3:]
-		case strings.HasPrefix(lower, "a "):
-			raw = raw[2:]
-		}
-		if raw == "" {
+		key := alphaKey(it.Name)
+		if key == "" {
 			continue
-		}
-		ch := strings.ToUpper(raw[:1])
-		key := "#"
-		if ch >= "A" && ch <= "Z" {
-			key = ch
 		}
 		if _, exists := out[key]; !exists {
 			out[key] = i
 		}
 	}
 	return out
+}
+
+// computeLettersByNameBrowse is the browseItem variant of
+// computeLettersByName. Same indexing semantics; separate function
+// because Go has no generics-friendly way to extract the Name field
+// across the two struct shapes without an interface dance that would
+// allocate on every tile.
+func computeLettersByNameBrowse(items []browseItem) map[string]int {
+	out := map[string]int{}
+	for i, it := range items {
+		key := alphaKey(it.Name)
+		if key == "" {
+			continue
+		}
+		if _, exists := out[key]; !exists {
+			out[key] = i
+		}
+	}
+	return out
+}
+
+// alphaKey returns the AlphaBar bucket key for a name: the first
+// non-article letter uppercased, or "#" for non-alphabetic starts.
+// Returns "" when the trimmed name is empty.
+func alphaKey(name string) string {
+	raw := strings.TrimSpace(name)
+	lower := strings.ToLower(raw)
+	switch {
+	case strings.HasPrefix(lower, "the "):
+		raw = raw[4:]
+	case strings.HasPrefix(lower, "an "):
+		raw = raw[3:]
+	case strings.HasPrefix(lower, "a "):
+		raw = raw[2:]
+	}
+	if raw == "" {
+		return ""
+	}
+	ch := strings.ToUpper(raw[:1])
+	if ch >= "A" && ch <= "Z" {
+		return ch
+	}
+	return "#"
+}
+
+// rowToBrowseItem converts a cached itemcache.Row into the slim
+// browseItem payload. UserData is omitted (the cache doesn't store
+// per-user state); callers that need it have to live-fetch separately.
+func rowToBrowseItem(row itemcache.Row) browseItem {
+	out := browseItem{
+		ID:             row.ID,
+		Name:           row.Name,
+		Type:           row.Type,
+		DateCreated:    row.DateCreated,
+		ProductionYear: row.ProductionYear,
+		RunTimeTicks:   row.RunTimeTicks,
+	}
+	if row.PrimaryImageTag != "" {
+		out.ImageTags = &browseImageTags{Primary: row.PrimaryImageTag}
+	}
+	return out
+}
+
+// handleKidsLibraryFromJellyfin is the fallback path for sorts that
+// need per-user UserData (recently_watched). Same shape as the
+// cache-served branch above but goes through Jellyfin for the items
+// so LastPlayedDate comes back per the kid's account.
+func (s *Server) handleKidsLibraryFromJellyfin(
+	w http.ResponseWriter, r *http.Request, ctx context.Context,
+	kc *kidsContext, profileID int64, ids []string,
+	allowedTypes map[string]struct{}, effectiveSort, search string,
+	limit, startIndex int, bypassPaging bool,
+) {
+	var chunks [][]string
+	for i := 0; i < len(ids); i += jellyfin.IDBatchSize {
+		end := i + jellyfin.IDBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunks = append(chunks, ids[i:end])
+	}
+	chunkResults := make([][]jellyfin.Item, len(chunks))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(jellyfin.IDBatchConcurrency)
+	for idx, chunk := range chunks {
+		idx, chunk := idx, chunk
+		g.Go(func() error {
+			res, err := s.jellyfin.GetItemsAsUser(gctx, jellyfin.ItemsFilter{
+				IDs:        chunk,
+				SortBy:     "SortName",
+				SortOrder:  "Ascending",
+				SearchTerm: search,
+			}, kc.JellyfinToken)
+			if err != nil {
+				return err
+			}
+			chunkResults[idx] = res.Items
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		s.logger.Error().Err(err).Msg("kids library fetch")
+		writeUpstreamError(w, err, "failed to load library")
+		return
+	}
+	merged := make([]jellyfin.Item, 0, len(ids))
+	for _, batch := range chunkResults {
+		merged = append(merged, batch...)
+	}
+	// recently_watched: watched first (LastPlayedDate desc), unwatched
+	// trailing alphabetically.
+	sort.SliceStable(merged, func(i, j int) bool {
+		pi := lastPlayed(merged[i])
+		pj := lastPlayed(merged[j])
+		if (pi == "") != (pj == "") {
+			return pi != ""
+		}
+		if pi != pj {
+			return pi > pj
+		}
+		return strings.ToLower(merged[i].Name) < strings.ToLower(merged[j].Name)
+	})
+	filtered := make([]jellyfin.Item, 0, len(merged))
+	for _, it := range merged {
+		if _, ok := allowedTypes[it.Type]; ok {
+			filtered = append(filtered, it)
+		}
+	}
+	totalAvailable := len(ids)
+	var (
+		hasMore bool
+		page    []jellyfin.Item
+	)
+	if bypassPaging {
+		page = filtered
+	} else {
+		end := startIndex + limit
+		hasMore = end < len(filtered)
+		if startIndex > len(filtered) {
+			page = nil
+		} else {
+			if end > len(filtered) {
+				end = len(filtered)
+			}
+			page = filtered[startIndex:end]
+		}
+	}
+	slim := make([]browseItem, len(page))
+	for i, it := range page {
+		slim[i] = toBrowseItem(it)
+	}
+	writeJSON(w, http.StatusOK, kidsLibraryResponse{
+		Items:          slim,
+		TotalAvailable: totalAvailable,
+		StartIndex:     startIndex,
+		NextStartIndex: startIndex + len(slim),
+		HasMore:        hasMore,
+		ProfileID:      profileID,
+	})
 }
 
 // kidsLibraryETagInputs is the set of values that feed the GET
