@@ -707,24 +707,46 @@ func resolveRandomUnwatched(b *resolveCtx, row curation.LayoutRow, cfg map[strin
 		}
 		// Filter to unplayed via Jellyfin (PlayCount=0). Fetch in
 		// chunks so we don't hit URL-length limits. Can't go through
-		// GetItemsByIDsBatched because we need the IsUnplayed filter.
-		unplayed := []string{}
+		// GetItemsByIDsBatched because we need the IsUnplayed filter -
+		// hand-roll the same concurrent pattern (cap = IDBatchConcurrency).
+		// Going serial here was a measurable contributor to browse cold
+		// load on large profiles: a 500-id visible set is 5 chunks at
+		// one RTT each over the Cloudflare tunnel.
+		var chunks [][]string
 		for i := 0; i < len(visible); i += jellyfin.IDBatchSize {
 			end := i + jellyfin.IDBatchSize
 			if end > len(visible) {
 				end = len(visible)
 			}
-			batch := visible[i:end]
-			res, err := b.jelly.GetItemsAsUser(b.ctx, jellyfin.ItemsFilter{
-				IDs:     batch,
-				Filters: []string{"IsUnplayed"},
-			}, b.userTok)
-			if err != nil {
-				return nil, err
-			}
-			for _, it := range res.Items {
-				unplayed = append(unplayed, it.ID)
-			}
+			chunks = append(chunks, visible[i:end])
+		}
+		chunkResults := make([][]string, len(chunks))
+		g, gctx := errgroup.WithContext(b.ctx)
+		g.SetLimit(jellyfin.IDBatchConcurrency)
+		for idx, chunk := range chunks {
+			idx, chunk := idx, chunk
+			g.Go(func() error {
+				res, err := b.jelly.GetItemsAsUser(gctx, jellyfin.ItemsFilter{
+					IDs:     chunk,
+					Filters: []string{"IsUnplayed"},
+				}, b.userTok)
+				if err != nil {
+					return err
+				}
+				ids := make([]string, 0, len(res.Items))
+				for _, it := range res.Items {
+					ids = append(ids, it.ID)
+				}
+				chunkResults[idx] = ids
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return nil, err
+		}
+		unplayed := []string{}
+		for _, ids := range chunkResults {
+			unplayed = append(unplayed, ids...)
 		}
 		rand.Shuffle(len(unplayed), func(i, j int) {
 			unplayed[i], unplayed[j] = unplayed[j], unplayed[i]

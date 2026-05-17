@@ -165,7 +165,7 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 			ids = ids[:limit]
 		}
 		if len(ids) > 0 {
-			res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{IDs: ids})
+			res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{IDs: ids, IncludeHeavyFields: true})
 			if err != nil {
 				s.logger.Error().Err(err).Msg("get items by ids (tag filter)")
 				http.Error(w, "failed to load items", http.StatusBadGateway)
@@ -208,12 +208,13 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 			// curation state. This is the path the Browse search
 			// box hits when a state filter is also applied.
 			res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{
-				IncludeItemTypes: itemTypes,
-				Recursive:        true,
-				Limit:            500,
-				SearchTerm:       search,
-				SortBy:           "SortName",
-				SortOrder:        "Ascending",
+				IncludeItemTypes:   itemTypes,
+				Recursive:          true,
+				Limit:              500,
+				SearchTerm:         search,
+				SortBy:             "SortName",
+				SortOrder:          "Ascending",
+				IncludeHeavyFields: true,
 			})
 			if err != nil {
 				s.logger.Error().Err(err).Msg("search items")
@@ -269,7 +270,7 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 				ids = ids[:limit]
 			}
 			if len(ids) > 0 {
-				res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{IDs: ids})
+				res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{IDs: ids, IncludeHeavyFields: true})
 				if err != nil {
 					s.logger.Error().Err(err).Msg("get items by ids")
 					http.Error(w, "failed to load items", http.StatusBadGateway)
@@ -298,13 +299,14 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{
-			IncludeItemTypes: itemTypes,
-			Recursive:        true,
-			Limit:            limit,
-			StartIndex:       startIndex,
-			SortBy:           "SortName",
-			SortOrder:        "Ascending",
-			SearchTerm:       search,
+			IncludeItemTypes:   itemTypes,
+			Recursive:          true,
+			Limit:              limit,
+			StartIndex:         startIndex,
+			SortBy:             "SortName",
+			SortOrder:          "Ascending",
+			SearchTerm:         search,
+			IncludeHeavyFields: true,
 		})
 		if err != nil {
 			s.logger.Error().Err(err).Msg("list items")
@@ -415,13 +417,14 @@ func (s *Server) pageUnsetForProfile(
 	)
 	for page := 0; page < maxPages; page++ {
 		res, err := s.jellyfin.GetItems(ctx, jellyfin.ItemsFilter{
-			IncludeItemTypes: itemTypes,
-			Recursive:        true,
-			Limit:            pageSize,
-			StartIndex:       idx,
-			SortBy:           "SortName",
-			SortOrder:        "Ascending",
-			SearchTerm:       search,
+			IncludeItemTypes:   itemTypes,
+			Recursive:          true,
+			Limit:              pageSize,
+			StartIndex:         idx,
+			SortBy:             "SortName",
+			SortOrder:          "Ascending",
+			SearchTerm:         search,
+			IncludeHeavyFields: true,
 		})
 		if err != nil {
 			return nil, 0, idx, err

@@ -186,4 +186,14 @@ type ItemsFilter struct {
 	// rather than expanding the global Fields list and bloating every
 	// list-page response.
 	ExtraFields []string
+	// IncludeHeavyFields opts back into the per-item fields that
+	// dominate /Items response size: MediaStreams (per-track codec /
+	// language / bitrate arrays), Genres, and Studios. The default
+	// (false) is the slim set, which is what every kid-side endpoint
+	// and most admin endpoints need. Set to true on the admin item
+	// list paths (which render AudioLanguage / Genres / Studios) and
+	// on playback resolution (which needs MediaStreams to pick the
+	// audio stream index). Picked up by getItemsWith when assembling
+	// the Fields query param.
+	IncludeHeavyFields bool
 }
