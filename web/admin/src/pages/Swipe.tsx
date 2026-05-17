@@ -552,11 +552,6 @@ function Card({
                             )}
                         </div>
                     )}
-                    {item.Studios && item.Studios.length > 0 && (
-                        <div className="muted">
-                            {item.Studios.map((s) => s.Name).join(", ")}
-                        </div>
-                    )}
                     {item.Suggestion && (
                         <div className={`swipe-suggestion sugg-${item.Suggestion.bucket}`}>
                             guess: <strong>{item.Suggestion.bucket}</strong> (

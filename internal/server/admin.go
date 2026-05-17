@@ -11,6 +11,7 @@ import (
 
 	"github.com/fisherevans/jellybean/internal/auth"
 	"github.com/fisherevans/jellybean/internal/curation"
+	"github.com/fisherevans/jellybean/internal/itemcache"
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
@@ -146,12 +147,24 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 		filterTagID = n
 	}
 
+	// rows is the source of truth for the list payload. Both the
+	// cache-driven paths (state filter, unset, default listing) and
+	// the Jellyfin-driven paths (tag filter, search inside state) end
+	// up populating this slice of cache rows; cache misses for
+	// Jellyfin-only ids are filled via adminItemListDTOFromJellyfin
+	// below so the wire shape stays consistent.
 	var (
-		items     []jellyfin.Item
+		rows      []itemcache.Row
+		fallback  []jellyfin.Item // ids not in cache - decorated live
 		total     int
 		hasMore   bool
 		nextStart = startIndex
 	)
+
+	allowedTypes := map[string]struct{}{}
+	for _, t := range itemTypes {
+		allowedTypes[t] = struct{}{}
+	}
 
 	if filterTagID > 0 {
 		ids, err := s.curation.ListItemIDsByTag(r.Context(), filterTagID, limit+1, startIndex)
@@ -165,33 +178,29 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 			ids = ids[:limit]
 		}
 		if len(ids) > 0 {
-			res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{IDs: ids, IncludeHeavyFields: true})
+			cached, missing, err := s.loadRowsByIDs(r.Context(), ids)
 			if err != nil {
 				s.logger.Error().Err(err).Msg("get items by ids (tag filter)")
 				http.Error(w, "failed to load items", http.StatusBadGateway)
 				return
 			}
-			items = res.Items
-			total = res.TotalRecordCount
-		}
-		// Honor the type filter: drop items whose Type isn't in the
-		// allowed set.
-		if len(items) > 0 {
-			allowed := map[string]struct{}{}
-			for _, t := range itemTypes {
-				allowed[t] = struct{}{}
-			}
-			kept := items[:0]
-			for _, it := range items {
-				if _, ok := allowed[it.Type]; ok {
-					kept = append(kept, it)
+			rows = filterRowsByType(cached, allowedTypes)
+			if len(missing) > 0 {
+				live, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{IDs: missing, IncludeHeavyFields: true})
+				if err != nil {
+					s.logger.Error().Err(err).Msg("tag filter live miss")
+					http.Error(w, "failed to load items", http.StatusBadGateway)
+					return
+				}
+				for _, it := range live.Items {
+					if _, ok := allowedTypes[it.Type]; ok {
+						fallback = append(fallback, it)
+					}
 				}
 			}
-			items = kept
-			total = len(items)
+			total = len(rows) + len(fallback)
 		}
-		nextStart = startIndex + len(items)
-		// Skip the state-filter switch below when tagId is in play.
+		nextStart = startIndex + len(rows) + len(fallback)
 		goto enrich
 	}
 
@@ -202,11 +211,9 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 			st = curation.StateHidden
 		}
 		if search != "" {
-			// With a name search active, ignore the curation
-			// pagination and instead let Jellyfin do the substring
-			// match, then filter the result by the requested
-			// curation state. This is the path the Browse search
-			// box hits when a state filter is also applied.
+			// Live-search path stays on Jellyfin for now - the cache
+			// could grow a name LIKE query but the search box's flow
+			// is parent-driven and tolerant of the extra round trip.
 			res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{
 				IncludeItemTypes:   itemTypes,
 				Recursive:          true,
@@ -243,16 +250,11 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 				if end > len(matching) {
 					end = len(matching)
 				}
-				items = matching[startIndex:end]
+				fallback = matching[startIndex:end]
 			}
-			hasMore = startIndex+len(items) < total
-			nextStart = startIndex + len(items)
+			hasMore = startIndex+len(fallback) < total
+			nextStart = startIndex + len(fallback)
 		} else {
-			// Pull one extra to know if there's a next page, plus the
-			// real total of categorized items for that state. The
-			// Jellyfin TotalRecordCount reflects the IDs we asked
-			// about, not the full library state, so we can't use it
-			// for the meta count.
 			countTotal, err := s.curation.CountItemIDsInState(r.Context(), profileID, st)
 			if err != nil {
 				s.logger.Error().Err(err).Msg("count state ids")
@@ -270,16 +272,25 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 				ids = ids[:limit]
 			}
 			if len(ids) > 0 {
-				res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{IDs: ids, IncludeHeavyFields: true})
+				cached, missing, err := s.loadRowsByIDs(r.Context(), ids)
 				if err != nil {
 					s.logger.Error().Err(err).Msg("get items by ids")
 					http.Error(w, "failed to load items", http.StatusBadGateway)
 					return
 				}
-				items = res.Items
+				rows = cached
+				if len(missing) > 0 {
+					live, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{IDs: missing, IncludeHeavyFields: true})
+					if err != nil {
+						s.logger.Error().Err(err).Msg("state-filter live miss")
+						http.Error(w, "failed to load items", http.StatusBadGateway)
+						return
+					}
+					fallback = live.Items
+				}
 			}
 			total = countTotal
-			nextStart = startIndex + len(items)
+			nextStart = startIndex + len(rows) + len(fallback)
 		}
 
 	case filterUnset:
@@ -289,40 +300,56 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to load items", http.StatusInternalServerError)
 			return
 		}
-		items, total, nextStart, err = s.pageUnsetForProfile(r.Context(), itemTypes, search, limit, startIndex, excluded)
+		rows, total, nextStart, err = s.pageUnsetForProfile(r.Context(), itemTypes, search, limit, startIndex, excluded)
 		if err != nil {
 			s.logger.Error().Err(err).Msg("page items")
-			http.Error(w, "failed to load items", http.StatusBadGateway)
+			http.Error(w, "failed to load items", http.StatusInternalServerError)
 			return
 		}
 		hasMore = nextStart < total
 
 	default:
-		res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{
-			IncludeItemTypes:   itemTypes,
-			Recursive:          true,
-			Limit:              limit,
-			StartIndex:         startIndex,
-			SortBy:             "SortName",
-			SortOrder:          "Ascending",
-			SearchTerm:         search,
-			IncludeHeavyFields: true,
-		})
+		// Default listing: no state filter, no tag filter. Serve
+		// from cache ordered by sort_name. Search applies as a
+		// substring match on Name (case-insensitive) directly on
+		// the cached rows.
+		all, err := s.cache.ListByType(r.Context(), itemTypes)
 		if err != nil {
-			s.logger.Error().Err(err).Msg("list items")
-			http.Error(w, "failed to list items", http.StatusBadGateway)
+			s.logger.Error().Err(err).Msg("cache list items")
+			http.Error(w, "failed to list items", http.StatusInternalServerError)
 			return
 		}
-		items = res.Items
-		total = res.TotalRecordCount
-		nextStart = startIndex + len(items)
+		if search != "" {
+			filtered := all[:0]
+			needle := strings.ToLower(search)
+			for _, row := range all {
+				if strings.Contains(strings.ToLower(row.Name), needle) {
+					filtered = append(filtered, row)
+				}
+			}
+			all = filtered
+		}
+		total = len(all)
+		end := startIndex + limit
+		if startIndex > len(all) {
+			rows = nil
+		} else {
+			if end > len(all) {
+				end = len(all)
+			}
+			rows = all[startIndex:end]
+		}
+		nextStart = startIndex + len(rows)
 		hasMore = nextStart < total
 	}
 
 enrich:
-	idList := make([]string, len(items))
-	for i, it := range items {
-		idList[i] = it.ID
+	idList := make([]string, 0, len(rows)+len(fallback))
+	for _, r := range rows {
+		idList = append(idList, r.ID)
+	}
+	for _, it := range fallback {
+		idList = append(idList, it.ID)
 	}
 	states, err := s.curation.GetStatesForItems(r.Context(), profileID, idList)
 	if err != nil {
@@ -337,18 +364,30 @@ enrich:
 		return
 	}
 
-	enriched := make([]adminItemDTO, 0, len(items))
-	for _, it := range items {
+	enriched := make([]adminItemListDTO, 0, len(rows)+len(fallback))
+	for _, row := range rows {
+		var statePtr *curation.State
+		if st, ok := states[row.ID]; ok {
+			statePtr = &st
+		}
+		var suggestPtr *curation.Suggestion
+		if withSuggest {
+			sug := curation.Suggest(rowAsItem(row))
+			suggestPtr = &sug
+		}
+		enriched = append(enriched, adminItemListDTOFromCache(row, statePtr, tagSets[row.ID], suggestPtr))
+	}
+	for _, it := range fallback {
 		var statePtr *curation.State
 		if st, ok := states[it.ID]; ok {
 			statePtr = &st
 		}
 		var suggestPtr *curation.Suggestion
 		if withSuggest {
-			s := curation.Suggest(it)
-			suggestPtr = &s
+			sug := curation.Suggest(it)
+			suggestPtr = &sug
 		}
-		enriched = append(enriched, toAdminItemDTO(it, statePtr, tagSets[it.ID], suggestPtr))
+		enriched = append(enriched, adminItemListDTOFromJellyfin(it, statePtr, tagSets[it.ID], suggestPtr))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -361,6 +400,64 @@ enrich:
 		"ProfileId":        profileID,
 	})
 }
+
+// loadRowsByIDs is the cache-first batch lookup. Returns the cached
+// rows in the same order as ids (skipping any id the cache doesn't
+// cover) plus the list of ids the caller still needs to live-fetch
+// from Jellyfin.
+func (s *Server) loadRowsByIDs(ctx context.Context, ids []string) ([]itemcache.Row, []string, error) {
+	if s.cache == nil {
+		return nil, ids, nil
+	}
+	byID, err := s.cache.GetMany(ctx, ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	rows := make([]itemcache.Row, 0, len(ids))
+	var missing []string
+	for _, id := range ids {
+		if r, ok := byID[id]; ok {
+			rows = append(rows, r)
+			continue
+		}
+		missing = append(missing, id)
+	}
+	return rows, missing, nil
+}
+
+// filterRowsByType drops cache rows whose Type isn't in the allowed
+// set. Used by tag-filter listings where the tagId can carry items
+// the type filter wants to exclude.
+func filterRowsByType(rows []itemcache.Row, allowed map[string]struct{}) []itemcache.Row {
+	if len(allowed) == 0 {
+		return rows
+	}
+	out := rows[:0]
+	for _, r := range rows {
+		if _, ok := allowed[r.Type]; ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// rowAsItem rebuilds enough of a jellyfin.Item to feed curation.Suggest,
+// which only reads Name / Type / Genres / Studios / OfficialRating.
+// Genres + Studios aren't cached, so the suggestion will be slightly
+// less informed than the live-Jellyfin path - acceptable because
+// suggestions are advisory and the caller can re-trigger via the
+// single-item detail endpoint when fidelity matters.
+func rowAsItem(r itemcache.Row) jellyfin.Item {
+	return jellyfin.Item{
+		ID:             r.ID,
+		Name:           r.Name,
+		Type:           r.Type,
+		OfficialRating: r.OfficialRating,
+		ProductionYear: r.ProductionYear,
+		RunTimeTicks:   r.RunTimeTicks,
+	}
+}
+
 
 // handleAdminGetItem returns a single decorated item (state + tags
 // + suggestion). Used by /items/:id (manage-item deep-link) which
@@ -398,56 +495,49 @@ func (s *Server) handleAdminGetItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dto)
 }
 
-// pageUnsetForProfile walks Jellyfin's catalog and returns items that have
-// no state row for the given profile. This is the bulk view's data source.
+// pageUnsetForProfile walks the cached item catalog and returns rows
+// that have no state row for the given profile. This is the bulk
+// view's data source - the cache-driven version of what used to be a
+// 14-18s Jellyfin paging loop. Total reflects the count of unset
+// items across the whole library (not just the rows actually returned
+// on this page), matching the prior contract.
+//
+// search applies as a case-insensitive substring match on Name
+// directly on the cached rows.
 func (s *Server) pageUnsetForProfile(
 	ctx context.Context,
 	itemTypes []string,
 	search string,
 	limit, startIndex int,
 	excluded map[string]struct{},
-) ([]jellyfin.Item, int, int, error) {
-	const pageSize = 200
-	const maxPages = 50
-
-	var (
-		items []jellyfin.Item
-		total int
-		idx   = startIndex
-	)
-	for page := 0; page < maxPages; page++ {
-		res, err := s.jellyfin.GetItems(ctx, jellyfin.ItemsFilter{
-			IncludeItemTypes:   itemTypes,
-			Recursive:          true,
-			Limit:              pageSize,
-			StartIndex:         idx,
-			SortBy:             "SortName",
-			SortOrder:          "Ascending",
-			SearchTerm:         search,
-			IncludeHeavyFields: true,
-		})
-		if err != nil {
-			return nil, 0, idx, err
-		}
-		total = res.TotalRecordCount
-		if len(res.Items) == 0 {
-			break
-		}
-		for j, it := range res.Items {
-			if _, isCategorized := excluded[it.ID]; isCategorized {
-				continue
-			}
-			items = append(items, it)
-			if len(items) >= limit {
-				return items, total, idx + j + 1, nil
-			}
-		}
-		idx += len(res.Items)
-		if len(res.Items) < pageSize {
-			break
-		}
+) ([]itemcache.Row, int, int, error) {
+	all, err := s.cache.ListByType(ctx, itemTypes)
+	if err != nil {
+		return nil, 0, startIndex, err
 	}
-	return items, total, idx, nil
+	// Strip categorized + (when search is set) non-matching items
+	// before pagination so startIndex / total reflect the user-visible
+	// set, not the cache's full size.
+	needle := strings.ToLower(strings.TrimSpace(search))
+	filtered := all[:0]
+	for _, row := range all {
+		if _, skip := excluded[row.ID]; skip {
+			continue
+		}
+		if needle != "" && !strings.Contains(strings.ToLower(row.Name), needle) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	total := len(filtered)
+	if startIndex >= total {
+		return nil, total, total, nil
+	}
+	end := startIndex + limit
+	if end > total {
+		end = total
+	}
+	return filtered[startIndex:end], total, end, nil
 }
 
 type setStateRequest struct {

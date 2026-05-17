@@ -12,6 +12,7 @@ import (
 
 	"github.com/fisherevans/jellybean/internal/browse"
 	"github.com/fisherevans/jellybean/internal/curation"
+	"github.com/fisherevans/jellybean/internal/itemcache"
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
@@ -248,14 +249,30 @@ func (s *Server) respondBrowseRow(
 	}
 	itemsByID := map[string]jellyfin.Item{}
 	if len(ids) > 0 {
-		batched, err := s.jellyfin.GetItemsByIDsBatched(ctx, ids, userTok)
+		cached, err := s.cache.GetMany(ctx, ids)
 		if err != nil {
-			s.logger.Error().Err(err).Msg("browse row decorate")
-			writeUpstreamError(w, err, "failed to load items")
+			s.logger.Error().Err(err).Msg("browse row decorate cache")
+			http.Error(w, "failed to load items", http.StatusInternalServerError)
 			return
 		}
-		for _, it := range batched {
-			itemsByID[it.ID] = it
+		var missing []string
+		for _, id := range ids {
+			if row, ok := cached[id]; ok {
+				itemsByID[id] = rowToJellyfinItem(row)
+				continue
+			}
+			missing = append(missing, id)
+		}
+		if len(missing) > 0 {
+			batched, err := s.jellyfin.GetItemsByIDsBatched(ctx, missing, userTok)
+			if err != nil {
+				s.logger.Error().Err(err).Msg("browse row decorate")
+				writeUpstreamError(w, err, "failed to load items")
+				return
+			}
+			for _, it := range batched {
+				itemsByID[it.ID] = it
+			}
 		}
 	}
 	items := make([]jellyfin.Item, 0, len(rr.ItemIDs))
@@ -360,7 +377,10 @@ func (s *Server) respondBrowse(
 		return
 	}
 
-	// Decorate every distinct item id in one batch.
+	// Decorate every distinct item id in one batch. Cache-first: ids
+	// the cache knows about skip Jellyfin entirely. Episode-type ids
+	// (continue-watching, channels) and Movies/Series added since the
+	// last refresh fall back to the live batch.
 	idSet := map[string]struct{}{}
 	for _, row := range resolved {
 		for _, id := range row.ItemIDs {
@@ -373,14 +393,30 @@ func (s *Server) respondBrowse(
 	}
 	itemsByID := map[string]jellyfin.Item{}
 	if len(ids) > 0 {
-		batched, err := s.jellyfin.GetItemsByIDsBatched(ctx, ids, userTok)
+		cached, err := s.cache.GetMany(ctx, ids)
 		if err != nil {
-			s.logger.Error().Err(err).Msg("browse decorate")
-			writeUpstreamError(w, err, "failed to load items")
+			s.logger.Error().Err(err).Msg("browse decorate cache")
+			http.Error(w, "failed to load items", http.StatusInternalServerError)
 			return
 		}
-		for _, it := range batched {
-			itemsByID[it.ID] = it
+		var missing []string
+		for _, id := range ids {
+			if row, ok := cached[id]; ok {
+				itemsByID[id] = rowToJellyfinItem(row)
+				continue
+			}
+			missing = append(missing, id)
+		}
+		if len(missing) > 0 {
+			batched, err := s.jellyfin.GetItemsByIDsBatched(ctx, missing, userTok)
+			if err != nil {
+				s.logger.Error().Err(err).Msg("browse decorate")
+				writeUpstreamError(w, err, "failed to load items")
+				return
+			}
+			for _, it := range batched {
+				itemsByID[it.ID] = it
+			}
 		}
 	}
 
@@ -498,4 +534,27 @@ func (s *Server) layoutIDForProfile(ctx context.Context, profileID int64) int64 
 	var id int64
 	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(layout_id, 0) FROM profiles WHERE id = ?`, profileID).Scan(&id)
 	return id
+}
+
+// rowToJellyfinItem rehydrates the subset of jellyfin.Item fields the
+// browse decorate pipeline reads from a cached itemcache.Row. Drops
+// UserData (cache doesn't store it) and the heavy fields (Genres,
+// Studios, MediaStreams) - none are read by toBrowseItem or
+// applyPostFetchSort. Used when serving cache hits through the
+// existing decorate pipeline so we don't have to fork the loop into
+// "cache row branch" + "live item branch" duplicates.
+func rowToJellyfinItem(row itemcache.Row) jellyfin.Item {
+	return jellyfin.Item{
+		ID:             row.ID,
+		Name:           row.Name,
+		Type:           row.Type,
+		OfficialRating: row.OfficialRating,
+		ProductionYear: row.ProductionYear,
+		RunTimeTicks:   row.RunTimeTicks,
+		DateCreated:    row.DateCreated,
+		ImageTags:      jellyfin.ImageTags{Primary: row.PrimaryImageTag},
+		SeriesID:       row.SeriesID,
+		SeriesName:     row.SeriesName,
+		Overview:       row.Overview,
+	}
 }

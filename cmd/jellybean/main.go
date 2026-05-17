@@ -16,6 +16,7 @@ import (
 	jellybean "github.com/fisherevans/jellybean"
 	"github.com/fisherevans/jellybean/internal/config"
 	"github.com/fisherevans/jellybean/internal/db"
+	"github.com/fisherevans/jellybean/internal/itemcache"
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 	"github.com/fisherevans/jellybean/internal/server"
 )
@@ -90,11 +91,37 @@ func run() error {
 	defer conn.Close()
 	logger.Info().Str("path", cfg.DBPath).Msg("database opened")
 
+	// itemcache mirrors the Movie + Series subset of Jellyfin's
+	// catalog into SQLite so the admin items list + kid library +
+	// browse decorate paths don't have to round-trip Jellyfin. On a
+	// cold boot the table is empty and we run one synchronous Refresh
+	// before listening so the first request doesn't hit an empty
+	// cache. On a warm boot we let the HTTP server come up immediately
+	// and refresh in the background.
+	cache := itemcache.New(conn, jf, logger)
+	cacheCtx, cancelCache := context.WithCancel(context.Background())
+	defer cancelCache()
+	emptyCtx, cancelEmpty := context.WithTimeout(context.Background(), 10*time.Second)
+	cacheEmpty, err := cache.IsEmpty(emptyCtx)
+	cancelEmpty()
+	if err != nil {
+		return fmt.Errorf("itemcache state: %w", err)
+	}
+	if cacheEmpty {
+		logger.Info().Msg("cache empty - running synchronous initial refresh")
+		initCtx, cancelInit := context.WithTimeout(context.Background(), 5*time.Minute)
+		if err := cache.Refresh(initCtx); err != nil {
+			logger.Error().Err(err).Msg("initial itemcache refresh failed")
+		}
+		cancelInit()
+	}
+
 	srv := server.New(server.Options{
 		Config:          cfg,
 		Logger:          logger,
 		Jellyfin:        jf,
 		DB:              conn,
+		Cache:           cache,
 		JellyfinVersion: info.Version,
 		AdminAssets:     jellybean.AdminDist,
 		KidsAssets:      jellybean.KidsDist,
@@ -121,6 +148,39 @@ func run() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		srv.RunStartupReconcile(ctx)
+	}()
+
+	// Warm-boot: kick off a Refresh in the background so the next
+	// tick has fresh data without delaying ListenAndServe. Cold-boot
+	// already ran one synchronously above, so skip the duplicate.
+	if !cacheEmpty {
+		go func() {
+			refreshCtx, cancel := context.WithTimeout(cacheCtx, 5*time.Minute)
+			defer cancel()
+			if err := cache.Refresh(refreshCtx); err != nil {
+				logger.Warn().Err(err).Msg("background itemcache refresh failed")
+			}
+		}()
+	}
+
+	// Periodic refresh ticker. Cadence comes from
+	// JELLYBEAN_METADATA_CACHE_TTL (default 5m). Exits when cacheCtx
+	// is cancelled at shutdown.
+	go func() {
+		ticker := time.NewTicker(cfg.MetadataCacheTTL)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-cacheCtx.Done():
+				return
+			case <-ticker.C:
+				refreshCtx, cancel := context.WithTimeout(cacheCtx, 5*time.Minute)
+				if err := cache.Refresh(refreshCtx); err != nil {
+					logger.Warn().Err(err).Msg("periodic itemcache refresh failed")
+				}
+				cancel()
+			}
+		}
 	}()
 
 	sigCh := make(chan os.Signal, 1)

@@ -20,6 +20,7 @@ import (
 	"github.com/fisherevans/jellybean/internal/auth"
 	"github.com/fisherevans/jellybean/internal/config"
 	"github.com/fisherevans/jellybean/internal/curation"
+	"github.com/fisherevans/jellybean/internal/itemcache"
 	"github.com/fisherevans/jellybean/internal/jellyfin"
 )
 
@@ -30,6 +31,7 @@ type Server struct {
 	db       *sql.DB
 	auth     *auth.Handlers
 	curation *curation.Store
+	cache    *itemcache.Cache
 	router   *mux.Router
 	qc       *qcStore
 	// pairLimiter throttles unauthenticated POSTs to
@@ -47,6 +49,7 @@ type Options struct {
 	Logger          zerolog.Logger
 	Jellyfin        *jellyfin.Client
 	DB              *sql.DB
+	Cache           *itemcache.Cache
 	JellyfinVersion string
 	AdminAssets     fs.FS // root containing web/admin/dist
 	KidsAssets      fs.FS // root containing web/kids/dist
@@ -65,6 +68,16 @@ func New(opts Options) *Server {
 		Bearer:        &bearerAdapter{store: curStore},
 	}
 
+	// Cache is optional in tests so existing fixtures don't have to
+	// stand up the full background ticker. The reads that consult it
+	// (admin items list, kid library, browse decorate) all fall back
+	// to live Jellyfin when cache == nil. Production callers always
+	// supply one via cmd/jellybean.
+	cache := opts.Cache
+	if cache == nil {
+		cache = itemcache.New(opts.DB, opts.Jellyfin, opts.Logger)
+	}
+
 	s := &Server{
 		cfg:             opts.Config,
 		logger:          opts.Logger,
@@ -72,6 +85,7 @@ func New(opts Options) *Server {
 		db:              opts.DB,
 		auth:            authH,
 		curation:        curStore,
+		cache:           cache,
 		router:          mux.NewRouter(),
 		qc:              newQCStore(),
 		pairLimiter:     newPairSubmitLimiter(),

@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -18,22 +19,30 @@ type Config struct {
 	DBPath         string
 	SessionSecret  string
 	Env            string
+	// MetadataCacheTTL drives the cadence of the itemcache background
+	// refresh ticker (see cmd/jellybean and internal/itemcache).
+	// Defaults to 5m; override with JELLYBEAN_METADATA_CACHE_TTL
+	// (any time.ParseDuration value, e.g. "1m", "10m", "1h").
+	MetadataCacheTTL time.Duration
 }
 
 const (
-	envJellyfinURL    = "JELLYFIN_URL"
-	envJellyfinAPIKey = "JELLYFIN_API_KEY"
-	envPort           = "JELLYBEAN_PORT"
-	envDBPath         = "JELLYBEAN_DB_PATH"
-	envSessionSecret  = "JELLYBEAN_SESSION_SECRET"
-	envEnv            = "JELLYBEAN_ENV"
+	envJellyfinURL       = "JELLYFIN_URL"
+	envJellyfinAPIKey    = "JELLYFIN_API_KEY"
+	envPort              = "JELLYBEAN_PORT"
+	envDBPath            = "JELLYBEAN_DB_PATH"
+	envSessionSecret     = "JELLYBEAN_SESSION_SECRET"
+	envEnv               = "JELLYBEAN_ENV"
+	envMetadataCacheTTL  = "JELLYBEAN_METADATA_CACHE_TTL"
+	defaultMetadataCache = 5 * time.Minute
 )
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Port:   8080,
-		DBPath: "./jellybean.db",
-		Env:    "production",
+		Port:             8080,
+		DBPath:           "./jellybean.db",
+		Env:              "production",
+		MetadataCacheTTL: defaultMetadataCache,
 	}
 
 	var missing []string
@@ -71,6 +80,14 @@ func Load() (*Config, error) {
 
 	if v := os.Getenv(envEnv); v != "" {
 		cfg.Env = v
+	}
+
+	if v := os.Getenv(envMetadataCacheTTL); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("%s must be a positive duration (e.g. 5m), got %q", envMetadataCacheTTL, v)
+		}
+		cfg.MetadataCacheTTL = d
 	}
 
 	return cfg, nil

@@ -118,6 +118,13 @@ func newTestServer(t *testing.T, library []jellyfin.Item) (*Server, *auth.Sessio
 		DB:              conn,
 		JellyfinVersion: "10.10.7",
 	})
+	// Warm the itemcache from the fake Jellyfin so tests that hit the
+	// admin items list / kid library / browse decorate paths see the
+	// fixture library through the cache. Mirrors what main.go does on
+	// cold boot.
+	if err := srv.cache.Refresh(t.Context()); err != nil {
+		t.Fatalf("itemcache refresh: %v", err)
+	}
 	return srv, auth.NewSessionStore(conn, cfg.SessionSecret)
 }
 
