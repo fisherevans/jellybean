@@ -131,6 +131,15 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "state must be visible, hidden, or unset", http.StatusBadRequest)
 		return
 	}
+	// Search spans all visibility states. The visible/hidden state filter
+	// only makes sense once the user is browsing a curated subset; when
+	// they're hunting for an item by name, dropping uncategorized rows is
+	// confusing (the user reasonably expects to find items they haven't
+	// touched yet). Fall through to the cache-backed default branch which
+	// does case-insensitive substring search and stamps State per row.
+	if search != "" {
+		wantState = filterAll
+	}
 
 	// Optional ?tagId=N filter. When set, the result set is the items
 	// carrying that tag (regardless of categorization state) - admin
@@ -206,92 +215,48 @@ func (s *Server) handleAdminItems(w http.ResponseWriter, r *http.Request) {
 
 	switch wantState {
 	case filterVisible, filterHidden:
+		// Note: search != "" was rewritten to filterAll above, so this
+		// branch only runs for state-only filtering (no search term).
 		st := curation.StateVisible
 		if wantState == filterHidden {
 			st = curation.StateHidden
 		}
-		if search != "" {
-			// Live-search path stays on Jellyfin for now - the cache
-			// could grow a name LIKE query but the search box's flow
-			// is parent-driven and tolerant of the extra round trip.
-			res, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{
-				IncludeItemTypes:   itemTypes,
-				Recursive:          true,
-				Limit:              500,
-				SearchTerm:         search,
-				SortBy:             "SortName",
-				SortOrder:          "Ascending",
-				IncludeHeavyFields: true,
-			})
+		countTotal, err := s.curation.CountItemIDsInState(r.Context(), profileID, st)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("count state ids")
+			http.Error(w, "failed to load items", http.StatusInternalServerError)
+			return
+		}
+		ids, err := s.curation.ListItemIDsInState(r.Context(), profileID, st, limit+1, startIndex)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("list state ids")
+			http.Error(w, "failed to load items", http.StatusInternalServerError)
+			return
+		}
+		hasMore = len(ids) > limit
+		if hasMore {
+			ids = ids[:limit]
+		}
+		if len(ids) > 0 {
+			cached, missing, err := s.loadRowsByIDs(r.Context(), ids)
 			if err != nil {
-				s.logger.Error().Err(err).Msg("search items")
-				http.Error(w, "failed to search items", http.StatusBadGateway)
+				s.logger.Error().Err(err).Msg("get items by ids")
+				http.Error(w, "failed to load items", http.StatusBadGateway)
 				return
 			}
-			ids := make([]string, len(res.Items))
-			for i, it := range res.Items {
-				ids[i] = it.ID
-			}
-			states, err := s.curation.GetStatesForItems(r.Context(), profileID, ids)
-			if err != nil {
-				s.logger.Error().Err(err).Msg("get states")
-				http.Error(w, "failed to load states", http.StatusInternalServerError)
-				return
-			}
-			matching := make([]jellyfin.Item, 0, len(res.Items))
-			for _, it := range res.Items {
-				if string(states[it.ID]) == string(st) {
-					matching = append(matching, it)
-				}
-			}
-			total = len(matching)
-			if startIndex < len(matching) {
-				end := startIndex + limit
-				if end > len(matching) {
-					end = len(matching)
-				}
-				fallback = matching[startIndex:end]
-			}
-			hasMore = startIndex+len(fallback) < total
-			nextStart = startIndex + len(fallback)
-		} else {
-			countTotal, err := s.curation.CountItemIDsInState(r.Context(), profileID, st)
-			if err != nil {
-				s.logger.Error().Err(err).Msg("count state ids")
-				http.Error(w, "failed to load items", http.StatusInternalServerError)
-				return
-			}
-			ids, err := s.curation.ListItemIDsInState(r.Context(), profileID, st, limit+1, startIndex)
-			if err != nil {
-				s.logger.Error().Err(err).Msg("list state ids")
-				http.Error(w, "failed to load items", http.StatusInternalServerError)
-				return
-			}
-			hasMore = len(ids) > limit
-			if hasMore {
-				ids = ids[:limit]
-			}
-			if len(ids) > 0 {
-				cached, missing, err := s.loadRowsByIDs(r.Context(), ids)
+			rows = cached
+			if len(missing) > 0 {
+				live, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{IDs: missing, IncludeHeavyFields: true})
 				if err != nil {
-					s.logger.Error().Err(err).Msg("get items by ids")
+					s.logger.Error().Err(err).Msg("state-filter live miss")
 					http.Error(w, "failed to load items", http.StatusBadGateway)
 					return
 				}
-				rows = cached
-				if len(missing) > 0 {
-					live, err := s.jellyfin.GetItems(r.Context(), jellyfin.ItemsFilter{IDs: missing, IncludeHeavyFields: true})
-					if err != nil {
-						s.logger.Error().Err(err).Msg("state-filter live miss")
-						http.Error(w, "failed to load items", http.StatusBadGateway)
-						return
-					}
-					fallback = live.Items
-				}
+				fallback = live.Items
 			}
-			total = countTotal
-			nextStart = startIndex + len(rows) + len(fallback)
 		}
+		total = countTotal
+		nextStart = startIndex + len(rows) + len(fallback)
 
 	case filterUnset:
 		excluded, err := s.curation.AllCategorizedIDsForProfile(r.Context(), profileID)
