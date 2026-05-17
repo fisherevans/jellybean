@@ -243,6 +243,13 @@ export default function KidsHome() {
                         active={active}
                         search={location.search}
                         focused={tabFocused && tabVisible}
+                        // Suppress the pill's window keydown listener
+                        // while the MainMenuModal is open so its Enter
+                        // handler doesn't preventDefault the activation
+                        // out from under the modal. Visual focus stays
+                        // on the active tab via `focused` so Esc-close
+                        // returns to it cleanly.
+                        listening={tabFocused && tabVisible && !menuOpen}
                         tabRef={(el) => (tabPillRef.current = el)}
                         onFocusContent={() => setTabFocused(false)}
                         onOpenMenu={() => setMenuOpen(true)}

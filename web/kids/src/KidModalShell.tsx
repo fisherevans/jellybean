@@ -27,6 +27,13 @@ import { useProgressiveBack } from "./useProgressiveBack";
 //   - Tracks `armed`: flips true on the first keyup. Exposes via
 //     KidModalArmedContext so inner listeners (useDpadCursor) can
 //     match the gate without re-implementing the keyup wiring.
+//     IMPORTANT: the provider only wraps `children` rendered inside
+//     this shell. If a caller calls useDpadCursor() in its own scope
+//     ABOVE <KidModalShell>, it will read the default `false` and
+//     the focus-on-armed effect + Enter activation will be dead.
+//     The convention is to nest a file-private Body component
+//     inside the shell and call useDpadCursor there. See
+//     MainMenuModal / OptionPickerModal / AlphaPickerModal.
 //   - Registers a useProgressiveBack handler so the Android Kotlin
 //     bridge's hardware-Back routes through onClose.
 //   - Installs a focusin focus-trap: any focus that escapes the

@@ -29,8 +29,16 @@ type Props = {
     // pass-through search params keep admin-preview links working
     search?: string;
     // True when the parent's focus model has D-pad focus on the
-    // tab nav. Drives the outer border + the keyboard listeners.
+    // tab nav. Drives the outer border + the active tabIndex.
     focused: boolean;
+    // Gates the window keydown listener. Same as `focused` by
+    // default, but a modal opening above the tab pill (e.g.
+    // MainMenuModal) sets this false so the listener stops
+    // preventDefault'ing Enter while the modal's own listeners
+    // are wired. The visual ring + tabIndex still follow
+    // `focused` so Esc from the modal lands focus back on the
+    // active button.
+    listening?: boolean;
     // Parent gets the active button's element so it can imperatively
     // focus it when tabFocused becomes true.
     tabRef?: (el: HTMLButtonElement | null) => void;
@@ -61,10 +69,15 @@ export default function TabPill({
     active,
     search = "",
     focused,
+    listening,
     tabRef,
     onFocusContent,
     onOpenMenu,
 }: Props) {
+    // Default to the visual-focus value so existing callers that
+    // don't pass `listening` keep the old behavior (listener
+    // active whenever the pill is visually focused).
+    const listenerActive = listening ?? focused;
     const nav = useNavigate();
     const frameRef = useRef<HTMLDivElement | null>(null);
     const buttonRefs = useRef<Record<Tab, HTMLButtonElement | null>>({
@@ -153,9 +166,11 @@ export default function TabPill({
 
     // Tab-nav-focused keyboard handling. Left/Right navigate;
     // Down hands off to parent; Enter-hold opens menu; idle hint
-    // appears after 5s of no input.
+    // appears after 5s of no input. Gated on `listenerActive` so a
+    // modal opened above the pill can suppress this listener
+    // without dropping the visual active-tab ring.
     useEffect(() => {
-        if (!focused) {
+        if (!listenerActive) {
             setShowHint(false);
             return;
         }
@@ -244,7 +259,7 @@ export default function TabPill({
             if (holdTimer !== null) clearTimeout(holdTimer);
             if (hintTimer !== null) clearTimeout(hintTimer);
         };
-    }, [focused, active, search, nav, onFocusContent, onOpenMenu]);
+    }, [listenerActive, active, search, nav, onFocusContent, onOpenMenu]);
 
     return (
         <nav className="kids-tabpill" aria-label="Top-level navigation">

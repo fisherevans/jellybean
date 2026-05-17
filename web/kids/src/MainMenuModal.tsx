@@ -79,6 +79,8 @@ function buildActions(perfOn: boolean): {
     ];
 }
 
+type ActionMeta = ReturnType<typeof buildActions>[number];
+
 export default function MainMenuModal({ onClose }: Props) {
     const nav = useNavigate();
     const [refreshing, setRefreshing] = useState(false);
@@ -175,12 +177,6 @@ export default function MainMenuModal({ onClose }: Props) {
         }
     }
 
-    const dpad = useDpadCursor({
-        count: ACTIONS.length,
-        initial: 0,
-        onActivate: (i) => activate(ACTIONS[i].id),
-    });
-
     return (
         <KidModalShell
             onClose={onClose}
@@ -188,9 +184,39 @@ export default function MainMenuModal({ onClose }: Props) {
             backdropClassName="kids-menu-backdrop"
             cardClassName="kids-menu-card"
         >
+            <MainMenuBody
+                actions={ACTIONS}
+                refreshing={refreshing}
+                onActivate={activate}
+            />
+        </KidModalShell>
+    );
+}
+
+// MainMenuBody lives inside KidModalShell so useDpadCursor reads the
+// shell's KidModalArmedContext correctly (provider wraps the portal
+// children, not the shell's caller). All interactive plumbing lives
+// here; the outer component owns lifecycle / action dispatch.
+function MainMenuBody({
+    actions,
+    refreshing,
+    onActivate,
+}: {
+    actions: ActionMeta[];
+    refreshing: boolean;
+    onActivate: (id: Action) => void;
+}) {
+    const dpad = useDpadCursor({
+        count: actions.length,
+        initial: 0,
+        onActivate: (i) => onActivate(actions[i].id),
+    });
+
+    return (
+        <>
             <h2 className="kids-menu-title">Menu</h2>
             <ul className="kids-menu-list">
-                {ACTIONS.map((a, i) => {
+                {actions.map((a, i) => {
                     const isRefresh = a.id === "refresh";
                     const busy = isRefresh && refreshing;
                     return (
@@ -201,7 +227,7 @@ export default function MainMenuModal({ onClose }: Props) {
                                     el: HTMLButtonElement | null,
                                 ) => void}
                                 className={`kids-menu-action ${dpad.cursor === i ? "focused" : ""}`}
-                                onClick={() => activate(a.id)}
+                                onClick={() => onActivate(a.id)}
                                 onFocus={() => dpad.setCursor(i)}
                                 tabIndex={dpad.cursor === i ? 0 : -1}
                                 disabled={busy}
@@ -220,6 +246,6 @@ export default function MainMenuModal({ onClose }: Props) {
             <p className="kids-menu-hint" aria-hidden>
                 Back to close
             </p>
-        </KidModalShell>
+        </>
     );
 }
