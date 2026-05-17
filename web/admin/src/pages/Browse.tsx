@@ -225,6 +225,13 @@ export default function Browse() {
         });
     }
 
+    // When a search term is active, the backend ignores the visibility
+    // filter (so the user can find items regardless of categorization
+    // state - see t58). Mirror that here: don't count visibility toward
+    // the active-filter badge, and visually disable the visibility row
+    // below.
+    const searchActive = searchDebounced.length > 0;
+
     // The default Visibility=Visible is itself a filter (the page opens
     // already restricted to visible items). Count it so the dropdown
     // badge reflects the actual narrowing being applied; "All" is the
@@ -234,7 +241,7 @@ export default function Browse() {
         (typeFilter !== "all" ? 1 : 0) +
         activeTagIds.size +
         (yearMin || yearMax ? 1 : 0) +
-        (stateFilter !== "all" ? 1 : 0);
+        (!searchActive && stateFilter !== "all" ? 1 : 0);
 
     function clearAll() {
         setStateFilter("all");
@@ -315,7 +322,11 @@ export default function Browse() {
 
             {filterOpen && (
                 <div className="browse-filter-panel">
-                    <div className="browse-filter-group">
+                    <div
+                        className={`browse-filter-group ${
+                            searchActive ? "browse-filter-group-disabled" : ""
+                        }`}
+                    >
                         <span className="browse-filter-label">Visibility</span>
                         <div className="pill-toggle-row">
                             {(["visible", "hidden", "unset", "all"] as StateFilter[]).map(
@@ -327,6 +338,7 @@ export default function Browse() {
                                             stateFilter === s ? "active" : ""
                                         }`}
                                         aria-pressed={stateFilter === s}
+                                        disabled={searchActive}
                                         onClick={() => setStateFilter(s)}
                                     >
                                         {s === "all"
@@ -336,6 +348,11 @@ export default function Browse() {
                                 ),
                             )}
                         </div>
+                        {searchActive && (
+                            <span className="browse-filter-hint muted">
+                                Search spans all visibility states
+                            </span>
+                        )}
                     </div>
 
                     <div className="browse-filter-group">
@@ -425,8 +442,12 @@ export default function Browse() {
                 {loading
                     ? "Loading..."
                     : `${items.length} of ${total.toLocaleString()} ${
-                          stateFilter === "all" ? "" : stateFilter + " "
+                          searchActive || stateFilter === "all"
+                              ? ""
+                              : stateFilter + " "
                       }item${total === 1 ? "" : "s"}${
+                          searchActive ? ` matching "${searchDebounced}"` : ""
+                      }${
                           activeTagIds.size > 0
                               ? ` tagged ${[...activeTagIds]
                                     .map((id) => tagsById.get(id)?.name ?? id)

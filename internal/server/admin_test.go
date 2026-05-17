@@ -261,6 +261,86 @@ func TestAdminItemsFilterByVisibleState(t *testing.T) {
 	}
 }
 
+// TestAdminItemsSearchIgnoresStateFilter is the t58 regression. Before
+// the fix, /api/admin/items?state=visible&search=foo hit Jellyfin live
+// and then dropped rows whose categorization state didn't match the
+// requested state - meaning uncategorized matches never surfaced and
+// the user couldn't find them via search. The fix rewrites search to
+// span all states; the state pill on each card still distinguishes
+// visible / hidden / unset so the parent can see what's what.
+func TestAdminItemsSearchIgnoresStateFilter(t *testing.T) {
+	library := []jellyfin.Item{
+		{ID: "bobo-a", Name: "Foo Bar Apple", Type: "Movie", OfficialRating: "G"},
+		{ID: "bobo-b", Name: "Foo Bar Banana", Type: "Movie", OfficialRating: "G"},
+		{ID: "bobo-c", Name: "Foo Bar Cherry", Type: "Movie", OfficialRating: "G"},
+		{ID: "noise", Name: "Unrelated Item", Type: "Movie", OfficialRating: "G"},
+	}
+	srv, store := newTestServer(t, library)
+	profileID := defaultProfileID(t, srv)
+
+	ctx := t.Context()
+	visible := curation.StateVisible
+	hidden := curation.StateHidden
+	if _, err := srv.curation.SetState(ctx, "bobo-a", profileID, &visible, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.curation.SetState(ctx, "bobo-b", profileID, &hidden, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	// bobo-c stays uncategorized.
+
+	tests := []struct {
+		name  string
+		state string
+	}{
+		{"state=visible", "visible"},
+		{"state=hidden", "hidden"},
+		{"state=unset", "unset"},
+		{"state=all", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := url.Values{}
+			v.Set("profileId", strconv.FormatInt(profileID, 10))
+			if tt.state != "" {
+				v.Set("state", tt.state)
+			}
+			v.Set("search", "foo bar")
+			v.Set("limit", "100")
+			rec := authedRequest(t, srv, store, http.MethodGet, "/api/admin/items?"+v.Encode(), nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+			}
+			var resp struct {
+				Items []map[string]any
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			gotStates := map[string]any{}
+			for _, it := range resp.Items {
+				id, _ := it["Id"].(string)
+				gotStates[id] = it["State"]
+			}
+			if len(gotStates) != 3 {
+				t.Fatalf("got %d matches, want 3 (a/b/c regardless of state): %v", len(gotStates), gotStates)
+			}
+			if gotStates["bobo-a"] != "visible" {
+				t.Errorf("bobo-a state = %v, want visible", gotStates["bobo-a"])
+			}
+			if gotStates["bobo-b"] != "hidden" {
+				t.Errorf("bobo-b state = %v, want hidden", gotStates["bobo-b"])
+			}
+			if gotStates["bobo-c"] != nil {
+				t.Errorf("bobo-c state = %v, want nil (uncategorized)", gotStates["bobo-c"])
+			}
+			if _, leaked := gotStates["noise"]; leaked {
+				t.Errorf("non-matching item leaked into search results: %v", gotStates)
+			}
+		})
+	}
+}
+
 func TestAdminItemsRequiresProfileID(t *testing.T) {
 	srv, store := newTestServer(t, makeItems(5))
 	rec := authedRequest(t, srv, store, http.MethodGet, "/api/admin/items", nil)
