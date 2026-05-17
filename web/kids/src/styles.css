@@ -6477,7 +6477,8 @@ body[data-perf="slow"] .kids-tabpill-slot {
    380ms easing untouched. */
 .kids-home[data-active="library"] .kids-home-bg,
 .kids-home[data-active="tags"] .kids-home-bg,
-.kids-tag-detail .kids-home-bg {
+.kids-tag-detail .kids-home-bg,
+.watch-screen .kids-home-bg {
     transition: none;
 }
 
