@@ -125,7 +125,11 @@ func (s *Store) SetState(ctx context.Context, itemID string, profileID int64, st
 	if err := appendHistoryTx(ctx, tx, itemID, profileID, prev, state, setBy); err != nil {
 		return nil, err
 	}
-	return prev, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	s.bumpCatalog(ctx)
+	return prev, nil
 }
 
 // SetStateBulk applies the same state to many items for a single profile
@@ -174,6 +178,9 @@ func (s *Store) SetStateBulk(ctx context.Context, itemIDs []string, profileID in
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
+	}
+	if changed > 0 {
+		s.bumpCatalog(ctx)
 	}
 	return changed, nil
 }
@@ -402,11 +409,17 @@ func (s *Store) MarkOrphan(ctx context.Context, jellyfinItemID string) error {
 	if jellyfinItemID == "" {
 		return errors.New("jellyfinItemID required")
 	}
-	_, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, `
 		UPDATE categorizations
 		SET orphan_at = unixepoch()
 		WHERE jellyfin_item_id = ? AND orphan_at IS NULL`, jellyfinItemID)
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.bumpCatalog(ctx)
+	}
+	return nil
 }
 
 // ClearOrphan removes the orphan tombstone on every row matching itemID.
@@ -415,11 +428,17 @@ func (s *Store) ClearOrphan(ctx context.Context, jellyfinItemID string) error {
 	if jellyfinItemID == "" {
 		return errors.New("jellyfinItemID required")
 	}
-	_, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, `
 		UPDATE categorizations
 		SET orphan_at = NULL
 		WHERE jellyfin_item_id = ? AND orphan_at IS NOT NULL`, jellyfinItemID)
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.bumpCatalog(ctx)
+	}
+	return nil
 }
 
 // orphanReconcileBatchSize caps each Jellyfin lookup. Jellyfin's Ids=

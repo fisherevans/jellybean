@@ -95,8 +95,9 @@ func (s *Server) handleAdminSetSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Same whitelist as ListSettings - admins can only mutate the
-	// settings the UI exposes.
-	if !curation.IsKnownSetting(req.Key) {
+	// settings the UI exposes. Read-only entries (catalog_version)
+	// are visible to the lister but rejected here.
+	if !curation.IsWritableSetting(req.Key) {
 		http.Error(w, "unknown setting key", http.StatusBadRequest)
 		return
 	}

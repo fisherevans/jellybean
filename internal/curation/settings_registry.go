@@ -17,6 +17,12 @@ type SettingDef struct {
 	// setting controls. Surface this in admin tooling if useful;
 	// it's not currently rendered in the UI.
 	Description string
+	// ReadOnly marks settings that admin tooling may read but must
+	// not write through the generic /api/admin/settings PUT. Useful
+	// for server-internal counters (catalog_version, etc.) that
+	// should be visible for debugging but mutated only by their
+	// owning code path.
+	ReadOnly bool
 }
 
 // KnownSettings enumerates every app_settings key the admin endpoint
@@ -26,6 +32,11 @@ var KnownSettings = []SettingDef{
 		Key:         "public_url",
 		Description: "Externally reachable base URL for Jellybean. Used by the kid client's QR-code generator (M9 override deep-links).",
 	},
+	{
+		Key:         "catalog_version",
+		Description: "Monotonic counter folded into kid-facing ETags. Bumped server-side on every curation mutation and on itemcache refresh deltas; never writable via the generic settings endpoint.",
+		ReadOnly:    true,
+	},
 }
 
 // IsKnownSetting reports whether key is registered. Linear scan; the
@@ -34,6 +45,18 @@ func IsKnownSetting(key string) bool {
 	for _, s := range KnownSettings {
 		if s.Key == key {
 			return true
+		}
+	}
+	return false
+}
+
+// IsWritableSetting reports whether key is registered AND admin-writable.
+// Read-only entries (catalog_version) return false even though they
+// appear in KnownSettings.
+func IsWritableSetting(key string) bool {
+	for _, s := range KnownSettings {
+		if s.Key == key {
+			return !s.ReadOnly
 		}
 	}
 	return false

@@ -77,6 +77,10 @@ func New(opts Options) *Server {
 	if cache == nil {
 		cache = itemcache.New(opts.DB, opts.Jellyfin, opts.Logger)
 	}
+	// Wire the catalog_version bumper so a Refresh delta invalidates
+	// kid-facing ETags. Done here (not in cmd/jellybean) so test
+	// fixtures that pass a Cache get the same behavior automatically.
+	cache.SetBumper(curStore)
 
 	s := &Server{
 		cfg:             opts.Config,

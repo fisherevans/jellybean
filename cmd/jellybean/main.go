@@ -15,6 +15,7 @@ import (
 
 	jellybean "github.com/fisherevans/jellybean"
 	"github.com/fisherevans/jellybean/internal/config"
+	"github.com/fisherevans/jellybean/internal/curation"
 	"github.com/fisherevans/jellybean/internal/db"
 	"github.com/fisherevans/jellybean/internal/itemcache"
 	"github.com/fisherevans/jellybean/internal/jellyfin"
@@ -99,6 +100,11 @@ func run() error {
 	// cache. On a warm boot we let the HTTP server come up immediately
 	// and refresh in the background.
 	cache := itemcache.New(conn, jf, logger)
+	// Wire the catalog_version bumper so a Refresh delta invalidates
+	// the kid-facing ETag salt. The same wiring also runs inside
+	// server.New for tests that pass a Cache; here it covers the
+	// initial cold-boot Refresh that fires before server.New does.
+	cache.SetBumper(curation.NewStore(conn))
 	cacheCtx, cancelCache := context.WithCancel(context.Background())
 	defer cancelCache()
 	emptyCtx, cancelEmpty := context.WithTimeout(context.Background(), 10*time.Second)

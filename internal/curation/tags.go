@@ -192,6 +192,7 @@ func (s *Store) CreateTag(ctx context.Context, in TagInput) (*Tag, error) {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
+	s.bumpCatalog(ctx)
 	return s.GetTag(ctx, id)
 }
 
@@ -218,6 +219,7 @@ func (s *Store) UpdateTag(ctx context.Context, id int64, in TagInput) (*Tag, err
 	if n == 0 {
 		return nil, ErrTagNotFound
 	}
+	s.bumpCatalog(ctx)
 	return s.GetTag(ctx, id)
 }
 
@@ -232,6 +234,7 @@ func (s *Store) DeleteTag(ctx context.Context, id int64) error {
 	if n == 0 {
 		return ErrTagNotFound
 	}
+	s.bumpCatalog(ctx)
 	return nil
 }
 
@@ -388,7 +391,11 @@ func (s *Store) SetTagsForItem(ctx context.Context, itemID string, tagIDs []int6
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpCatalog(ctx)
+	return nil
 }
 
 // AddItemTag is a single-tag add (idempotent on conflict). Useful for
@@ -402,12 +409,18 @@ func (s *Store) AddItemTag(ctx context.Context, itemID string, tagID int64, setB
 	if setBy != "" {
 		setByVal = setBy
 	}
-	_, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO item_tags (jellyfin_item_id, tag_id, set_at, set_by)
 		VALUES (?, ?, unixepoch(), ?)
 		ON CONFLICT(jellyfin_item_id, tag_id) DO NOTHING`,
 		itemID, tagID, setByVal)
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.bumpCatalog(ctx)
+	}
+	return nil
 }
 
 // RemoveItemTag drops a single (item, tag) pair if it exists.
@@ -415,10 +428,16 @@ func (s *Store) RemoveItemTag(ctx context.Context, itemID string, tagID int64) e
 	if itemID == "" || tagID <= 0 {
 		return errors.New("itemID and tagID required")
 	}
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM item_tags WHERE jellyfin_item_id = ? AND tag_id = ?`,
 		itemID, tagID)
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.bumpCatalog(ctx)
+	}
+	return nil
 }
 
 // ListItemIDsByTag returns the item ids carrying tagID, ordered by
@@ -512,12 +531,18 @@ func (s *Store) AddKidFavorite(ctx context.Context, kidID int64, itemID string) 
 	if kidID <= 0 || itemID == "" {
 		return errors.New("kidID and itemID required")
 	}
-	_, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO kid_favorites (kid_id, jellyfin_item_id, created_at)
 		VALUES (?, ?, unixepoch())
 		ON CONFLICT(kid_id, jellyfin_item_id) DO NOTHING`,
 		kidID, itemID)
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.bumpCatalog(ctx)
+	}
+	return nil
 }
 
 // RemoveKidFavorite drops (kid, item) if present.
@@ -525,10 +550,16 @@ func (s *Store) RemoveKidFavorite(ctx context.Context, kidID int64, itemID strin
 	if kidID <= 0 || itemID == "" {
 		return errors.New("kidID and itemID required")
 	}
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM kid_favorites WHERE kid_id = ? AND jellyfin_item_id = ?`,
 		kidID, itemID)
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.bumpCatalog(ctx)
+	}
+	return nil
 }
 
 // --- profile tag filters -----------------------------------------------
@@ -579,7 +610,11 @@ func (s *Store) SetProfileTagFilter(ctx context.Context, profileID, tagID int64,
 			mode = excluded.mode,
 			set_at = excluded.set_at`,
 		profileID, tagID, string(mode))
-	return err
+	if err != nil {
+		return err
+	}
+	s.bumpCatalog(ctx)
+	return nil
 }
 
 // ClearProfileTagFilter removes the filter for (profile, tag) - the
@@ -588,10 +623,16 @@ func (s *Store) ClearProfileTagFilter(ctx context.Context, profileID, tagID int6
 	if profileID <= 0 || tagID <= 0 {
 		return errors.New("profileID and tagID required")
 	}
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM profile_tag_filters WHERE profile_id = ? AND tag_id = ?`,
 		profileID, tagID)
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.bumpCatalog(ctx)
+	}
+	return nil
 }
 
 // EffectiveItemVisibility resolves an item's visibility for a profile

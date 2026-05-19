@@ -28,7 +28,7 @@ import { useBrowseRowAnimator } from "./useBrowseRowAnimator";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { useKidsHome } from "./KidsHome";
 import { useKidsResource } from "./useKidsResource";
-import { sessionCache } from "./kidsCache";
+import { sessionCache, sessionEtagCache } from "./kidsCache";
 import { useHomeTabFocus } from "./useHomeTabFocus";
 import { posterWidthForViewport } from "./perfMode";
 
@@ -134,10 +134,12 @@ export default function Browse() {
         return url.toString();
     }, [session, adminProfileId]);
     const cache = useMemo(() => sessionCache<BrowseResponse>(), []);
+    const etag = useMemo(() => sessionEtagCache(), []);
     const { data: fetchedData, error } = useKidsResource<BrowseResponse>({
         url: browseURL,
         cache,
         cacheKey,
+        etag,
         skipFetchWhenCacheHit: true,
     });
     const [data, setData] = useState<BrowseResponse | null>(fetchedData);

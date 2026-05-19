@@ -57,6 +57,25 @@ func (s *Server) handleKidsListTags(w http.ResponseWriter, r *http.Request) {
 	kc, profileID := KidsContextFromRequest(r)
 	ctx := r.Context()
 
+	// ETag from catalog_version + (profile, user). The previews are
+	// randomized but get pinned per catalog_version: same version ->
+	// same ETag -> 304 -> client serves its sessionStorage cache. On
+	// a parent mutation catalog_version bumps, the ETag rotates, and
+	// the kid TV sees a fresh randomized sample.
+	etag, err := s.computeKidsETag(ctx, profileID, kc.JellyfinUserID, "tags")
+	if err != nil {
+		s.logger.Error().Err(err).Msg("kids tags etag")
+		http.Error(w, "failed to load tags", http.StatusInternalServerError)
+		return
+	}
+	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "private, must-revalidate")
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("ETag", etag)
+
 	tags, err := s.curation.ListTags(ctx, curation.TagSortName)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("kids list tags")
@@ -134,11 +153,12 @@ func (s *Server) handleKidsListTags(w http.ResponseWriter, r *http.Request) {
 	// Pass 3: assemble response in the original tag-list order,
 	// skipping items the Jellyfin batch didn't return (deleted /
 	// permission-filtered).
-	// no-store: the preview list is randomized per request so the
-	// kid sees a fresh sample each time. Without this header some
-	// WebViews (Android TV) fall back to a heuristic cache that
-	// pins the first response.
-	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	// Cache-Control allows the client to keep the body in
+	// sessionStorage; freshness is enforced through If-None-Match
+	// against the catalog_version ETag above. Without
+	// must-revalidate some WebViews would re-render from their
+	// heuristic cache without ever consulting the server.
+	w.Header().Set("Cache-Control", "private, must-revalidate")
 
 	out := kidsTagsResponse{Tags: make([]kidsTagsTagResponse, 0, len(entries))}
 	for _, e := range entries {
@@ -219,6 +239,40 @@ func (s *Server) handleKidsTagDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
+	// Compute the ETag up front (before any Jellyfin batch fetch).
+	// Salt by tag id + ?sort + ?filter so the kid client's swap
+	// between filter buttons rotates the ETag deterministically.
+	filterParam := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("filter")))
+	switch filterParam {
+	case "", "all":
+		filterParam = "all"
+	case "movies", "shows":
+		// ok
+	default:
+		http.Error(w, "filter must be all, movies, or shows", http.StatusBadRequest)
+		return
+	}
+	sortParam := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
+	switch sortParam {
+	case "", "name":
+		sortParam = "name"
+	case "recently_added", "recently_watched":
+		// ok
+	}
+	etag, err := s.computeKidsETag(ctx, profileID, kc.JellyfinUserID, "tag-detail", tagID, sortParam, filterParam)
+	if err != nil {
+		s.logger.Error().Err(err).Int64("tag_id", tagID).Msg("kids tag detail etag")
+		http.Error(w, "failed to load tag", http.StatusInternalServerError)
+		return
+	}
+	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "private, must-revalidate")
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("ETag", etag)
+
 	tag, err := s.curation.GetTag(ctx, tagID)
 	if err != nil {
 		s.logger.Error().Err(err).Int64("tag_id", tagID).Msg("kids tag detail get tag")
@@ -266,18 +320,8 @@ func (s *Server) handleKidsTagDetail(w http.ResponseWriter, r *http.Request) {
 	// shared Filter dropdown (all/movies/shows) and the Library
 	// handler uses the same Movie/Series mapping; keep the names in
 	// sync so a tag with mixed content filters consistently.
-	filterMode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("filter")))
-	switch filterMode {
-	case "", "all":
-		filterMode = "all"
-	case "movies", "shows":
-		// ok
-	default:
-		http.Error(w, "filter must be all, movies, or shows", http.StatusBadRequest)
-		return
-	}
 	allowedType := ""
-	switch filterMode {
+	switch filterParam {
 	case "movies":
 		allowedType = "Movie"
 	case "shows":
@@ -313,8 +357,7 @@ func (s *Server) handleKidsTagDetail(w http.ResponseWriter, r *http.Request) {
 		items = append(items, it)
 	}
 
-	sortMode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
-	switch sortMode {
+	switch sortParam {
 	case "recently_added":
 		sort.SliceStable(items, func(i, j int) bool {
 			return items[i].DateCreated > items[j].DateCreated
@@ -335,22 +378,21 @@ func (s *Server) handleKidsTagDetail(w http.ResponseWriter, r *http.Request) {
 			return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
 		})
 	default:
-		sortMode = "name"
 		sort.SliceStable(items, func(i, j int) bool {
 			return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
 		})
 	}
 
-	// no-store so each ?sort= request hits the handler again
-	// rather than being served from a cached previous response.
-	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	// Body served from sessionStorage when client's If-None-Match
+	// matches; freshness is enforced via the catalog_version ETag.
+	w.Header().Set("Cache-Control", "private, must-revalidate")
 
 	out := kidsTagDetailResponse{
 		ID:          tag.ID,
 		Name:        tag.Name,
 		Description: tag.Description,
 		Icon:        tag.Icon,
-		Sort:        sortMode,
+		Sort:        sortParam,
 		ItemCount:   len(items),
 		MovieCount:  movieCount,
 		SeriesCount: seriesCount,

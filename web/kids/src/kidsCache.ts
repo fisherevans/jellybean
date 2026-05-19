@@ -69,6 +69,40 @@ export function sessionCache<T>(): CacheBackend<T> {
     };
 }
 
+// sessionEtagCache stores the per-key ETag returned by the server in
+// sessionStorage so the next mount can hand it back as
+// If-None-Match. Pairs with sessionCache(): same key, separate
+// ".etag"-suffixed storage slot so the cached body and its ETag
+// rotate independently when the server rewrites one without the
+// other (defensive; in practice both move together).
+//
+// Used by Browse / Tags / TagDetail to opt into catalog_version-
+// driven invalidation (t60): the page keeps showing its sessionStorage
+// body on mount, fires a conditional GET in the background, and only
+// swaps state when the server returns 200. Unchanged data stays put;
+// a parent mutation rotates catalog_version, the server returns a
+// new ETag with 200, and the kid sees the update without a manual
+// "Refresh from server."
+export function sessionEtagCache(): EtagBackend {
+    const slot = (key: string) => `${key}.etag`;
+    return {
+        read: (key) => {
+            try {
+                return sessionStorage.getItem(slot(key));
+            } catch {
+                return null;
+            }
+        },
+        write: (key, etag) => {
+            try {
+                if (etag) sessionStorage.setItem(slot(key), etag);
+            } catch {
+                /* ignore */
+            }
+        },
+    };
+}
+
 // idbLibraryCache + idbLibraryEtags share a tiny in-memory etag map
 // so the hook's first read primes the etag for the subsequent
 // If-None-Match. The IDB read returns {page, etag}; we stash the

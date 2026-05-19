@@ -10,7 +10,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ArrowBendRightDown } from "@phosphor-icons/react";
 import { getSession, type Session } from "./auth";
 import { useKidsResource } from "./useKidsResource";
-import { sessionCache } from "./kidsCache";
+import { sessionCache, sessionEtagCache } from "./kidsCache";
 import Tile, { type TileItem } from "./Tile";
 import TileGrid, { type GridFocus, type GridSection } from "./TileGrid";
 import AlphaPickerModal from "./AlphaPickerModal";
@@ -234,11 +234,13 @@ export default function TagDetail() {
         return url.toString();
     }, [tagId, sort, filter, adminProfileId, session]);
     const cache = useMemo(() => sessionCache<TagDetailResponse>(), []);
+    const etag = useMemo(() => sessionEtagCache(), []);
     const detailCacheKey = `jellybean.kids.tagDetail.cache.${tagId ?? "x"}.${adminProfileId ?? "kid"}.${filter}.${sort}`;
     const { data: fetchedData, error } = useKidsResource<TagDetailResponse>({
         url: detailURL,
         cache,
         cacheKey: detailCacheKey,
+        etag,
     });
     const [data, setData] = useState<TagDetailResponse | null>(fetchedData);
     useEffect(() => {

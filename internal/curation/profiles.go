@@ -143,6 +143,7 @@ func (s *Store) CreateProfile(ctx context.Context, in ProfileInput) (*Profile, e
 			return nil, fmt.Errorf("copy from base profile: %w", err)
 		}
 	}
+	s.bumpCatalog(ctx)
 	return s.GetProfile(ctx, id)
 }
 
@@ -179,6 +180,7 @@ func (s *Store) UpdateProfile(ctx context.Context, id int64, in ProfileInput) (*
 	if n == 0 {
 		return nil, ErrProfileNotFound
 	}
+	s.bumpCatalog(ctx)
 	return s.GetProfile(ctx, id)
 }
 
@@ -218,8 +220,11 @@ func (s *Store) DeleteProfile(ctx context.Context, id int64) error {
 	if n > 0 {
 		return ErrProfileInUse
 	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM profiles WHERE id = ?`, id)
-	return err
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM profiles WHERE id = ?`, id); err != nil {
+		return err
+	}
+	s.bumpCatalog(ctx)
+	return nil
 }
 
 // nullableString returns nil for an empty string so the column is set to

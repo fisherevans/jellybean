@@ -176,6 +176,7 @@ func (s *Store) CreateMode(ctx context.Context, m Mode) (*Mode, error) {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
+	s.bumpCatalog(ctx)
 	return s.GetMode(ctx, id)
 }
 
@@ -215,6 +216,7 @@ func (s *Store) UpdateMode(ctx context.Context, id int64, m Mode) (*Mode, error)
 	if err != nil {
 		return nil, err
 	}
+	s.bumpCatalog(ctx)
 	return s.GetMode(ctx, id)
 }
 
@@ -237,8 +239,14 @@ func encodeIntArray(ids []int64) string {
 }
 
 func (s *Store) DeleteMode(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM profile_modes WHERE id = ?`, id)
-	return err
+	res, err := s.db.ExecContext(ctx, `DELETE FROM profile_modes WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.bumpCatalog(ctx)
+	}
+	return nil
 }
 
 // ResolveActiveMode picks the active mode for the given kid + clock.
