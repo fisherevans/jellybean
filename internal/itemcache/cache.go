@@ -35,6 +35,17 @@ type jellyfinClient interface {
 	GetItems(ctx context.Context, f jellyfin.ItemsFilter) (*jellyfin.ItemsResult, error)
 }
 
+// CatalogBumper is the tiny interface itemcache uses to nudge the
+// kid-facing ETag salt when a scan introduces, updates, or deletes
+// rows. Production wires it to curation.Store.BumpCatalogVersion;
+// tests can pass nil (no-op) or a fake to assert it fired.
+//
+// Defined here so itemcache stays free of a hard dependency on the
+// curation package.
+type CatalogBumper interface {
+	BumpCatalogVersion(ctx context.Context) error
+}
+
 // Row is one cached item. Mirrors the table columns 1:1; ListByType /
 // Get / GetMany all return these.
 type Row struct {
@@ -76,6 +87,11 @@ type Cache struct {
 	db     *sql.DB
 	jf     jellyfinClient
 	logger zerolog.Logger
+	// bumper is the optional CatalogBumper invoked after a successful
+	// Refresh that actually changed rows. nil is fine - bumps just
+	// don't happen, which is the safe default for tests that don't
+	// care about kid-facing ETag invalidation.
+	bumper CatalogBumper
 
 	// refreshMu serializes Refresh callers so a tick that fires while
 	// the previous tick is still running doesn't fan out to two
@@ -88,9 +104,19 @@ type Cache struct {
 
 // New returns a Cache ready to serve reads. The caller is responsible
 // for kicking off the initial Refresh (synchronously if the table is
-// empty, otherwise via the periodic ticker).
+// empty, otherwise via the periodic ticker). Pass a CatalogBumper to
+// SetBumper after construction when the kid-facing ETag should track
+// scan deltas; left nil, Refresh is a pure read replacement.
 func New(db *sql.DB, jf jellyfinClient, logger zerolog.Logger) *Cache {
 	return &Cache{db: db, jf: jf, logger: logger}
+}
+
+// SetBumper wires the CatalogBumper Refresh should poke when its
+// applyScan delta is non-zero. Optional; safe to call after
+// construction (cmd/jellybean wires this once the curation store is
+// alive). nil clears it.
+func (c *Cache) SetBumper(b CatalogBumper) {
+	c.bumper = b
 }
 
 // IsEmpty reports whether item_metadata has zero rows. cmd/jellybean
@@ -134,7 +160,7 @@ func (c *Cache) Refresh(ctx context.Context) error {
 		return fmt.Errorf("fetch jellyfin items: %w", err)
 	}
 
-	upserted, err := c.applyScan(ctx, scanID, items)
+	upserted, changed, err := c.applyScan(ctx, scanID, items)
 	if err != nil {
 		c.recordError(ctx, scanID, start, 0, err)
 		return fmt.Errorf("apply scan: %w", err)
@@ -145,9 +171,22 @@ func (c *Cache) Refresh(ctx context.Context) error {
 		c.logger.Warn().Err(err).Msg("itemcache state write failed")
 	}
 
+	// Catalog mutated (inserted, updated, or deleted rows) -> bump the
+	// kid-facing ETag salt so cached browse/library/tags payloads on
+	// kid devices fall over to a fresh fetch on next mount. No-op
+	// when nothing changed (the periodic ticker will keep ticking
+	// without invalidating idle clients) or when no bumper is wired
+	// (test fixtures).
+	if changed && c.bumper != nil {
+		if err := c.bumper.BumpCatalogVersion(ctx); err != nil {
+			c.logger.Warn().Err(err).Msg("catalog_version bump after refresh failed")
+		}
+	}
+
 	c.logger.Info().
 		Int64("scan_id", scanID).
 		Int("items", upserted).
+		Bool("changed", changed).
 		Int64("duration_ms", durMs).
 		Msg("itemcache refresh complete")
 	return nil
@@ -192,14 +231,23 @@ func (c *Cache) fetchAllItems(ctx context.Context) ([]jellyfin.Item, error) {
 
 // applyScan upserts every item and deletes anything whose last_scan_id
 // is older than the current pass, all in a single transaction so
-// readers never see a partial state.
-func (c *Cache) applyScan(ctx context.Context, scanID int64, items []jellyfin.Item) (int, error) {
+// readers never see a partial state. The second return value reports
+// whether the scan actually changed the table (inserts, updates,
+// deletes); callers use it to decide whether to bump catalog_version.
+func (c *Cache) applyScan(ctx context.Context, scanID int64, items []jellyfin.Item) (int, bool, error) {
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	defer tx.Rollback()
 
+	// The UPDATE branch's WHERE clause guards content equality so a
+	// scan that re-observes the same library doesn't claim "changed."
+	// updated_at + last_scan_id always tick; excluding them from the
+	// guard means we still refresh the bookkeeping columns but treat
+	// content-equal rows as no-op. RowsAffected on this exec is then
+	// a real "inserts + meaningful updates" signal, which is what
+	// catalog_version needs.
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO item_metadata (
 			id, name, sort_name, type,
@@ -225,18 +273,45 @@ func (c *Cache) applyScan(ctx context.Context, scanID int64, items []jellyfin.It
 			has_non_default_audio_language = excluded.has_non_default_audio_language,
 			updated_at = excluded.updated_at,
 			last_scan_id = excluded.last_scan_id
+		WHERE
+			item_metadata.name IS NOT excluded.name OR
+			item_metadata.sort_name IS NOT excluded.sort_name OR
+			item_metadata.type IS NOT excluded.type OR
+			item_metadata.production_year IS NOT excluded.production_year OR
+			item_metadata.run_time_ticks IS NOT excluded.run_time_ticks OR
+			item_metadata.primary_image_tag IS NOT excluded.primary_image_tag OR
+			item_metadata.date_created IS NOT excluded.date_created OR
+			item_metadata.series_id IS NOT excluded.series_id OR
+			item_metadata.series_name IS NOT excluded.series_name OR
+			item_metadata.overview IS NOT excluded.overview OR
+			item_metadata.official_rating IS NOT excluded.official_rating OR
+			item_metadata.primary_audio_language IS NOT excluded.primary_audio_language OR
+			item_metadata.audio_languages_json IS NOT excluded.audio_languages_json OR
+			item_metadata.has_non_default_audio_language IS NOT excluded.has_non_default_audio_language
 	`)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	defer stmt.Close()
 
+	// Bookkeeping-only refresh for content-equal rows so DELETE
+	// doesn't tombstone them as stale. Updates updated_at + last_scan_id
+	// without ticking the change signal. Cheap: only runs on the
+	// hopefully-large "unchanged" majority.
+	bookStmt, err := tx.PrepareContext(ctx, `
+		UPDATE item_metadata SET updated_at = ?, last_scan_id = ? WHERE id = ?`)
+	if err != nil {
+		return 0, false, err
+	}
+	defer bookStmt.Close()
+
 	now := time.Now().Unix()
 	count := 0
+	var changedRows int64
 	for _, it := range items {
 		audioLangs := it.AudioLanguages()
 		audioLangsJSON, _ := json.Marshal(audioLangs)
-		_, err := stmt.ExecContext(ctx,
+		res, err := stmt.ExecContext(ctx,
 			it.ID,
 			it.Name,
 			sortNameFor(it.Name),
@@ -256,19 +331,31 @@ func (c *Cache) applyScan(ctx context.Context, scanID int64, items []jellyfin.It
 			scanID,
 		)
 		if err != nil {
-			return 0, fmt.Errorf("upsert %s: %w", it.ID, err)
+			return 0, false, fmt.Errorf("upsert %s: %w", it.ID, err)
+		}
+		n, _ := res.RowsAffected()
+		if n > 0 {
+			changedRows += n
+		} else {
+			// Content-equal existing row: bump bookkeeping so the
+			// stale-row sweep below doesn't delete it.
+			if _, err := bookStmt.ExecContext(ctx, now, scanID, it.ID); err != nil {
+				return 0, false, fmt.Errorf("bookkeeping %s: %w", it.ID, err)
+			}
 		}
 		count++
 	}
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM item_metadata WHERE last_scan_id < ?`, scanID); err != nil {
-		return 0, fmt.Errorf("delete stale: %w", err)
+	delRes, err := tx.ExecContext(ctx, `DELETE FROM item_metadata WHERE last_scan_id < ?`, scanID)
+	if err != nil {
+		return 0, false, fmt.Errorf("delete stale: %w", err)
 	}
+	deleted, _ := delRes.RowsAffected()
 
 	if err := tx.Commit(); err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	return count, nil
+	return count, changedRows > 0 || deleted > 0, nil
 }
 
 // nextScanID atomically increments last_scan_id and returns the new

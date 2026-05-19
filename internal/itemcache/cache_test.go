@@ -186,6 +186,78 @@ func TestCacheIsEmpty(t *testing.T) {
 	}
 }
 
+// countingBumper captures BumpCatalogVersion calls so tests can
+// assert (or rule out) that Refresh triggered a kid-facing ETag
+// invalidation.
+type countingBumper struct {
+	n int
+}
+
+func (b *countingBumper) BumpCatalogVersion(_ context.Context) error {
+	b.n++
+	return nil
+}
+
+func TestItemCacheRefreshBumpsCatalogVersion(t *testing.T) {
+	conn, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	defer conn.Close()
+
+	jf := &fakeJellyfin{items: []jellyfin.Item{
+		{ID: "m1", Name: "Alpha", Type: "Movie"},
+	}}
+	c := New(conn, jf, zerolog.Nop())
+	bumper := &countingBumper{}
+	c.SetBumper(bumper)
+	ctx := context.Background()
+
+	// First refresh on an empty cache always inserts -> bump.
+	if err := c.Refresh(ctx); err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	if bumper.n != 1 {
+		t.Errorf("after first refresh, bump count = %d, want 1", bumper.n)
+	}
+
+	// Second refresh with the SAME items should be content-equal
+	// across the board -> no bump.
+	if err := c.Refresh(ctx); err != nil {
+		t.Fatalf("second refresh: %v", err)
+	}
+	if bumper.n != 1 {
+		t.Errorf("after no-op refresh, bump count = %d, want 1 (still)", bumper.n)
+	}
+
+	// Add a new item: insert -> bump.
+	jf.items = append(jf.items, jellyfin.Item{ID: "m2", Name: "Beta", Type: "Movie"})
+	if err := c.Refresh(ctx); err != nil {
+		t.Fatalf("third refresh: %v", err)
+	}
+	if bumper.n != 2 {
+		t.Errorf("after insert refresh, bump count = %d, want 2", bumper.n)
+	}
+
+	// Drop an item: delete -> bump.
+	jf.items = jf.items[:1]
+	if err := c.Refresh(ctx); err != nil {
+		t.Fatalf("fourth refresh: %v", err)
+	}
+	if bumper.n != 3 {
+		t.Errorf("after delete refresh, bump count = %d, want 3", bumper.n)
+	}
+
+	// Rename: content update -> bump.
+	jf.items[0].Name = "Alpha Renamed"
+	if err := c.Refresh(ctx); err != nil {
+		t.Fatalf("fifth refresh: %v", err)
+	}
+	if bumper.n != 4 {
+		t.Errorf("after rename refresh, bump count = %d, want 4", bumper.n)
+	}
+}
+
 func TestCacheListByTypeOrdersBySortNameNocase(t *testing.T) {
 	conn, err := db.Open(":memory:")
 	if err != nil {

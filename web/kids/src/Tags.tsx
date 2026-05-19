@@ -19,7 +19,7 @@ import { TAG_ICONS, isTagIconName } from "jellybean-shared";
 import { useHomeTabFocus } from "./useHomeTabFocus";
 import { useItemHiddenEvent } from "./itemHidden";
 import { useKidsResource } from "./useKidsResource";
-import { sessionCache } from "./kidsCache";
+import { sessionCache, sessionEtagCache } from "./kidsCache";
 
 // Tags is the kid's tag-browse landing page. Fetches /api/kids/tags
 // and renders one large landscape card per tag - title, description,
@@ -73,10 +73,12 @@ export default function Tags() {
         return url.toString();
     }, [session, adminProfileId]);
     const cache = useMemo(() => sessionCache<TagsResponse>(), []);
+    const etag = useMemo(() => sessionEtagCache(), []);
     const { data: fetchedData, error } = useKidsResource<TagsResponse>({
         url: tagsURL,
         cache,
         cacheKey,
+        etag,
         skipFetchWhenCacheHit: true,
     });
     const [data, setData] = useState<TagsResponse | null>(fetchedData);

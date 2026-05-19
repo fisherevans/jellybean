@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -351,4 +352,65 @@ func (s *Store) AppSettingExists(ctx context.Context, key string) (bool, error) 
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM app_settings WHERE key = ?`, key).Scan(&n)
 	return n > 0, err
+}
+
+// --- catalog version (t60) -------------------------------------------
+//
+// catalog_version is a monotonic counter folded into every kid-facing
+// ETag (Library, Browse, Tags, TagDetail) so a parent-side curation
+// mutation (or an itemcache refresh delta) invalidates the kid's
+// sessionStorage / IDB caches automatically. Bump points live in the
+// curation Store layer (one bump per write API, batched APIs bump
+// once) so handlers don't have to know about cache invalidation.
+//
+// The counter is stored in app_settings under key "catalog_version"
+// as a base-10 string. Reads return 0 when the row hasn't been
+// initialized yet (fresh DB, never bumped); that's fine - the ETag
+// still composes deterministically and the next bump produces a new
+// value.
+//
+// catalog_version is intentionally NOT in settings_registry's
+// admin-writable list; bumps are server-internal. It is registered so
+// admin tooling can read it for debugging.
+
+// BumpCatalogVersion increments the global catalog_version counter.
+// Idempotent at the SQL level: one UPSERT, no read-modify-write. Safe
+// to call inside or outside a transaction (callers in this package
+// hook it after their transaction commits to keep the bump out of the
+// hot SQLite WAL path).
+func (s *Store) BumpCatalogVersion(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO app_settings (key, value, updated_at)
+		VALUES ('catalog_version', '1', unixepoch())
+		ON CONFLICT(key) DO UPDATE SET
+		    value = CAST(CAST(value AS INTEGER) + 1 AS TEXT),
+		    updated_at = unixepoch()`)
+	return err
+}
+
+// bumpCatalog is the swallowing variant used by mutation paths in
+// this package. A bump failure must not cascade into the caller's
+// error path: the mutation already succeeded, and a missed bump just
+// means kids see slightly-stale data until the next mutation. The
+// alternative (returning the bump error) would roll back the mutation
+// from the caller's perspective, which is the wrong trade-off.
+func (s *Store) bumpCatalog(ctx context.Context) {
+	_ = s.BumpCatalogVersion(ctx)
+}
+
+// CatalogVersion reads the current value. Returns 0 when the key is
+// not yet present (no mutations since the DB was created).
+func (s *Store) CatalogVersion(ctx context.Context) (int64, error) {
+	v, err := s.AppSettingGet(ctx, "catalog_version")
+	if err != nil {
+		return 0, err
+	}
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, nil
+	}
+	return n, nil
 }

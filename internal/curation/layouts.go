@@ -216,6 +216,7 @@ func (s *Store) CreateLayout(ctx context.Context, in LayoutInput) (*Layout, erro
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
+	s.bumpCatalog(ctx)
 	return s.GetLayout(ctx, id)
 }
 
@@ -240,6 +241,7 @@ func (s *Store) UpdateLayout(ctx context.Context, id int64, in LayoutInput) (*La
 	if n == 0 {
 		return nil, ErrLayoutNotFound
 	}
+	s.bumpCatalog(ctx)
 	return s.GetLayout(ctx, id)
 }
 
@@ -265,7 +267,11 @@ func (s *Store) SetDefaultLayout(ctx context.Context, id int64) error {
 		UPDATE layouts SET is_default = 1, updated_at = unixepoch() WHERE id = ?`, id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpCatalog(ctx)
+	return nil
 }
 
 // DeleteLayout drops a layout. Blocked when:
@@ -286,8 +292,11 @@ func (s *Store) DeleteLayout(ctx context.Context, id int64) error {
 	if n > 0 {
 		return fmt.Errorf("layout has %d profile(s) assigned; reassign first", n)
 	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM layouts WHERE id = ?`, id)
-	return err
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM layouts WHERE id = ?`, id); err != nil {
+		return err
+	}
+	s.bumpCatalog(ctx)
+	return nil
 }
 
 // CloneLayout duplicates an existing layout (rows included). The new
@@ -330,6 +339,7 @@ func (s *Store) CloneLayout(ctx context.Context, srcID int64, newName string) (*
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.bumpCatalog(ctx)
 	return s.GetLayout(ctx, dstID)
 }
 
@@ -428,6 +438,7 @@ func (s *Store) AppendRow(ctx context.Context, layoutID int64, in LayoutRowInput
 	if err := s.invalidateLayoutCache(ctx, layoutID); err != nil {
 		return nil, err
 	}
+	s.bumpCatalog(ctx)
 	return s.GetLayoutRow(ctx, rowID)
 }
 
@@ -465,6 +476,7 @@ func (s *Store) UpdateRow(ctx context.Context, id int64, in LayoutRowInput) (*La
 	if err := s.invalidateLayoutCache(ctx, existing.LayoutID); err != nil {
 		return nil, err
 	}
+	s.bumpCatalog(ctx)
 	return s.GetLayoutRow(ctx, id)
 }
 
@@ -490,7 +502,11 @@ func (s *Store) DeleteRow(ctx context.Context, id int64) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.invalidateLayoutCache(ctx, row.LayoutID)
+	if err := s.invalidateLayoutCache(ctx, row.LayoutID); err != nil {
+		return err
+	}
+	s.bumpCatalog(ctx)
+	return nil
 }
 
 // ReorderRows sets the position of each id in `rowIDs` to its index
@@ -539,7 +555,11 @@ func (s *Store) ReorderRows(ctx context.Context, layoutID int64, rowIDs []int64)
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.invalidateLayoutCache(ctx, layoutID)
+	if err := s.invalidateLayoutCache(ctx, layoutID); err != nil {
+		return err
+	}
+	s.bumpCatalog(ctx)
+	return nil
 }
 
 // --- profile -> layout assignment --------------------------------------
@@ -567,8 +587,11 @@ func (s *Store) SetProfileLayout(ctx context.Context, profileID, layoutID int64)
 	}
 	// Invalidate cache for this profile across all layouts; cheap and
 	// keeps the next resolve from serving stale rows.
-	_, err = s.db.ExecContext(ctx, `DELETE FROM layout_row_cache WHERE profile_id = ?`, profileID)
-	return err
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM layout_row_cache WHERE profile_id = ?`, profileID); err != nil {
+		return err
+	}
+	s.bumpCatalog(ctx)
+	return nil
 }
 
 // --- cache --------------------------------------------------------------

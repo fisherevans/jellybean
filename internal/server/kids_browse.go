@@ -138,6 +138,27 @@ func (s *Server) browseContext() *browse.Context {
 // Auth: kid bearer (preferred) or admin cookie + ?profileId=.
 func (s *Server) handleKidsBrowse(w http.ResponseWriter, r *http.Request) {
 	kc, profileID := KidsContextFromRequest(r)
+	// ETag from catalog_version + (profile, user). Computed up
+	// front so a 304 short-circuits before the layout resolve and
+	// Jellyfin batch fetches. The layout-row cache (M8) is still
+	// allowed to satisfy a 200 response cheaply; the ETag piggy-
+	// backs on the same catalog_version that the cache resolver
+	// uses for its TTL invalidation.
+	ctx := r.Context()
+	etag, err := s.computeKidsETag(ctx, profileID, kc.JellyfinUserID, "browse")
+	if err != nil {
+		s.logger.Error().Err(err).Msg("kids browse etag")
+		http.Error(w, "failed to load browse", http.StatusInternalServerError)
+		return
+	}
+	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "private, must-revalidate")
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "private, must-revalidate")
 	s.respondBrowse(w, r, profileID, 0, kc.kidIDForBrowse(), kc.JellyfinUserID, kc.JellyfinToken)
 }
 

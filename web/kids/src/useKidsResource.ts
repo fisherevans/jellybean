@@ -164,7 +164,21 @@ export function useKidsResource<T>(
                 if (cached !== null) {
                     setData(cached);
                     setLoading(false);
-                    if (skipFetchRef.current) {
+                    // skipFetchWhenCacheHit + no etag backend = the
+                    // legacy "trust the cache until the user hits
+                    // 'Refresh from server'" path. Browse / Tags /
+                    // TagDetail used this before t60 to keep the
+                    // stable random preview pinned across remounts.
+                    //
+                    // skipFetchWhenCacheHit + etag backend = the
+                    // t60 path: we STILL fire the conditional GET so
+                    // a server-side catalog_version bump can rotate
+                    // the ETag and force a refresh. The 304 branch
+                    // below leaves state alone (preserving the stable
+                    // preview); a 200 swaps in the fresh body. This
+                    // is what lets a parent's admin mutation show up
+                    // on the TV without a manual refresh.
+                    if (skipFetchRef.current && !etagBackend) {
                         setIsStale(false);
                         return;
                     }

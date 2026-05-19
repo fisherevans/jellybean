@@ -312,6 +312,12 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load library", http.StatusInternalServerError)
 		return
 	}
+	catalogVersion, err := s.curation.CatalogVersion(ctx)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("kids library catalog version")
+		http.Error(w, "failed to load library", http.StatusInternalServerError)
+		return
+	}
 	etag := computeKidsLibraryETag(kidsLibraryETagInputs{
 		ProfileID:      profileID,
 		Section:        section,
@@ -321,6 +327,7 @@ func (s *Server) handleKidsLibrary(w http.ResponseWriter, r *http.Request) {
 		Search:         search,
 		Sort:           sortParam,
 		MaxSetAt:       maxSetAt,
+		CatalogVersion: catalogVersion,
 		JellyfinUserID: kc.JellyfinUserID,
 	})
 	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
@@ -738,6 +745,12 @@ func (s *Server) handleKidsLibraryFromJellyfin(
 // here; anything that doesn't (e.g. Jellyfin item fields) does not. The
 // goal is to compute the ETag from DB-only state so a matching
 // If-None-Match can short-circuit to 304 without a Jellyfin round-trip.
+//
+// CatalogVersion is the global monotonic counter bumped on any
+// curation mutation or itemcache scan delta (t60). Including it here
+// means a tag-rename / layout-edit / itemcache refresh that doesn't
+// touch categorizations (so MaxSetAt is unchanged) still rotates the
+// Library ETag.
 type kidsLibraryETagInputs struct {
 	ProfileID      int64
 	Section        string
@@ -747,6 +760,7 @@ type kidsLibraryETagInputs struct {
 	Search         string
 	Sort           string
 	MaxSetAt       int64
+	CatalogVersion int64
 	JellyfinUserID string
 }
 
@@ -775,7 +789,7 @@ func computeKidsLibraryETag(in kidsLibraryETagInputs) string {
 	sort.Strings(types)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "profile=%d;sec=%s;type=%s;limit=%d;start=%d;search=%s;sort=%s;mtime=%d;userId=%s",
+	fmt.Fprintf(&b, "profile=%d;sec=%s;type=%s;limit=%d;start=%d;search=%s;sort=%s;mtime=%d;cat=%d;userId=%s",
 		in.ProfileID,
 		in.Section,
 		strings.Join(types, ","),
@@ -784,6 +798,7 @@ func computeKidsLibraryETag(in kidsLibraryETagInputs) string {
 		in.Search,
 		in.Sort,
 		in.MaxSetAt,
+		in.CatalogVersion,
 		in.JellyfinUserID,
 	)
 	if in.Section == "continue-watching" {
@@ -792,6 +807,30 @@ func computeKidsLibraryETag(in kidsLibraryETagInputs) string {
 
 	sum := sha256.Sum256([]byte(b.String()))
 	return `W/"` + base64.RawURLEncoding.EncodeToString(sum[:]) + `"`
+}
+
+// computeKidsETag is the cross-endpoint ETag builder used by Browse,
+// Tags, and TagDetail. Mixes in catalog_version (the global bump
+// counter), profile id, user id, an endpoint-specific salt, and any
+// extras the caller wants (sort + filter params, tag id, etc.). The
+// resulting ETag is weak (W/"...") to match Library's shape.
+//
+// catalog_version is fetched off the curation store at call time. A
+// fetch error returns an empty string + the error so the handler can
+// fall back to no-ETag mode rather than serving a stale or
+// wrong-keyed value.
+func (s *Server) computeKidsETag(ctx context.Context, profileID int64, userID, salt string, extra ...interface{}) (string, error) {
+	cv, err := s.curation.CatalogVersion(ctx)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "cat=%d;profile=%d;userId=%s;salt=%s", cv, profileID, userID, salt)
+	for i, v := range extra {
+		fmt.Fprintf(&b, ";e%d=%v", i, v)
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return `W/"` + base64.RawURLEncoding.EncodeToString(sum[:]) + `"`, nil
 }
 
 func itemIDs(items []jellyfin.Item) []string {
