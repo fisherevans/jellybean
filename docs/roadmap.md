@@ -9,7 +9,7 @@ here.
 ## Sequence
 
 ```
-1.  M5    Finish TV deployment            (current; in flight)
+1.  M5    Finish TV deployment            (Skyworth sideload + player transport)
 2.  M-AT  Device-aware transcode          (fixes Skyworth stuttering)
 3.  M6    Tags + Favorites + Filters      (foundation; blocks 5 others)
 4.  M14   API keys                        (small; enables LLM-assisted M6)
@@ -120,10 +120,17 @@ M16 (research, no hard deps)
 
 ## Tracking
 
+- **Status lives in GitHub, not here.** This doc is order + rationale
+  only; it does not track what's done. For what's closed / in flight /
+  next, query the milestones:
+  `gh api repos/fisherevans/jellybean/milestones | jq '.[] | {title, state, open_issues, closed_issues}'`.
+  Don't annotate this doc with "current" / "done" markers - they drift.
 - Each issue body has a "Depends on" section listing prerequisite
   issues. Useful when picking up a single ticket.
-- This doc is the authoritative milestone order. When a milestone
-  closes, strike it through here and pick the next entry.
+- Caveat: code can run ahead of issue state. Backend + admin plumbing
+  for a milestone often lands while its kid-side issues are still open,
+  so confirm a feature's real state against the code, not just the
+  issue flags.
 - GitHub Projects boards aren't worth setting up for this size of
   work - a list works fine.
 
@@ -142,7 +149,8 @@ M16 (research, no hard deps)
 
 ## Roadmap meta
 
-- Update this doc when a milestone closes or when ordering changes.
+- Update this doc only when the ordering or dependencies change - not
+  when a milestone merely opens or closes (that's GitHub's job).
 - New milestones get appended in the dependency graph + sequence.
 - Don't renumber existing milestones - the labels are stable
   references in commit messages, PR titles, and history.
