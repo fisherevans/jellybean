@@ -30,21 +30,17 @@ jobs:
               with:
                   node-version: ${{ env.NODE_VERSION }}
                   cache: npm
-                  cache-dependency-path: |
-                      web/admin/package-lock.json
-                      web/kids/package-lock.json
+                  cache-dependency-path: package-lock.json
 
-            - name: Build admin web app
-              working-directory: web/admin
-              run: |
-                  npm ci --no-audit --no-fund
-                  npm run build
+            # npm workspaces: a single hoisted install at the root, then build
+            # each app. web/shared (jellybean-shared) has no build script and is
+            # consumed as source, so build admin/kids explicitly rather than
+            # `--workspaces` (which errors on the missing script).
+            - name: Install web deps
+              run: npm ci --no-audit --no-fund
 
-            - name: Build kids web app
-              working-directory: web/kids
-              run: |
-                  npm ci --no-audit --no-fund
-                  npm run build
+            - name: Build web apps
+              run: npm run build:admin && npm run build:kids
 
             - name: Go vet
               run: GOWORK=off go vet ./...

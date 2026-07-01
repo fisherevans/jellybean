@@ -15,13 +15,17 @@ WORKDIR /web
 # Workspace install: root package.json + lockfile + each workspace's package.json,
 # then a single npm ci. Hoisted node_modules sits at the repo root.
 COPY package.json package-lock.json ./
+COPY web/shared/package.json web/shared/package.json
 COPY web/admin/package.json web/admin/package.json
 COPY web/kids/package.json web/kids/package.json
 RUN npm ci --no-audit --no-fund
 
+COPY web/shared/ web/shared/
 COPY web/admin/ web/admin/
 COPY web/kids/ web/kids/
-RUN npm run build --workspaces
+# build:admin + build:kids, not --workspaces: web/shared has no build script
+# and is imported as source by both apps.
+RUN npm run build:admin && npm run build:kids
 
 # -- Stage 2: go -----------------------------------------------------------
 FROM golang:${GO_VERSION}-alpine AS gobuild
