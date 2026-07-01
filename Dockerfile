@@ -43,6 +43,10 @@ ARG TARGETARCH
 RUN GOWORK=off CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/jellybean ./cmd/jellybean
 
+# Seed the data dir here (distroless has no shell to mkdir/chown) so it can be
+# COPY --chown'd into the runtime image below.
+RUN mkdir -p /seed/jellybean
+
 # -- Stage 3: runtime ------------------------------------------------------
 FROM ${RUNTIME_BASE}
 
@@ -51,6 +55,11 @@ COPY --from=gobuild /out/jellybean /jellybean
 ENV JELLYBEAN_PORT=8080 \
     JELLYBEAN_DB_PATH=/var/lib/jellybean/jellybean.db
 EXPOSE 8080
+
+# Create the data dir owned by the nonroot uid BEFORE declaring the VOLUME.
+# Otherwise Docker auto-creates the mountpoint (and seeds a fresh named volume)
+# as root, and the nonroot process can't create the SQLite file -> CANTOPEN(14).
+COPY --from=gobuild --chown=65532:65532 /seed/jellybean /var/lib/jellybean
 VOLUME ["/var/lib/jellybean"]
 
 # distroless ships a nonroot user (uid 65532); the binary listens on a
