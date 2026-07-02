@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/signal"
@@ -122,6 +123,16 @@ func run() error {
 		cancelInit()
 	}
 
+	// Assets are the go:embed'd builds by default. If JELLYBEAN_WEB_DIR is
+	// set (dev fast loop), serve them from that directory on disk instead so
+	// an rsync'd rebuild shows up on reload without rebuilding the image.
+	var adminAssets, kidsAssets fs.FS = jellybean.AdminDist, jellybean.KidsDist
+	if cfg.WebDir != "" {
+		adminAssets = os.DirFS(cfg.WebDir)
+		kidsAssets = os.DirFS(cfg.WebDir)
+		logger.Info().Str("web_dir", cfg.WebDir).Msg("serving web from disk (dev)")
+	}
+
 	srv := server.New(server.Options{
 		Config:          cfg,
 		Logger:          logger,
@@ -129,8 +140,8 @@ func run() error {
 		DB:              conn,
 		Cache:           cache,
 		JellyfinVersion: info.Version,
-		AdminAssets:     jellybean.AdminDist,
-		KidsAssets:      jellybean.KidsDist,
+		AdminAssets:     adminAssets,
+		KidsAssets:      kidsAssets,
 	})
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),

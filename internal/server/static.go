@@ -13,15 +13,22 @@ import (
 type spaHandler struct {
 	fsys     fs.FS // already rooted at the dist directory
 	notFound []byte
+	live     bool // re-read index.html per request (disk-served dev assets)
 }
 
-func newSPA(root fs.FS, distSubpath string) (*spaHandler, error) {
+func newSPA(root fs.FS, distSubpath string, live bool) (*spaHandler, error) {
 	sub, err := fs.Sub(root, distSubpath)
 	if err != nil {
 		return nil, err
 	}
-	idx, _ := fs.ReadFile(sub, "index.html")
-	return &spaHandler{fsys: sub, notFound: idx}, nil
+	h := &spaHandler{fsys: sub, live: live}
+	if !live {
+		// Cache index.html once for the embedded (prod) path. In live mode
+		// it's read fresh each request so an rsync'd rebuild's new asset
+		// hashes show up on the next reload without a restart.
+		h.notFound, _ = fs.ReadFile(sub, "index.html")
+	}
+	return h, nil
 }
 
 func (s *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -56,7 +63,13 @@ func (s *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // next page load picks up new asset hashes after a deploy. Without this the
 // browser can keep serving a stale index.html that points at deleted JS.
 func (s *spaHandler) serveIndex(w http.ResponseWriter) {
-	if len(s.notFound) == 0 {
+	idx := s.notFound
+	if s.live {
+		// Read fresh from disk so a rebuilt index.html (new asset hashes)
+		// is served without restarting the process.
+		idx, _ = fs.ReadFile(s.fsys, "index.html")
+	}
+	if len(idx) == 0 {
 		http.Error(w, "frontend not built; run `npm run build` in web/admin or web/kids", http.StatusServiceUnavailable)
 		return
 	}
@@ -64,5 +77,5 @@ func (s *spaHandler) serveIndex(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
-	w.Write(s.notFound)
+	w.Write(idx)
 }

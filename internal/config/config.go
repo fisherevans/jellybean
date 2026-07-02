@@ -24,6 +24,12 @@ type Config struct {
 	// Defaults to 5m; override with JELLYBEAN_METADATA_CACHE_TTL
 	// (any time.ParseDuration value, e.g. "1m", "10m", "1h").
 	MetadataCacheTTL time.Duration
+	// WebDir, when set (JELLYBEAN_WEB_DIR), serves the web apps from that
+	// directory on disk instead of the go:embed'd assets, and re-reads
+	// index.html per request so an rsync'd rebuild shows up on reload. This
+	// is the dev-instance fast loop (build web natively -> rsync -> reload,
+	// no image rebuild). Empty in prod -> embedded assets, cached index.
+	WebDir string
 }
 
 const (
@@ -34,6 +40,7 @@ const (
 	envSessionSecret     = "JELLYBEAN_SESSION_SECRET"
 	envEnv               = "JELLYBEAN_ENV"
 	envMetadataCacheTTL  = "JELLYBEAN_METADATA_CACHE_TTL"
+	envWebDir            = "JELLYBEAN_WEB_DIR"
 	defaultMetadataCache = 5 * time.Minute
 )
 
@@ -81,6 +88,8 @@ func Load() (*Config, error) {
 	if v := os.Getenv(envEnv); v != "" {
 		cfg.Env = v
 	}
+
+	cfg.WebDir = os.Getenv(envWebDir)
 
 	if v := os.Getenv(envMetadataCacheTTL); v != "" {
 		d, err := time.ParseDuration(v)
