@@ -12,6 +12,13 @@ import HlsVideo from "./HlsVideo";
 import OverrideModal from "./OverrideModal";
 import PlayerTransport from "./PlayerTransport";
 import { type MediaErrorKind, playSessionIdFromUrl } from "./playerHelpers";
+import { type PlaybackBackend } from "./player/backend";
+import {
+    JellybeanStreamResolver,
+    type NextUpResponse,
+    type StreamResolver,
+    type StreamResponse,
+} from "./player/resolver";
 
 // Play is the kid playback screen. Movies stream the requested item
 // directly; series resolve next-up first and stream that episode.
@@ -28,40 +35,13 @@ import { type MediaErrorKind, playSessionIdFromUrl } from "./playerHelpers";
 //     Jellyfin doesn't accumulate stale transcode sessions
 //   - surfaces a Reset Player UI when the player can't recover
 
-type StreamResponse = {
-    streamUrl: string;
-    itemId: string;
-    itemName: string;
-    itemType?: string;
-    seriesId?: string;
-    seriesName?: string;
-    indexNumber?: number;
-    parentIndexNumber?: number;
-    productionYear?: number;
-    userData?: {
-        PlaybackPositionTicks?: number;
-        PlayedPercentage?: number;
-        Played?: boolean;
-    };
-    mediaSourceId?: string;
-    playbackPath?: string;
-    favoriteItemId?: string;
-    isFavorite?: boolean;
-    runtimeTicks?: number;
-};
-
-type NextUpResponse = {
-    episodeId: string;
-    name: string;
-    seriesId?: string;
-    seriesName?: string;
-    indexNumber?: number;
-    parentIndexNumber?: number;
-    userData?: StreamResponse["userData"];
-};
-
 const TICKS_PER_SECOND = 10_000_000;
 const PROGRESS_INTERVAL_MS = 10_000;
+
+// The stream-resolution seam (jellybean#107). Stateless, so a single
+// module-level instance is fine. Swapping in a DirectJellyfinStreamResolver
+// later is a one-line change here.
+const resolver: StreamResolver = new JellybeanStreamResolver();
 
 // PlayerStatus is the single source of truth for the loading / playing
 // / error UI. Replaces the M-era jumble of (hasStarted, isBuffering,
@@ -123,7 +103,7 @@ export default function Play() {
     // change - just a temporary UI hint.
     const [isBuffering, setIsBuffering] = useState(false);
 
-    const videoRef = useRef<HTMLVideoElement | null>(null);
+    const backendRef = useRef<PlaybackBackend | null>(null);
     const backRef = useRef<HTMLAnchorElement | null>(null);
     const favoriteRef = useRef<HTMLButtonElement | null>(null);
     const reportedStart = useRef(false);
@@ -229,7 +209,7 @@ export default function Play() {
     // video so the show isn't running behind the modal.
     const handleLongPress = useCallback(() => {
         if (!stream) return;
-        const v = videoRef.current;
+        const v = backendRef.current;
         if (v && !v.paused) v.pause();
         const pct = stream.userData?.PlayedPercentage ?? 0;
         const playedFlag = stream.userData?.Played ?? false;
@@ -303,7 +283,7 @@ export default function Play() {
 
         (async () => {
             try {
-                const first = await fetchStream(itemId);
+                const first = await resolver.resolveStream(itemId);
                 if (cancelled) return;
                 if (first.itemType !== "Series") {
                     dispatch({ type: "stream-fetched", stream: first });
@@ -313,9 +293,9 @@ export default function Play() {
                     setSeriesLabel(first.seriesName ?? null);
                     return;
                 }
-                const next = await fetchNextUp(itemId);
+                const next = await resolver.resolveNextUp(itemId);
                 if (cancelled) return;
-                const episode = await fetchStream(next.episodeId);
+                const episode = await resolver.resolveStream(next.episodeId);
                 if (cancelled) return;
                 setSeriesLabel(next.seriesName ?? first.itemName);
                 if (!episode.userData && next.userData) {
@@ -357,7 +337,7 @@ export default function Play() {
     }, []);
 
     const positionTicks = useCallback((): number => {
-        const v = videoRef.current;
+        const v = backendRef.current;
         if (!v) return 0;
         // Round to int: float multiplication produces FP artifacts that
         // Go's strict JSON int64 decoder rejects.
@@ -423,7 +403,7 @@ export default function Play() {
     useEffect(() => {
         if (!stream) return;
         const id = window.setInterval(() => {
-            const v = videoRef.current;
+            const v = backendRef.current;
             if (!v) return;
             reportProgress(v.paused);
         }, PROGRESS_INTERVAL_MS);
@@ -469,7 +449,7 @@ export default function Play() {
         const seriesId = seriesIdForNextRef.current;
         const epId = currentEpisodeIdRef.current;
         if (!seriesId || !epId) return;
-        const v = videoRef.current;
+        const v = backendRef.current;
         if (!v || !v.duration || !Number.isFinite(v.duration)) return;
         const pct = (v.currentTime / v.duration) * 100;
         const isShort = v.duration <= 15 * 60; // <= 15 minutes
@@ -479,7 +459,7 @@ export default function Play() {
         upNextTriggeredRef.current = true;
         void (async () => {
             try {
-                const next = await fetchNextUp(seriesId, epId);
+                const next = await resolver.resolveNextUp(seriesId, epId);
                 if (!next.episodeId || next.episodeId === epId) {
                     // Last episode of the series, or the server
                     // returned the same episode (already-loaded
@@ -544,7 +524,7 @@ export default function Play() {
     }
 
     const handleRestart = useCallback(() => {
-        const v = videoRef.current;
+        const v = backendRef.current;
         if (!v) return;
         v.currentTime = 0;
         const p = v.play();
@@ -565,7 +545,7 @@ export default function Play() {
         advancingRef.current = true;
         reportStopped();
         drainQueue(queueRef.current);
-        const v = videoRef.current;
+        const v = backendRef.current;
         if (v && !v.paused) {
             try {
                 v.pause();
@@ -579,7 +559,7 @@ export default function Play() {
         }
         (async () => {
             try {
-                const next = await fetchNextUp(seriesIdForNext, currentEpisodeId);
+                const next = await resolver.resolveNextUp(seriesIdForNext, currentEpisodeId);
                 // replace=true so TV hardware-back walks /play/EPN ->
                 // /library directly, not back through every episode.
                 nav(
@@ -663,7 +643,7 @@ export default function Play() {
                 </div>
             )}
             <HlsVideo
-                ref={videoRef}
+                ref={backendRef}
                 src={stream.streamUrl}
                 resumeSeconds={resumeSeconds}
                 autoPlay
@@ -780,7 +760,7 @@ export default function Play() {
                 </div>
             )}
             <PlayerTransport
-                videoRef={videoRef}
+                backendRef={backendRef}
                 onRestart={handleRestart}
                 onNextEpisode={showNextEpisode ? handleNextEpisode : undefined}
                 onVisibleChange={setTransportVisible}
@@ -982,53 +962,6 @@ function isNetworkError(err: unknown): boolean {
     if (err instanceof TypeError) return true;
     if (!(err instanceof Error)) return true;
     return false;
-}
-
-async function fetchStream(itemId: string): Promise<StreamResponse> {
-    // Carry along any admin-preview params (?profileId=N&kidId=M)
-    // from the page URL. The kids middleware requires profileId on
-    // the admin path; bearer-auth kids carry it implicitly.
-    const url = new URL(
-        `/api/kids/items/${encodeURIComponent(itemId)}/stream`,
-        window.location.origin,
-    );
-    const passthrough = new URLSearchParams(window.location.search);
-    for (const k of ["profileId", "kidId"]) {
-        const v = passthrough.get(k);
-        if (v) url.searchParams.set(k, v);
-    }
-    const res = await fetch(url.toString(), {
-        credentials: "same-origin",
-        headers: authHeaders(),
-    });
-    if (!res.ok) {
-        if (res.status === 401) {
-            throw new Error(
-                "Not signed in. Sign in at /kids/login or sign in as admin at /.",
-            );
-        }
-        throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
-    }
-    return (await res.json()) as StreamResponse;
-}
-
-async function fetchNextUp(
-    seriesId: string,
-    after?: string,
-): Promise<NextUpResponse> {
-    const url = new URL(
-        `/api/kids/items/${encodeURIComponent(seriesId)}/next-up`,
-        window.location.origin,
-    );
-    if (after) url.searchParams.set("after", after);
-    const res = await fetch(url.toString(), {
-        credentials: "same-origin",
-        headers: authHeaders(),
-    });
-    if (!res.ok) {
-        throw new Error(`next-up: ${res.status}: ${await res.text()}`);
-    }
-    return (await res.json()) as NextUpResponse;
 }
 
 async function postStopEncoding(playSessionId: string): Promise<void> {

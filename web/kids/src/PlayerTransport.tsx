@@ -5,6 +5,7 @@ import {
     Play,
     SkipForward,
 } from "@phosphor-icons/react";
+import { type PlaybackBackend } from "./player/backend";
 
 // PlayerTransport is the kid-friendly video transport. Modeled on
 // Netflix's player but stripped down to the actions a kid on a TV remote
@@ -36,7 +37,11 @@ import {
 //     touch and mouse without a separate branch.
 
 type PlayerTransportProps = {
-    videoRef: React.RefObject<HTMLVideoElement | null>;
+    // The playback engine, behind the PlaybackBackend seam (jellybean#107).
+    // Its surface mirrors the HTMLMediaElement subset this transport uses,
+    // so every call site below (v.currentTime, v.paused, v.play(),
+    // v.addEventListener, ...) is unchanged from the raw-<video> era.
+    backendRef: React.RefObject<PlaybackBackend | null>;
     onRestart: () => void;
     onNextEpisode?: () => void;
     // Emitted whenever the transport's internal visibility flips. The
@@ -102,7 +107,7 @@ type ButtonDef = {
 const ICON_SIZE = 48;
 
 export default function PlayerTransport({
-    videoRef,
+    backendRef,
     onRestart,
     onNextEpisode,
     onVisibleChange,
@@ -233,13 +238,13 @@ export default function PlayerTransport({
             window.clearTimeout(hideTimerRef.current);
             hideTimerRef.current = null;
         }
-        const v = videoRef.current;
+        const v = backendRef.current;
         if (v && !v.paused && !bufferingRef.current) {
             hideTimerRef.current = window.setTimeout(() => {
                 setVisible(false);
             }, HIDE_TIMEOUT_MS);
         }
-    }, [videoRef]);
+    }, [backendRef]);
 
     // Show the transport in response to user input. Returns true when
     // this call is revealing the transport (i.e. it was hidden; the
@@ -259,7 +264,7 @@ export default function PlayerTransport({
     // durationchange flip React state; timeupdate is intentionally NOT
     // wired (the 250ms interval covers thumb position).
     useEffect(() => {
-        const v = videoRef.current;
+        const v = backendRef.current;
         if (!v) return;
         const onPlay = () => {
             // First play event after mount marks the buffering period
@@ -317,14 +322,14 @@ export default function PlayerTransport({
             v.removeEventListener("playing", onPlaying);
             v.removeEventListener("durationchange", onDurationChange);
         };
-    }, [videoRef, armHideTimer]);
+    }, [backendRef, armHideTimer]);
 
     // Tick: read currentTime from the video and update the scrubber
     // thumb / fill / time label imperatively. 250ms is roughly what
     // YouTube's web player uses; it's smooth enough at 1080p and avoids
     // doing per-frame work on a slow TV.
     useEffect(() => {
-        const v = videoRef.current;
+        const v = backendRef.current;
         if (!v) return;
         let raf = 0;
         const tick = () => {
@@ -352,7 +357,7 @@ export default function PlayerTransport({
             window.clearInterval(id);
             cancelAnimationFrame(raf);
         };
-    }, [videoRef, duration]);
+    }, [backendRef, duration]);
 
     // Cleanup the hide timer on unmount. We don't auto-arm at mount
     // anymore because the transport starts hidden; reveals come from
@@ -393,7 +398,7 @@ export default function PlayerTransport({
             <Pause weight="fill" size={ICON_SIZE} />
         ),
         onActivate: () => {
-            const v = videoRef.current;
+            const v = backendRef.current;
             if (!v) return;
             console.log(
                 `[player] playpause.activate -> v.paused=${v.paused} -> ${
@@ -435,7 +440,7 @@ export default function PlayerTransport({
     // didn't bind it through the transport.
     useEffect(() => {
         function seek(deltaSeconds: number) {
-            const v = videoRef.current;
+            const v = backendRef.current;
             if (!v || !isFinite(v.duration)) return;
             const base = lastSeekTargetRef.current ?? v.currentTime;
             const next = Math.max(0, Math.min(v.duration - 1, base + deltaSeconds));
@@ -464,7 +469,7 @@ export default function PlayerTransport({
             }
             seekCommitTimerRef.current = window.setTimeout(() => {
                 seekCommitTimerRef.current = null;
-                const vid = videoRef.current;
+                const vid = backendRef.current;
                 if (!vid) return;
                 const target = lastSeekTargetRef.current;
                 if (target === null) return;
@@ -487,7 +492,7 @@ export default function PlayerTransport({
             return SEEK_STEP_SECONDS;
         }
         function togglePlay() {
-            const v = videoRef.current;
+            const v = backendRef.current;
             if (!v) return;
             // Kid's manual play/pause overrides any pending seek-
             // resume so we don't fight their intent. If they hit pause
@@ -506,7 +511,7 @@ export default function PlayerTransport({
             // shows exactly what we saw on each press. Drop these
             // logs once the play/pause regression is closed; they
             // generate one line per keypress.
-            const v = videoRef.current;
+            const v = backendRef.current;
             const visState = visible ? "visible" : "hidden";
             const focusState =
                 focus.kind === "scrubber"
@@ -660,12 +665,12 @@ export default function PlayerTransport({
                 return;
             }
             if (e.key === "MediaPlay") {
-                videoRef.current?.play().catch(() => {});
+                backendRef.current?.play().catch(() => {});
                 showOnInput();
                 return;
             }
             if (e.key === "MediaPause") {
-                videoRef.current?.pause();
+                backendRef.current?.pause();
                 showOnInput();
                 return;
             }
@@ -697,7 +702,7 @@ export default function PlayerTransport({
                 // do anything since the kid wasn't looking at the
                 // newly-visible chrome.
                 if (e.key === "Enter" || e.key === " ") {
-                    videoRef.current?.pause();
+                    backendRef.current?.pause();
                 }
                 console.log("[player]   action: reveal-only (consumed)");
                 // preventDefault unconditionally on the reveal press.
@@ -837,7 +842,7 @@ export default function PlayerTransport({
             window.removeEventListener("keydown", onKey);
             window.removeEventListener("keyup", onKeyUp);
         };
-    }, [focus, buttons, showOnInput, videoRef, onBack]);
+    }, [focus, buttons, showOnInput, backendRef, onBack]);
 
     // Cancel any pending debounced seek commit on UNMOUNT only. A
     // half-finished hold would otherwise fire v.currentTime on a
@@ -907,7 +912,7 @@ export default function PlayerTransport({
     // Pointer events cover both touch and mouse uniformly.
     const onRailPointerDown = useCallback(
         (e: React.PointerEvent<HTMLDivElement>) => {
-            const v = videoRef.current;
+            const v = backendRef.current;
             const rail = railRef.current;
             if (!v || !rail || !isFinite(v.duration) || v.duration <= 0) return;
             (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -946,20 +951,20 @@ export default function PlayerTransport({
             armHideTimer();
             setFocus({ kind: "scrubber" });
         },
-        [videoRef, armHideTimer],
+        [backendRef, armHideTimer],
     );
 
     // Reset the seek base whenever the video position settles back to
     // the actual currentTime (i.e. between input bursts).
     useEffect(() => {
-        const v = videoRef.current;
+        const v = backendRef.current;
         if (!v) return;
         const onSeeked = () => {
             lastSeekTargetRef.current = null;
         };
         v.addEventListener("seeked", onSeeked);
         return () => v.removeEventListener("seeked", onSeeked);
-    }, [videoRef]);
+    }, [backendRef]);
 
     // After each render, push the focused button into the DOM focus so
     // assistive tech / TV browsers move the focus ring with the state.
@@ -1083,7 +1088,7 @@ export default function PlayerTransport({
 //      Android path - audio focus held by another app, decoder pool
 //      stuck).
 // We log all three so future bug reports include actionable signal.
-function attemptPlay(v: HTMLVideoElement): void {
+function attemptPlay(v: PlaybackBackend): void {
     const p = v.play();
     if (!p || typeof p.then !== "function") return;
     p.then(

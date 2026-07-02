@@ -1,38 +1,21 @@
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { type MediaErrorKind } from "./playerHelpers";
 import {
-    forwardRef,
-    useEffect,
-    useImperativeHandle,
-    useRef,
-} from "react";
-import Hls from "hls.js";
-import {
-    bindHlsErrors,
-    classifyMediaError,
-    type MediaErrorKind,
-    playMedia,
-    resetHlsRecovery,
-    resetSrc,
-} from "./playerHelpers";
+    BrowserPlaybackBackend,
+    type PlaybackBackend,
+} from "./player/backend";
 
-// HlsVideo wraps a single <video> element and re-attaches hls.js when
-// the `src` prop changes. The element itself never re-mounts during
-// the player's lifetime - that's deliberate, mirroring jellyfin-web's
-// htmlVideoPlayer plugin (`setCurrentSrc` calls `resetSrc()` then
-// builds a new Hls instance, never replacing the <video> tag).
+// HlsVideo renders the single <video> element and exposes it to the
+// parent as a PlaybackBackend (jellybean#107, P0). The <video>+hls.js
+// engine logic now lives in BrowserPlaybackBackend; this component only
+// owns the React rendering + wiring the backend's lifecycle to the `src`
+// prop. The <video> element never re-mounts during the player's lifetime
+// (deliberate - a wedged Android WebView decoder stays wedged across
+// element re-creation, so re-mounting buys nothing). Native media events
+// still surface as React props on the element for Play.tsx's handlers.
 //
-// Re-mounting the <video> tag does NOT reset the underlying browser
-// decoder - on Android WebView a wedged decoder stays wedged across
-// element re-creation. The single-element pattern keeps state simpler
-// and matches what the rest of the world does.
-//
-// hls.js config matches jellyfin-web (plugin.js:455):
-//   - startPosition: pass the resume offset in seconds so hls.js seeks
-//     before fetching the first segment (no client-side .currentTime
-//     hack needed)
-//   - manifestLoadingTimeOut: 20s, generous enough for a heavily-busy
-//     Jellyfin transcoder to produce the playlist
-//   - maxBufferLength + maxMaxBufferLength: 30s (or 6s for high
-//     bitrates per their HWA-encoder workaround, which we're below)
+// The forwarded ref is the PlaybackBackend (not the raw element): both
+// Play.tsx and PlayerTransport.tsx drive playback through that seam.
 
 type Props = {
     src: string;
@@ -57,7 +40,7 @@ type Props = {
     onMediaError?: (kind: MediaErrorKind) => void;
 };
 
-export default forwardRef<HTMLVideoElement, Props>(function HlsVideo(
+export default forwardRef<PlaybackBackend, Props>(function HlsVideo(
     {
         src,
         style,
@@ -69,115 +52,42 @@ export default forwardRef<HTMLVideoElement, Props>(function HlsVideo(
     },
     forwardedRef,
 ) {
-    const ref = useRef<HTMLVideoElement>(null);
-    useImperativeHandle(forwardedRef, () => ref.current!, []);
+    const videoElRef = useRef<HTMLVideoElement | null>(null);
+    const backendRef = useRef<BrowserPlaybackBackend | null>(null);
 
+    // Create the backend as soon as the <video> element exists. The ref
+    // callback runs during commit, before layout effects (including the
+    // useImperativeHandle below and PlayerTransport's subscribe effect),
+    // so the backend is available by the time anyone reads the ref.
+    const setVideoEl = (el: HTMLVideoElement | null) => {
+        videoElRef.current = el;
+        if (el && !backendRef.current) {
+            backendRef.current = new BrowserPlaybackBackend(el);
+        }
+    };
+
+    useImperativeHandle(forwardedRef, () => backendRef.current!, []);
+
+    // (Re)attach the stream whenever the source (or attach-time options)
+    // change. loadStream tears down the previously-loaded stream first,
+    // matching HlsVideo's old effect-cleanup-then-resetSrc sequence.
     useEffect(() => {
-        const video = ref.current;
-        if (!video) return;
-        if (!src) {
-            resetSrc(video);
-            return;
-        }
-        const isHLS = src.includes(".m3u8");
-        let hls: Hls | null = null;
-
-        // Wipe any previous src before attaching the next one. Mirrors
-        // jellyfin-web's resetSrc() call in setCurrentSrc().
-        resetSrc(video);
-
-        const tryPlay = () => {
-            if (!autoPlay) return;
-            void playMedia(video);
-        };
-
-        const handleNativeError = () => {
-            const kind = classifyMediaError(video);
-            if (kind) onMediaError?.(kind);
-        };
-        video.addEventListener("error", handleNativeError);
-
-        if (!isHLS) {
-            video.src = src;
-            const onMeta = () => {
-                if (resumeSeconds > 0 && video.duration > resumeSeconds) {
-                    try {
-                        video.currentTime = resumeSeconds;
-                    } catch {
-                        /* ignore - some browsers throw seeking pre-buffer */
-                    }
-                }
-                tryPlay();
-            };
-            video.addEventListener("loadedmetadata", onMeta, { once: true });
-            return () => {
-                video.removeEventListener("loadedmetadata", onMeta);
-                video.removeEventListener("error", handleNativeError);
-            };
-        }
-
-        if (video.canPlayType("application/vnd.apple.mpegurl")) {
-            // Native HLS path (Safari, iOS WebView). hls.js has a
-            // smaller native HLS use case; defer to the platform.
-            video.src = src;
-            const onMeta = () => {
-                if (resumeSeconds > 0 && video.duration > resumeSeconds) {
-                    try {
-                        video.currentTime = resumeSeconds;
-                    } catch {
-                        /* ignore */
-                    }
-                }
-                tryPlay();
-            };
-            video.addEventListener("loadedmetadata", onMeta, { once: true });
-            return () => {
-                video.removeEventListener("loadedmetadata", onMeta);
-                video.removeEventListener("error", handleNativeError);
-            };
-        }
-
-        if (Hls.isSupported()) {
-            resetHlsRecovery();
-            hls = new Hls({
-                startPosition: resumeSeconds > 0 ? resumeSeconds : -1,
-                manifestLoadingTimeOut: 20_000,
-                maxBufferLength: 30,
-                maxMaxBufferLength: 30,
-            });
-            bindHlsErrors(hls, (kind) => {
-                onMediaError?.(kind);
-            });
-            hls.on(Hls.Events.MANIFEST_PARSED, tryPlay);
-            hls.loadSource(src);
-            hls.attachMedia(video);
-            const cleanup = () => {
-                if (hls) {
-                    try {
-                        hls.destroy();
-                    } catch {
-                        /* ignore */
-                    }
-                    hls = null;
-                }
-                video.removeEventListener("error", handleNativeError);
-            };
-            return cleanup;
-        }
-
-        // Last-resort: assume the platform can play whatever this is.
-        video.src = src;
-        const onMeta = () => tryPlay();
-        video.addEventListener("loadedmetadata", onMeta, { once: true });
-        return () => {
-            video.removeEventListener("loadedmetadata", onMeta);
-            video.removeEventListener("error", handleNativeError);
-        };
+        const backend = backendRef.current;
+        if (!backend) return;
+        backend.loadStream(src, { resumeSeconds, autoPlay, onError: onMediaError });
     }, [src, autoPlay, resumeSeconds, onMediaError]);
+
+    // Final teardown on unmount (destroys the hls.js instance + removes
+    // the per-load listeners).
+    useEffect(() => {
+        return () => {
+            backendRef.current?.destroy();
+        };
+    }, []);
 
     return (
         <video
-            ref={ref}
+            ref={setVideoEl}
             controls={controls}
             // 1x1 black PNG, base64. Suppresses Android WebView's
             // default grey "play poster" + stretched play-arrow icon
