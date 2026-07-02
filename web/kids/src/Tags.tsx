@@ -19,7 +19,7 @@ import { TAG_ICONS, isTagIconName } from "jellybean-shared";
 import { useHomeTabFocus } from "./useHomeTabFocus";
 import { useItemHiddenEvent } from "./itemHidden";
 import { useKidsResource } from "./useKidsResource";
-import { sessionCache, sessionEtagCache } from "./kidsCache";
+import { idbCache, idbEtags } from "./kidsCache";
 
 // Tags is the kid's tag-browse landing page. Fetches /api/kids/tags
 // and renders one large landscape card per tag - title, description,
@@ -56,14 +56,15 @@ export default function Tags() {
     const playSuffix = searchParams.toString()
         ? `?${searchParams.toString()}`
         : "";
-    // sessionStorage cache: render the previous response (including
-    // its randomized preview items) synchronously on mount and
-    // skip refetching while the cache is present. This keeps the
-    // tag previews stable across visits - the kid backs out of a
-    // tag detail page and sees the same poster strip they saw
-    // before, not a new random shuffle. Cache is invalidated by
-    // the menu's "Refresh from server" action (which clears
-    // sessionStorage + reloads).
+    // Durable IndexedDB cache (jellybean#107 P1 - was sessionStorage):
+    // render the previous response (including its randomized preview
+    // items) on mount and skip refetching while the cache is present.
+    // This keeps the tag previews stable across visits - the kid backs
+    // out of a tag detail page and sees the same poster strip they saw
+    // before, not a new random shuffle - and now survives a full reload
+    // so tags stay browsable when the backend is unreachable. Cache is
+    // invalidated by the menu's "Refresh from server" action (which
+    // clears the IDB stores + reloads).
     const cacheKey = `jellybean.kids.tags.cache.${adminProfileId ?? "kid"}`;
     const focusIdxKey = `jellybean.kids.tags.focusIdx.${adminProfileId ?? "kid"}`;
     const tagsURL = useMemo(() => {
@@ -72,8 +73,8 @@ export default function Tags() {
         if (adminProfileId) url.searchParams.set("profileId", adminProfileId);
         return url.toString();
     }, [session, adminProfileId]);
-    const cache = useMemo(() => sessionCache<TagsResponse>(), []);
-    const etag = useMemo(() => sessionEtagCache(), []);
+    const cache = useMemo(() => idbCache<TagsResponse>("tags"), []);
+    const etag = useMemo(() => idbEtags("tags"), []);
     const { data: fetchedData, error } = useKidsResource<TagsResponse>({
         url: tagsURL,
         cache,

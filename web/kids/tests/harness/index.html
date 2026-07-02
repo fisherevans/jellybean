@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <title>kids IDB cache harness</title>
+    </head>
+    <body>
+        <!--
+          Backend-free test harness for the durable IndexedDB cache
+          (jellybean#107 P1). It imports the REAL production cache module
+          (idbCache / idbEtags over web/kids/src/libraryCache.ts) and hangs
+          it off window so a Playwright test can exercise write -> read ->
+          reload -> read against actual IndexedDB, with no Go server or
+          Jellyfin in the loop. Served by tests/harness/vite.config.ts.
+        -->
+        <script type="module">
+            import { idbCache, idbEtags } from "/src/kidsCache.ts";
+            import { get as rawGet, STORES } from "/src/libraryCache.ts";
+            window.__jb = { idbCache, idbEtags, rawGet, STORES };
+            window.__idbReady = true;
+        </script>
+    </body>
+</html>

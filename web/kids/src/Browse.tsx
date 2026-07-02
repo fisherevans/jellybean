@@ -28,7 +28,7 @@ import { useBrowseRowAnimator } from "./useBrowseRowAnimator";
 import { useProgressiveBack } from "./useProgressiveBack";
 import { useKidsHome } from "./KidsHome";
 import { useKidsResource } from "./useKidsResource";
-import { sessionCache, sessionEtagCache } from "./kidsCache";
+import { idbCache, idbEtags } from "./kidsCache";
 import { useHomeTabFocus } from "./useHomeTabFocus";
 import { posterWidthForViewport } from "./perfMode";
 
@@ -77,13 +77,16 @@ const LAST_FOCUSED_KEY = "jellybean.kids.browse.lastFocused";
 // played something and is back".
 const EXPECT_BACK_KEY = "jellybean.kids.browse.expectBack";
 
-// sessionStorage cache for the most recent /api/kids/browse response.
-// Keyed by profileId (admin preview varies; bearer-auth path uses "kid").
-// On Back navigation from /watch or /play, react-router unmounts +
-// remounts Browse, which would otherwise fire a fresh /browse fetch
-// and show a 3-4s "Loading..." while the layout cache + Jellyfin
-// hits resolve. With sessionStorage primed, the initial render uses
-// the cached body and the user sees their previous state instantly.
+// Durable IndexedDB cache for the most recent /api/kids/browse response
+// (jellybean#107 P1 - was sessionStorage, which died on reload). Keyed by
+// profileId (admin preview varies; bearer-auth path uses "kid"). On Back
+// navigation from /watch or /play, react-router unmounts + remounts
+// Browse, which would otherwise fire a fresh /browse fetch and show a
+// 3-4s "Loading..." while the layout cache + Jellyfin hits resolve. With
+// the cache primed the initial render uses the cached body; the key
+// prefix is kept identical so the profile-scoping is unchanged. Now that
+// it's in IDB the same body survives a full reload / restart, so the kid
+// can still browse when the backend is unreachable.
 const CACHE_KEY_PREFIX = "jellybean.kids.browse.cache.";
 function browseCacheKey(profileId: string | null): string {
     return CACHE_KEY_PREFIX + (profileId ?? "kid");
@@ -133,8 +136,8 @@ export default function Browse() {
         if (adminProfileId) url.searchParams.set("profileId", adminProfileId);
         return url.toString();
     }, [session, adminProfileId]);
-    const cache = useMemo(() => sessionCache<BrowseResponse>(), []);
-    const etag = useMemo(() => sessionEtagCache(), []);
+    const cache = useMemo(() => idbCache<BrowseResponse>("browse"), []);
+    const etag = useMemo(() => idbEtags("browse"), []);
     const { data: fetchedData, error } = useKidsResource<BrowseResponse>({
         url: browseURL,
         cache,
