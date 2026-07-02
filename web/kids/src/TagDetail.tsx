@@ -10,7 +10,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ArrowBendRightDown } from "@phosphor-icons/react";
 import { getSession, type Session } from "./auth";
 import { useKidsResource } from "./useKidsResource";
-import { sessionCache, sessionEtagCache } from "./kidsCache";
+import { idbCache, idbEtags } from "./kidsCache";
 import Tile, { type TileItem } from "./Tile";
 import TileGrid, { type GridFocus, type GridSection } from "./TileGrid";
 import AlphaPickerModal from "./AlphaPickerModal";
@@ -233,8 +233,12 @@ export default function TagDetail() {
         if (adminProfileId) url.searchParams.set("profileId", adminProfileId);
         return url.toString();
     }, [tagId, sort, filter, adminProfileId, session]);
-    const cache = useMemo(() => sessionCache<TagDetailResponse>(), []);
-    const etag = useMemo(() => sessionEtagCache(), []);
+    // Durable IndexedDB cache (jellybean#107 P1 - was sessionStorage).
+    // The key includes filter+sort, so each view of a tag caches
+    // independently and survives a reload; a tag the kid opened stays
+    // browsable when the backend is unreachable.
+    const cache = useMemo(() => idbCache<TagDetailResponse>("tagDetail"), []);
+    const etag = useMemo(() => idbEtags("tagDetail"), []);
     const detailCacheKey = `jellybean.kids.tagDetail.cache.${tagId ?? "x"}.${adminProfileId ?? "kid"}.${filter}.${sort}`;
     const { data: fetchedData, error } = useKidsResource<TagDetailResponse>({
         url: detailURL,
@@ -270,17 +274,23 @@ export default function TagDetail() {
         } | null
     >(null);
 
-    // Parent hid an item: drop it from the in-memory tag list. No
-    // local cache to clean here - TagDetail always refetches on
-    // mount, so a fresh visit will reflect the same prune naturally.
+    // Parent hid an item: drop it from the in-memory tag list AND
+    // rewrite the durable cache for the current view. Online this is
+    // belt-and-suspenders (a fresh visit refetches on mount), but now
+    // that the cache survives reloads it prevents a hidden item from
+    // resurrecting if the kid reloads while the backend is unreachable.
+    // Only the current filter/sort key is rewritten; other cached views
+    // reconcile on their next online visit.
     useItemHiddenEvent((hiddenId) => {
         setData((prev) => {
             if (!prev) return prev;
-            return {
+            const next: TagDetailResponse = {
                 ...prev,
                 items: prev.items.filter((it) => it.id !== hiddenId),
                 itemCount: Math.max(0, prev.itemCount - 1),
             };
+            cache.write(detailCacheKey, next);
+            return next;
         });
     });
 

@@ -62,7 +62,7 @@ async function run(userId: string): Promise<void> {
     // Read any existing etag so the server can short-circuit with 304.
     let ifNoneMatch: string | undefined;
     try {
-        const cached = await cacheGet(key);
+        const cached = await cacheGet("library", key);
         if (cached?.etag) ifNoneMatch = cached.etag;
     } catch {
         // Ignore; we'll just do an unconditional GET.
@@ -86,6 +86,6 @@ async function run(userId: string): Promise<void> {
     const etag = res.headers.get("ETag") ?? "";
     const page = (await res.json()) as LibraryResponse;
     if (etag) {
-        await cacheSet(key, page, etag);
+        await cacheSet("library", key, page, etag);
     }
 }

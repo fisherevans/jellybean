@@ -100,12 +100,14 @@ export default function MainMenuModal({ onClose }: Props) {
                     headers: authHeaders(),
                 }),
             ).catch(() => undefined);
+            // clearLibraryCache() wipes ALL IDB stores (library +
+            // browse + tags + tagDetail), so the durable response
+            // bodies are dropped and the reload below re-fetches them.
             await clearLibraryCache().catch(() => undefined);
-            // sessionStorage survives reload, so explicitly purge
-            // any kid-side caches whose entries should reflect the
-            // freshly-pulled server state. Browse + Tags both
-            // shadow their last response under a profile-scoped
-            // key prefix.
+            // sessionStorage survives reload, so also purge the kid-side
+            // UI-state keys under these prefixes (tag focus index,
+            // back-from-detail flags, and any legacy body shadows) so a
+            // forced refresh starts clean.
             try {
                 const remove: string[] = [];
                 for (let i = 0; i < sessionStorage.length; i++) {

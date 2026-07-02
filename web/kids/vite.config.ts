@@ -8,10 +8,12 @@ import { VitePWA } from "vite-plugin-pwa";
 export default defineConfig({
     plugins: [
         react(),
-        // Offline app-shell service worker (jellybean#107 P1). Scope:
-        // static shell + hashed assets ONLY. It never touches /api/* -
-        // catalog/offline data is a separate concern handled later, and
-        // caching API responses here would risk serving stale data.
+        // Offline service worker (jellybean#107 P1). Scope: static shell
+        // + hashed assets, plus ONE deliberate /api exception for poster
+        // art (see the kids-poster-art runtime route below). It caches no
+        // other /api/* path - catalog JSON stays network-first via the
+        // in-app IDB + ETag SWR layer, so we never risk serving stale
+        // curation data from the SW.
         //
         // Strategy:
         //   - Precache the hashed /assets/* (content-addressed, immutable)
@@ -68,6 +70,35 @@ export default defineConfig({
                             networkTimeoutSeconds: 3,
                             cacheableResponse: { statuses: [0, 200] },
                             expiration: { maxEntries: 16 },
+                        },
+                    },
+                    {
+                        // DELIBERATE EXCEPTION to "the SW never caches /api"
+                        // (jellybean#107 P1 - offline poster art). Item images
+                        // are proxied same-origin at
+                        // /api/kids/items/{id}/image?type=...&tag=...  and are
+                        // effectively immutable per item + imageTag (the tag
+                        // rotates in the URL when Jellyfin regenerates art), so
+                        // CacheFirst is safe: a hit never needs revalidation and
+                        // stale poster art offline is fine. This lets the
+                        // durable IDB catalog (Browse/Tags/Library) render WITH
+                        // its posters when the backend is unreachable, instead
+                        // of a wall of broken images.
+                        //
+                        // Scope is intentionally narrow: ONLY the image
+                        // endpoint. No other /api/* path matches any runtime
+                        // route, so catalog JSON etc. still always hit the
+                        // network (freshness matters there; that's what the IDB
+                        // + ETag SWR layer handles).
+                        urlPattern: /\/api\/kids\/items\/.*\/image/,
+                        handler: "CacheFirst",
+                        options: {
+                            cacheName: "kids-poster-art",
+                            cacheableResponse: { statuses: [0, 200] },
+                            expiration: {
+                                maxEntries: 300,
+                                maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
+                            },
                         },
                     },
                 ],

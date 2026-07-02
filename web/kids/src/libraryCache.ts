@@ -1,32 +1,49 @@
 // libraryCache: an IndexedDB-backed key/value store for cached
-// /api/kids/library responses. Pairs with the server's ETag header to
+// /api/kids/* responses. Pairs with the server's ETag header to
 // implement stale-while-revalidate: render the cached page immediately
 // on mount, then revalidate against the server with `If-None-Match`.
 //
+// Originally this held only the /api/kids/library response (hence the
+// name). As of jellybean#107 P1 it is the durable backing store for
+// every catalog/curation surface the kid browses, so it can still find
+// content when the Jellybean backend is unreachable (Jellyfin/LAN still
+// up - the degraded-offline scope). Each surface gets its own object
+// store; the value shape and ETag round-trip are identical across them.
+//
 // Failure modes: every operation is wrapped in try/catch and resolves to
 // a no-op (or null) on error. IDB unavailability or quota errors must
-// never break the app; the worst case is a fresh fetch.
+// never break the app; the worst case is a fresh fetch (i.e. behaves
+// exactly like today, online).
 //
 // Schema:
-//   db   : "jellybean-kids"
-//   store: "library" (out-of-line keys; key is the cacheKey() string)
-//   value: { page, etag, savedAt }
+//   db   : "jellybean-kids" (v2)
+//   stores (all out-of-line keys; key is the consumer's cacheKey string):
+//     "library"   - GET /api/kids/library     (paged; key baked from paging params)
+//     "browse"    - GET /api/kids/browse      (key: profileId-scoped)
+//     "tags"      - GET /api/kids/tags        (key: profileId-scoped)
+//     "tagDetail" - GET /api/kids/tags/{id}   (key: tag+profile+filter+sort)
+//   value: { page, etag, savedAt }   (page is opaque JSON to this layer)
 //
-// The userId is part of the key itself, not just the DB name, so two
-// kids signing in on the same device can't accidentally cross over.
-// `clear()` is invoked from `clearSession()` to wipe the previous kid's
-// data on sign-out.
+// The consumer bakes any scoping (userId / profileId) into the key
+// itself, so two kids signing in on the same device can't cross over.
+// `clear()` wipes ALL stores; it's invoked from `clearSession()` on
+// sign-out and from the "Refresh from server" menu action.
 
 const DB_NAME = "jellybean-kids";
-const DB_VERSION = 1;
-const STORE = "library";
+const DB_VERSION = 2;
 
-// LibraryResponse is structurally compatible with the type in
-// Library.tsx. Kept loose here so we don't need to publish the full
-// shape from a separate types module; the cache treats the body as
-// opaque JSON.
+// STORES is the full set of object stores. openDB creates any that are
+// missing on upgrade, so bumping DB_VERSION + adding a name here is all
+// it takes to add a durable surface.
+export const STORES = ["library", "browse", "tags", "tagDetail"] as const;
+export type IdbStore = (typeof STORES)[number];
+
+// LibraryResponse is the loose shape the library page happens to use.
+// This layer treats every stored body as opaque JSON (see StoredValue),
+// so the name is historical; browse/tags/tagDetail bodies flow through
+// the same get/set unchanged and are cast at the call site in kidsCache.
 export type LibraryResponse = {
-    Items: unknown[] | null;
+    Items?: unknown[] | null;
     HasMore?: boolean;
     NextStartIndex?: number;
     ProfileId?: number;
@@ -44,10 +61,12 @@ type StoredValue = {
     savedAt: number;
 };
 
-// cacheKey is the canonical key shape. Including userId scopes entries
-// to a specific kid so device-shared installs don't leak across
-// accounts. Section / type / paging / search are everything the server
-// keys its ETag on; matching those here means hits map 1:1 to ETags.
+// cacheKey is the canonical key shape for the library store. Including
+// userId scopes entries to a specific kid so device-shared installs
+// don't leak across accounts. Section / type / paging / search are
+// everything the server keys its ETag on; matching those here means
+// hits map 1:1 to ETags. Browse / Tags / TagDetail build their own
+// keys inline (they have different scoping dimensions).
 export function cacheKey(
     userId: string,
     section: string,
@@ -70,8 +89,13 @@ function openDB(): Promise<IDBDatabase | null> {
             const req = indexedDB.open(DB_NAME, DB_VERSION);
             req.onupgradeneeded = () => {
                 const db = req.result;
-                if (!db.objectStoreNames.contains(STORE)) {
-                    db.createObjectStore(STORE);
+                // Create any missing store. Additive across versions:
+                // a v1 DB (library only) keeps its data and gains the
+                // new stores; a fresh install gets all of them.
+                for (const store of STORES) {
+                    if (!db.objectStoreNames.contains(store)) {
+                        db.createObjectStore(store);
+                    }
                 }
             };
             req.onsuccess = () => resolve(req.result);
@@ -90,14 +114,17 @@ function openDB(): Promise<IDBDatabase | null> {
     });
 }
 
-export async function get(key: string): Promise<CachedPage | null> {
+export async function get(
+    store: IdbStore,
+    key: string,
+): Promise<CachedPage | null> {
     try {
         const db = await openDB();
         if (!db) return null;
         return await new Promise<CachedPage | null>((resolve) => {
             try {
-                const tx = db.transaction(STORE, "readonly");
-                const req = tx.objectStore(STORE).get(key);
+                const tx = db.transaction(store, "readonly");
+                const req = tx.objectStore(store).get(key);
                 req.onsuccess = () => {
                     const v = req.result as StoredValue | undefined;
                     if (!v) {
@@ -126,6 +153,7 @@ export async function get(key: string): Promise<CachedPage | null> {
 }
 
 export async function set(
+    store: IdbStore,
     key: string,
     page: LibraryResponse,
     etag: string,
@@ -135,9 +163,9 @@ export async function set(
         if (!db) return;
         await new Promise<void>((resolve) => {
             try {
-                const tx = db.transaction(STORE, "readwrite");
+                const tx = db.transaction(store, "readwrite");
                 const value: StoredValue = { page, etag, savedAt: Date.now() };
-                tx.objectStore(STORE).put(value, key);
+                tx.objectStore(store).put(value, key);
                 tx.oncomplete = () => {
                     db.close();
                     resolve();
@@ -163,14 +191,20 @@ export async function set(
     }
 }
 
+// clear wipes every store in one transaction. Used on sign-out (so the
+// next kid can't see the previous kid's catalog) and by "Refresh from
+// server" (so a forced reload re-fetches everything). Best-effort: any
+// IDB failure is swallowed so the caller (sign-out) always succeeds.
 export async function clear(): Promise<void> {
     try {
         const db = await openDB();
         if (!db) return;
         await new Promise<void>((resolve) => {
             try {
-                const tx = db.transaction(STORE, "readwrite");
-                tx.objectStore(STORE).clear();
+                const tx = db.transaction(STORES, "readwrite");
+                for (const store of STORES) {
+                    tx.objectStore(store).clear();
+                }
                 tx.oncomplete = () => {
                     db.close();
                     resolve();
