@@ -42,6 +42,7 @@ type Server struct {
 	jellyfinVersion string
 	adminAssets     fs.FS
 	kidsAssets      fs.FS
+	liveAssets      bool // serve web from disk, re-reading index per request
 }
 
 type Options struct {
@@ -96,6 +97,7 @@ func New(opts Options) *Server {
 		jellyfinVersion: opts.JellyfinVersion,
 		adminAssets:     opts.AdminAssets,
 		kidsAssets:      opts.KidsAssets,
+		liveAssets:      opts.Config != nil && opts.Config.WebDir != "",
 	}
 	s.routes()
 	return s
@@ -189,7 +191,7 @@ func (s *Server) routes() {
 		http.Redirect(w, r, target, http.StatusMovedPermanently)
 	})
 	if s.kidsAssets != nil {
-		kids, err := newSPA(s.kidsAssets, "web/kids/dist")
+		kids, err := newSPA(s.kidsAssets, "web/kids/dist", s.liveAssets)
 		if err == nil {
 			s.router.PathPrefix("/player").Handler(http.StripPrefix("/player", kids))
 		} else {
@@ -197,7 +199,7 @@ func (s *Server) routes() {
 		}
 	}
 	if s.adminAssets != nil {
-		admin, err := newSPA(s.adminAssets, "web/admin/dist")
+		admin, err := newSPA(s.adminAssets, "web/admin/dist", s.liveAssets)
 		if err == nil {
 			s.router.PathPrefix("/manage").Handler(http.StripPrefix("/manage", admin))
 		} else {
