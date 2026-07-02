@@ -1210,6 +1210,11 @@ body[data-perf="slow"] .tile-poster.is-watched > img {
    shell's recreateActivity bridge (or location.reload on browsers)
    so the kid can recover without using the system Force Stop. */
 .play-error {
+    /* Opaque dark backdrop: the light text below (h1 #fff, body #cfd0e8) was
+       designed to sit over the black player, but on the error path it renders
+       over the app's light theme -> white-on-cream and unreadable. Own the
+       background so contrast holds regardless of what's behind it. */
+    background: #14152a;
     color: #cfd0e8;
     padding: 3rem 2rem;
     display: flex;

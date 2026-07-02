@@ -627,22 +627,12 @@ export default function Play() {
 
     if (status.kind === "error") {
         return (
-            <div className="screen play-error">
-                <h1>{status.offline ? "Can't play offline" : "Player needs a reset"}</h1>
-                <p>{status.message}</p>
-                <div className="play-error-actions">
-                    <button
-                        type="button"
-                        className="play-error-primary"
-                        onClick={handleResetPlayer}
-                    >
-                        Reset Player
-                    </button>
-                    <Link to={libraryHref} className="play-error-secondary">
-                        Back to library
-                    </Link>
-                </div>
-            </div>
+            <PlayError
+                offline={status.offline}
+                message={status.message}
+                libraryHref={libraryHref}
+                onReset={handleResetPlayer}
+            />
         );
     }
     if (!stream) {
@@ -932,6 +922,60 @@ function mediaErrorMessage(kind: MediaErrorKind): string {
         case "MEDIA_NOT_SUPPORTED":
             return "This video format isn't supported on this TV.";
     }
+}
+
+// PlayError is the terminal error screen. It manages its own D-pad focus:
+// the Android TV WebView has no built-in spatial navigation, so without an
+// explicit focus() the remote can't reach the buttons at all (they render
+// but never highlight). Autofocus the primary action on mount, and move
+// focus left/right between the two actions; Enter/Space activate natively.
+function PlayError({
+    offline,
+    message,
+    libraryHref,
+    onReset,
+}: {
+    offline: boolean;
+    message: string;
+    libraryHref: string;
+    onReset: () => void;
+}) {
+    const resetRef = useRef<HTMLButtonElement>(null);
+    const backRef = useRef<HTMLAnchorElement>(null);
+
+    useEffect(() => {
+        resetRef.current?.focus();
+    }, []);
+
+    function onKeyDown(e: React.KeyboardEvent) {
+        if (e.key === "ArrowRight") {
+            e.preventDefault();
+            backRef.current?.focus();
+        } else if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            resetRef.current?.focus();
+        }
+    }
+
+    return (
+        <div className="screen play-error" onKeyDown={onKeyDown}>
+            <h1>{offline ? "Can't play offline" : "Player needs a reset"}</h1>
+            <p>{message}</p>
+            <div className="play-error-actions">
+                <button
+                    ref={resetRef}
+                    type="button"
+                    className="play-error-primary"
+                    onClick={onReset}
+                >
+                    Reset Player
+                </button>
+                <Link ref={backRef} to={libraryHref} className="play-error-secondary">
+                    Back to library
+                </Link>
+            </div>
+        </div>
+    );
 }
 
 function isNetworkError(err: unknown): boolean {
