@@ -165,6 +165,7 @@ func (s *Server) routes() {
 	s.kidsViewingRoutes(kids)
 	s.kidsModeRoutes(kids)
 	s.kidsChannelRoutes(kids)
+	s.kidsConfigRoutes(kids)
 
 	// Phone-pairing landing page. Lives outside /api because it's
 	// HTML the parent loads directly via a QR scan; lives outside

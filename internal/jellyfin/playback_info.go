@@ -228,7 +228,7 @@ func (c *Client) resolvePlaybackURL(itemID string, src MediaSourceInfo, userToke
 		// Token + DeviceId are already embedded by Jellyfin.
 		u := src.TranscodingURL
 		if !strings.HasPrefix(u, "http") {
-			u = c.baseURL + u
+			u = c.publicURL + u
 		}
 		// TranscodingUrl already carries api_key when the request was
 		// authenticated; we leave it alone. Some flows omit it though,
@@ -258,5 +258,5 @@ func (c *Client) hlsURL(itemID, mediaSourceID, userToken string, audioStreamInde
 	} else if c.apiKey != "" {
 		q.Set("api_key", c.apiKey)
 	}
-	return fmt.Sprintf("%s/Videos/%s/master.m3u8?%s", c.baseURL, url.PathEscape(itemID), q.Encode())
+	return fmt.Sprintf("%s/Videos/%s/master.m3u8?%s", c.publicURL, url.PathEscape(itemID), q.Encode())
 }

@@ -70,7 +70,7 @@ func run() error {
 		Str("jellyfin_url", cfg.JellyfinURL).
 		Msg("jellybean starting")
 
-	jf := jellyfin.New(cfg.JellyfinURL, cfg.JellyfinAPIKey)
+	jf := jellyfin.New(cfg.JellyfinURL, cfg.JellyfinAPIKey, jellyfin.WithPublicURL(cfg.JellyfinPublicURL))
 
 	startupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

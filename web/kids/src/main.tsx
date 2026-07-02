@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { getSession, hydrateAuthFromBridge } from "./auth";
+import { refreshKidsConfig } from "./kidsConfig";
 import { startPerfMonitor } from "./perfMode";
 import { startPerfOverlay } from "./perfOverlay";
 import Browse from "./Browse";
@@ -126,6 +127,14 @@ window.addEventListener(
 // session). Synchronous JNI call - React's first render below sees
 // the rehydrated localStorage. No-op in browser.
 hydrateAuthFromBridge();
+
+// Fetch the client runtime config once, after auth is (re)hydrated so
+// the request carries kid bearer auth. Fire-and-forget: it caches to
+// localStorage on success and fails soft (offline / 401 / signed-out)
+// so it never blocks boot. P1 plumbing (jellybean#107) - not yet wired
+// into streaming. No-op when signed out; Login triggers it on sign-in
+// paths later (P2).
+void refreshKidsConfig();
 
 // Stamp body[data-perf] from device heuristics + a brief FPS
 // sample. CSS + JS animators scale their timings against this so

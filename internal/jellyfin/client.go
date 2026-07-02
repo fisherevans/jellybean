@@ -26,20 +26,44 @@ const (
 // Client speaks Jellyfin's HTTP API. M1 ships only SystemInfo so the server
 // can verify connectivity and version on startup; #2 fleshes out the rest.
 type Client struct {
-	baseURL    string
+	baseURL string
+	// publicURL is the client-facing origin used only when building stream
+	// URLs handed back to the browser (HLS master.m3u8, transcoding URLs).
+	// All server-to-Jellyfin API calls use baseURL. Defaults to baseURL;
+	// override with WithPublicURL.
+	publicURL  string
 	apiKey     string
 	httpClient *http.Client
 }
 
-func New(baseURL, apiKey string) *Client {
-	return &Client{
-		baseURL: baseURL,
-		apiKey:  apiKey,
+// Option configures a Client at construction.
+type Option func(*Client)
+
+// WithPublicURL sets the client-facing base URL used when building stream
+// URLs returned to the browser. Empty values are ignored (publicURL stays
+// equal to baseURL), so an unset config yields byte-identical stream URLs.
+func WithPublicURL(url string) Option {
+	return func(c *Client) {
+		if url != "" {
+			c.publicURL = url
+		}
+	}
+}
+
+func New(baseURL, apiKey string, opts ...Option) *Client {
+	c := &Client{
+		baseURL:   baseURL,
+		publicURL: baseURL,
+		apiKey:    apiKey,
 		// 30s is generous for normal API calls but covers cold-path
 		// reconnects after laptop sleep or tunnel re-establishment.
 		// Per-request contexts can shorten this where appropriate.
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // SystemInfo is the subset of /System/Info we care about. Jellyfin returns more

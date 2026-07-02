@@ -13,8 +13,17 @@ import (
 )
 
 type Config struct {
-	JellyfinURL    string
-	JellyfinAPIKey string
+	JellyfinURL string
+	// JellyfinPublicURL is the client-facing base URL used when building
+	// stream URLs handed to the kid/admin browser (HLS master.m3u8,
+	// transcoding URLs). Server-to-Jellyfin API calls and the image proxy
+	// always use JellyfinURL. Defaults to JellyfinURL when JELLYFIN_PUBLIC_URL
+	// is unset, so behavior is byte-identical until someone opts in. This is
+	// the foundation for a future degraded/direct-Jellyfin playback mode
+	// where the client streams from a different (e.g. LAN-direct) origin than
+	// the server uses internally.
+	JellyfinPublicURL string
+	JellyfinAPIKey    string
 	Port           int
 	DBPath         string
 	SessionSecret  string
@@ -34,6 +43,7 @@ type Config struct {
 
 const (
 	envJellyfinURL       = "JELLYFIN_URL"
+	envJellyfinPublicURL = "JELLYFIN_PUBLIC_URL"
 	envJellyfinAPIKey    = "JELLYFIN_API_KEY"
 	envPort              = "JELLYBEAN_PORT"
 	envDBPath            = "JELLYBEAN_DB_PATH"
@@ -57,6 +67,13 @@ func Load() (*Config, error) {
 	cfg.JellyfinURL = strings.TrimRight(os.Getenv(envJellyfinURL), "/")
 	if cfg.JellyfinURL == "" {
 		missing = append(missing, envJellyfinURL)
+	}
+
+	// Defaults to JellyfinURL when unset so stream URLs are unchanged until
+	// someone explicitly points the client at a different origin.
+	cfg.JellyfinPublicURL = strings.TrimRight(os.Getenv(envJellyfinPublicURL), "/")
+	if cfg.JellyfinPublicURL == "" {
+		cfg.JellyfinPublicURL = cfg.JellyfinURL
 	}
 
 	cfg.JellyfinAPIKey = os.Getenv(envJellyfinAPIKey)

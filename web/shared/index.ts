@@ -5,5 +5,6 @@
 export * from "./types/item";
 export * from "./types/browse";
 export * from "./types/auth";
+export * from "./types/config";
 export * from "./tagIcons";
 export * from "./dateBuckets";
