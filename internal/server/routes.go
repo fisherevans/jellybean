@@ -181,3 +181,7 @@ func (s *Server) kidsModeRoutes(r *mux.Router) {
 func (s *Server) kidsChannelRoutes(r *mux.Router) {
 	r.HandleFunc("/channels", s.handleKidsChannels).Methods(http.MethodGet)
 }
+
+func (s *Server) kidsConfigRoutes(r *mux.Router) {
+	r.HandleFunc("/config", s.handleKidsConfig).Methods(http.MethodGet)
+}

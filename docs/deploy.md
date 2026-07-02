@@ -52,7 +52,8 @@ it), or via your host's secrets manager.
 | -------- | -------- | ----------- |
 | `JELLYFIN_API_KEY` | yes | Jellyfin service-account key. |
 | `JELLYBEAN_SESSION_SECRET` | yes | HMAC secret for admin session cookies. |
-| `JELLYFIN_URL` | yes (set in compose) | Internal URL Jellybean uses to reach Jellyfin. **The kid TVs and admin web never see this URL** - it's server-side only. |
+| `JELLYFIN_URL` | yes (set in compose) | Internal URL Jellybean uses to reach Jellyfin for all server-side API calls and the image proxy. Also the default origin baked into the HLS stream URLs handed to the kid client (see `JELLYFIN_PUBLIC_URL` to split that off). |
+| `JELLYFIN_PUBLIC_URL` | no (defaults to `JELLYFIN_URL`) | Client-facing Jellyfin origin used only when building the stream URLs the kid/admin browser loads (and returned by `GET /api/kids/config`). Set this when the client should reach Jellyfin at a different address than the server does (e.g. a future LAN-direct degraded mode). Unset = byte-identical to today, since it falls back to `JELLYFIN_URL`. |
 | `JELLYBEAN_PORT` | no (default `8080`) | Container listen port. **Changing this alone is not enough** - you also need to update the Dockerfile's `EXPOSE`, the compose `ports:` mapping, and the healthcheck command (see "Customizing the listen port" below). |
 | `JELLYBEAN_DB_PATH` | no (default `/var/lib/jellybean/jellybean.db`) | SQLite database path inside the container. Persisted via the named volume. |
 | `JELLYBEAN_ENV` | no (default `production`) | `dev` enables verbose-friendly defaults. |

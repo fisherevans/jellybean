@@ -615,3 +615,30 @@ func TestKidsNextUpRejectsAdminPath(t *testing.T) {
 
 var _ = strconv.Itoa
 var _ = fmt.Sprintf
+
+func TestKidsConfigRequiresAuth(t *testing.T) {
+	srv, _ := kidsTestServer(t, nil, nil, nil)
+	rec := kidRequest(srv, http.MethodGet, "/api/kids/config", false)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestKidsConfigReturnsPublicURL(t *testing.T) {
+	srv, _ := kidsTestServer(t, nil, nil, nil)
+	srv.cfg.JellyfinPublicURL = "https://jellyfin.example.test"
+
+	rec := kidRequest(srv, http.MethodGet, "/api/kids/config", true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		JellyfinBaseURL string `json:"jellyfinBaseUrl"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.JellyfinBaseURL != "https://jellyfin.example.test" {
+		t.Errorf("jellyfinBaseUrl = %q, want %q", resp.JellyfinBaseURL, "https://jellyfin.example.test")
+	}
+}

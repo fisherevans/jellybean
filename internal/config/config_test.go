@@ -30,6 +30,23 @@ func TestLoad(t *testing.T) {
 				if c.JellyfinURL != "http://jellyfin.local:8096" {
 					t.Errorf("JellyfinURL = %q", c.JellyfinURL)
 				}
+				if c.JellyfinPublicURL != c.JellyfinURL {
+					t.Errorf("JellyfinPublicURL = %q, want default to JellyfinURL %q", c.JellyfinPublicURL, c.JellyfinURL)
+				}
+			},
+		},
+		{
+			name: "public URL override, trailing slash stripped",
+			env: merge(required, map[string]string{
+				"JELLYFIN_PUBLIC_URL": "https://jf.public.example/",
+			}),
+			check: func(t *testing.T, c *Config) {
+				if c.JellyfinPublicURL != "https://jf.public.example" {
+					t.Errorf("JellyfinPublicURL = %q, want override with trailing slash stripped", c.JellyfinPublicURL)
+				}
+				if c.JellyfinURL != "http://jellyfin.local:8096" {
+					t.Errorf("JellyfinURL = %q, want internal URL unchanged", c.JellyfinURL)
+				}
 			},
 		},
 		{
@@ -98,6 +115,7 @@ func TestLoad(t *testing.T) {
 
 var allEnvKeys = map[string]struct{}{
 	"JELLYFIN_URL":             {},
+	"JELLYFIN_PUBLIC_URL":      {},
 	"JELLYFIN_API_KEY":         {},
 	"JELLYBEAN_PORT":           {},
 	"JELLYBEAN_DB_PATH":        {},

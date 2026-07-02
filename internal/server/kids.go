@@ -1656,3 +1656,24 @@ type kidsNextUpResponse struct {
 	ParentIndexNumber *int                   `json:"parentIndexNumber,omitempty"`
 	UserData          *jellyfin.ItemUserData `json:"userData,omitempty"`
 }
+
+// kidsConfigResponse is the client-facing runtime config served at
+// GET /api/kids/config. It's fetched once at boot by the kid client and
+// cached; today it only carries the Jellyfin base URL the client would use
+// for direct playback, but it's shaped as a struct so capability flags
+// (e.g. a future degraded/direct-Jellyfin mode toggle) can be added without
+// breaking the client contract.
+type kidsConfigResponse struct {
+	JellyfinBaseURL string `json:"jellyfinBaseUrl"`
+}
+
+// handleKidsConfig returns the client-facing runtime config. Auth +
+// profile resolution are handled by kidsMiddleware on the subrouter, so
+// reaching this handler already implies an authenticated kid. The public
+// URL defaults to the internal JellyfinURL when JELLYFIN_PUBLIC_URL is
+// unset (see internal/config), so this is safe to expose.
+func (s *Server) handleKidsConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, kidsConfigResponse{
+		JellyfinBaseURL: s.cfg.JellyfinPublicURL,
+	})
+}

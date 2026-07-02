@@ -412,7 +412,7 @@ func (c *Client) StreamURLWithAudio(itemID, userToken string, audioStreamIndex i
 	} else if c.apiKey != "" {
 		q.Set("api_key", c.apiKey)
 	}
-	return fmt.Sprintf("%s/Videos/%s/master.m3u8?%s", c.baseURL, url.PathEscape(itemID), q.Encode())
+	return fmt.Sprintf("%s/Videos/%s/master.m3u8?%s", c.publicURL, url.PathEscape(itemID), q.Encode())
 }
 
 // GetNextUpForUser returns the user's full next-up list across all series,
